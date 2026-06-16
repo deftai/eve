@@ -94,7 +94,7 @@ Any other thrown error follows the normal channel failure path. When building a 
 | `jwtEcdsa(...)`  | You verify asymmetric JWTs minted by another system.                      |
 | `oidc(...)`      | You want Eve to verify OIDC-issued tokens from an arbitrary issuer.       |
 
-Open routes should not be used for agents that process non-public, sensitive, regulated, or production data unless you have implemented other access controls.
+Exercise caution for agents that process non-public, sensitive, regulated, or production data unless you have implemented other access controls.
 
 ### `localDev()`
 
@@ -214,7 +214,7 @@ Inside runtime code, `ctx.session.auth` carries the result of the channel's rout
 
 Use the principal on `auth.current` (or `auth.initiator`) to scope tools, resolve [dynamic capabilities](./dynamic-capabilities) per principal, or enforce tenant boundaries. There's no second per-session ownership ACL stacked on top of route auth. Access is decided at the HTTP boundary, and the durable session carries the caller snapshot forward into your runtime code.
 
-If multiple users or tenants can access the same route, implement any per-user, per-tenant, or per-session authorization required by your application.
+Route auth does not enforce session ownership. If multiple users or tenants can reach the same route, you must implement the per-user, per-tenant, or per-session authorization your application requires.
 
 ## Tool and connection auth
 

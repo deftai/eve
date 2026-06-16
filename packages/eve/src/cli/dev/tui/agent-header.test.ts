@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentInfoResult, AgentInfoToolEntry } from "#client/index.js";
 
 import { AGENT_HEADER_TIPS, buildAgentHeader, pickAgentHeaderTip } from "./agent-header.js";
+import { EVE_BETA_TERMS_URL } from "#cli/banner.js";
 import { createTheme } from "./theme.js";
 
 const FRAMEWORK_TOOL: AgentInfoToolEntry = {
@@ -111,23 +112,25 @@ const INFO: AgentInfoResult = {
 
 describe("buildAgentHeader", () => {
   const theme = createTheme({ color: false, unicode: false });
+  const previewLine = ` Public preview: ${EVE_BETA_TERMS_URL}`;
 
-  it("renders one brand line with the agent name and nothing else", () => {
+  it("renders the brand line with the agent name and preview label", () => {
     const lines = buildAgentHeader({ name: "agent-subagents", info: INFO, theme, width: 120 });
 
-    expect(lines).toEqual([" eve agent-subagents"]);
+    expect(lines).toEqual([" eve agent-subagents", previewLine]);
   });
 
-  it("renders the same brand line when info is unavailable", () => {
+  it("renders the same brand and preview lines when info is unavailable", () => {
     expect(buildAgentHeader({ name: "weather-agent", theme, width: 120 })).toEqual([
       " eve weather-agent",
+      previewLine,
     ]);
   });
 
   it("renders the tip line for local sessions only", () => {
     const tip = AGENT_HEADER_TIPS[0]!;
     const local = buildAgentHeader({ name: "weather-agent", info: INFO, theme, width: 120, tip });
-    expect(local).toEqual([" eve weather-agent", ` ${tip}`]);
+    expect(local).toEqual([" eve weather-agent", previewLine, ` ${tip}`]);
 
     const remote = buildAgentHeader({ name: "weather-agent", info: INFO, theme, width: 120 });
     expect(remote.join("\n")).not.toContain("/channels");
@@ -140,8 +143,8 @@ describe("buildAgentHeader", () => {
     };
     const lines = buildAgentHeader({ name: "weather-agent", info, theme, width: 120 });
 
-    expect(lines[1]).toContain("1 error");
-    expect(lines[1]).toContain("2 warnings");
+    expect(lines.some((line) => line.includes("1 error"))).toBe(true);
+    expect(lines.some((line) => line.includes("2 warnings"))).toBe(true);
   });
 });
 

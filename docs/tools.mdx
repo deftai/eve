@@ -29,8 +29,6 @@ A tool definition needs:
 - an `inputSchema`: a Zod schema (or any Standard Schema, or a plain JSON Schema object). Required. For no input, pass `z.object({})`. Zod and Standard Schema infer the `input` type in `execute`. Plain JSON Schema types it as `Record<string, unknown>`.
 - an `execute(input, ctx)`: the implementation. May be sync or async.
 
-Do not return secrets, credentials, unnecessary personal data, or unbounded sensitive content from tools. Filter, minimize, and redact tool outputs before returning them.
-
 When a tool returns structured data, add an optional `outputSchema`. With Zod or Standard Schema it also types the `execute` return.
 
 ### The `ctx` parameter
@@ -70,7 +68,7 @@ export default defineTool({
 | `once()`   | Require approval only the first time the tool runs in a session; auto-allow after. |
 | `always()` | Require approval before every call.                                                |
 
-By default, omitted `needsApproval` behaves like `never()`, so tool calls may execute without human approval. Require approval or other safeguards for sensitive, irreversible, regulated, financial, healthcare, legal, user-impacting, or external side-effecting actions.
+By default, omitted `needsApproval` behaves like `never()`, so tool calls may execute without human approval. Require human approval or other safeguards for sensitive, irreversible, regulated, financial, healthcare, employment, housing, legal, safety-impacting, user-impacting, or external side-effecting actions.
 
 When the decision depends on the input, pass your own predicate instead of a helper. It receives `{ toolName, toolInput, approvedTools }` and returns a boolean. `toolInput` can be undefined, so guard the access. To require approval only when an amount crosses a threshold:
 
@@ -102,6 +100,8 @@ toModelOutput(output) {
 ```
 
 `toModelOutput` receives the full, typed `execute` return and only affects the model. Channel event handlers and hooks still get the full output on `action.result`, so a channel can render rich platform output (Slack Block Kit, say) the model never sees. Return `{ type: "text", value }` for a summary, or `{ type: "json", value }` for a smaller object.
+
+Do not return secrets, credentials, unnecessary personal data, or unbounded sensitive content from tools. Filter, minimize, and redact tool outputs before returning them.
 
 ## What to read next
 

@@ -5,7 +5,7 @@ description: "Ship eval results to Braintrust experiments or JUnit XML. Eve runs
 
 Eve runs and grades everything itself; reporters ship the results out. The CLI prints a console summary by default (one line per eval, with failed assertions and their messages), and reporters from `eve/evals/reporters` add destinations on top.
 
-Only configure reporters for destinations approved for the data in the eval run. Eval inputs, outputs, scores, metadata, and errors can contain user or customer data.
+You are responsible for ensuring any observability or eval provider is approved for the data exported to it.
 
 Reporters attach in two places. Declare them in `evals.config.ts` to observe **every** eval in the run, the usual choice for a shared destination like one Braintrust experiment, so you don't repeat the reporter in each file. Or list them on an individual eval's `reporters` to scope a destination to that eval (or to a group of evals that share one instance).
 

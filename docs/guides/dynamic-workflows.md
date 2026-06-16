@@ -67,6 +67,8 @@ That is an allowlist, not a denylist. The sandbox cannot read files, open a sock
 
 [Code mode](../agent-config#other-defineagent-fields) is the broader version, where the model drives _all_ of an agent's tools (files, shell, web, and agents) from JavaScript. A workflow covers only the subagents. The two do not interfere. Enabling the `Workflow` tool leaves code mode untouched, and an agent can run both at once.
 
+`codeMode` is experimental and may change or be removed.
+
 ## What to read next
 
 - Declare the subagents a workflow orchestrates → [Subagents](../subagents)

@@ -59,6 +59,8 @@ See [Default harness](./concepts/default-harness#compaction) for how the loop ap
 | `outputSchema` | Standard Schema or a JSON Schema object | none        | Structured return type for task-mode runs (a subagent, schedule, or remote job). Interactive conversation turns ignore it unless the client supplies a per-message schema.                                                                               |
 | `build`        | `{ externalDependencies?: string[] }`   | none        | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while Eve compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                 |
 
+`codeMode` is experimental and may change or be removed.
+
 `externalDependencies` is a packaging control only. It keeps selected packages as runtime dependencies in the hosted output; it does not authorize, configure, or review any third-party service those packages may call.
 
 ## Where adjacent settings live

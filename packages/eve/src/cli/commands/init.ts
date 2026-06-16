@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 import pc from "picocolors";
 
 import { isCodingAgentLaunch } from "#cli/agent-detection.js";
-import { EVE_WORDMARK } from "#cli/banner.js";
+import { EVE_PREVIEW_NOTICE, EVE_WORDMARK } from "#cli/banner.js";
 import { DEFAULT_AGENT_MODEL_ID } from "#shared/default-agent-model.js";
 import { SPINNER_FRAME_MS, SPINNER_FRAMES } from "#setup/cli/rail-log.js";
 import { formatNodeEngineOverrideWarning, type NodeEngineOverride } from "#setup/node-engine.js";
@@ -62,12 +62,8 @@ const defaultDependencies: InitCommandDependencies = {
 
 const CURRENT_DIRECTORY_PROJECT_NAME = ".";
 const ALLOWED_CREATE_IN_PLACE_ENTRIES = new Set([".DS_Store", ".git", ".gitkeep", ".hg"]);
-const PUBLIC_BETA_NOTICE =
-  "Eve is currently in public beta and subject to the Vercel public beta agreement: " +
-  "https://vercel.com/docs/release-phases/public-beta-agreement";
-
 function withPublicBetaNotice(message: string): string {
-  return `${message}\n${pc.dim(PUBLIC_BETA_NOTICE)}`;
+  return `${message}\n${pc.dim(EVE_PREVIEW_NOTICE)}`;
 }
 
 /** Resolves `target` to an existing directory, or undefined for name mode. */

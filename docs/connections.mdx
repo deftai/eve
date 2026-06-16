@@ -44,7 +44,7 @@ export default defineMcpClientConnection({
 });
 ```
 
-Use no-auth connections only for services that are intentionally public, local-only, or otherwise protected outside Eve. Do not use no-auth connections for sensitive third-party services.
+We recommend using no-auth connections only for services that are intentionally public, local-only, or otherwise protected outside Eve. Do not use no-auth connections for sensitive third-party services.
 
 ### Headers
 
@@ -88,7 +88,7 @@ export default defineMcpClientConnection({
 
 `never()` lets every call through, `once()` asks for approval the first time in a session, and `always()` asks every time. The pause and resume is the same human-in-the-loop flow covered in [Tools](./tools).
 
-For MCP and OpenAPI tools that can create, modify, delete, transmit, purchase, message, or access sensitive data, use approval, tool allow-lists, or other safeguards appropriate to the action.
+For connection tools that can create, modify, delete, transmit, purchase, message, or access sensitive data, use approval, tool allow-lists, or other safeguards appropriate to the action.
 
 ## OpenAPI connections
 
