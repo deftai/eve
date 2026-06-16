@@ -33,12 +33,6 @@ const FILE_TRANSFORMS: Record<string, ReadonlyArray<readonly [string, string]>> 
     ['const AGENT_NAME = "eve-agent";', 'const AGENT_NAME = "__EVE_INIT_APP_NAME__";'],
   ],
   "app/layout.tsx": [['  title: "Eve Next.js Starter",', '  title: "__EVE_INIT_APP_NAME__",']],
-  "next.config.ts": [
-    [
-      "export default withEve(nextConfig);",
-      "export default withEve(nextConfig__EVE_INIT_WITH_EVE_OPTIONS__);",
-    ],
-  ],
 };
 
 function applyDeclaredTransforms(relativePath: string, source: string): string {

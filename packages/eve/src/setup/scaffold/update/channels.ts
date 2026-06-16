@@ -338,9 +338,7 @@ export default slackChannel({
 }
 
 function renderWebAppTemplate(content: string, appName: string): string {
-  return content
-    .replaceAll("__EVE_INIT_APP_NAME__", appName)
-    .replaceAll("__EVE_INIT_WITH_EVE_OPTIONS__", "");
+  return content.replaceAll("__EVE_INIT_APP_NAME__", appName);
 }
 
 function withWebVercelServices(source: string): string {
