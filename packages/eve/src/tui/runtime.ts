@@ -40,12 +40,15 @@ export interface RenderHandle {
 
 export function render(element: ReactNode, options: RenderOptions = {}): RenderHandle {
   const out: OutputStream = options.stdout ?? process.stdout;
-  const width = options.width ?? out.columns ?? 80;
 
   const root: ElementNode = createElement("eve-root", {});
   const presenter = createScrollbackPresenter();
 
   root.onCommit = () => {
+    // Read width live each commit so a terminal resize reflows. The renderer
+    // re-renders <Main> with the new width prop on resize; reading `out.columns`
+    // here keeps the rasterization width consistent with that prop.
+    const width = options.width ?? out.columns ?? 80;
     const { lines, liveY } = renderToLines(root, width);
     const chunk = presenter.present(lines, liveY);
     if (chunk) out.write(chunk);

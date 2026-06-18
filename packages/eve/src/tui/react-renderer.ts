@@ -167,6 +167,10 @@ export class ReactRenderer implements AgentTUIRenderer {
   readonly #contextSize: number | undefined;
   readonly #handle: RenderHandle;
   readonly #input: Input;
+  /** The frame sink; its `columns` is read live so resize reflows. */
+  readonly #output: TerminalOutput;
+  /** Stable resize handler reference so `shutdown` can unsubscribe it. */
+  readonly #onResize: () => void;
   #width: number;
   /** The current keyboard consumer; exactly one interactive read owns it. */
   #consumeKey: ((key: TerminalKey) => void) | undefined;
@@ -213,9 +217,18 @@ export class ReactRenderer implements AgentTUIRenderer {
     this.#origStdoutWrite = process.stdout.write.bind(process.stdout);
     if (options.captureForeignOutput) this.#installLogCapture();
 
-    const frameSink: TerminalOutput = options.output ?? this.#stdoutFrameSink();
-    this.#width = frameSink.columns ?? 80;
-    this.#handle = render(createElement(Main, { width: this.#width }), { stdout: frameSink });
+    this.#output = options.output ?? this.#stdoutFrameSink();
+    this.#width = this.#output.columns ?? 80;
+    this.#handle = render(createElement(Main, { width: this.#width }), { stdout: this.#output });
+
+    // Reflow on terminal resize: update the width and re-render <Main> with the
+    // new prop (runtime's onCommit reads the live width to match). Width was
+    // previously captured once, so a resize left stale-width lines on screen.
+    this.#onResize = () => {
+      this.#width = this.#output.columns ?? 80;
+      this.#render();
+    };
+    this.#output.on("resize", this.#onResize);
 
     const stream: InputStream = options.input ?? (process.stdin as unknown as InputStream);
     this.#input = createInput(stream);
@@ -228,13 +241,27 @@ export class ReactRenderer implements AgentTUIRenderer {
    * `process.stdout.write`, so painting bypasses any foreign-output capture. */
   #stdoutFrameSink(): TerminalOutput {
     const write = this.#origStdoutWrite;
-    return {
-      columns: process.stdout.columns,
-      rows: process.stdout.rows,
+    // `columns`/`rows` are getters so each read reflects the live terminal size
+    // (resize updates process.stdout), and on/off forward to the real stdout so
+    // the "resize" subscription actually fires.
+    const sink = {
+      get columns() {
+        return process.stdout.columns;
+      },
+      get rows() {
+        return process.stdout.rows;
+      },
       write: (chunk: string | Uint8Array) => write(chunk as never),
-      on: () => this.#stdoutFrameSink(),
-      off: () => this.#stdoutFrameSink(),
+      on: (event: "resize", listener: () => void) => {
+        process.stdout.on(event, listener);
+        return sink;
+      },
+      off: (event: "resize", listener: () => void) => {
+        process.stdout.off(event, listener);
+        return sink;
+      },
     } as unknown as TerminalOutput;
+    return sink;
   }
 
   /** Re-run the container so `useShared` reads the latest store slices. */
@@ -1050,6 +1077,7 @@ export class ReactRenderer implements AgentTUIRenderer {
 
   shutdown(): void {
     this.#consumeKey = undefined;
+    this.#output.off("resize", this.#onResize);
     this.#removeLogCapture();
     this.#input.dispose();
     this.#handle.unmount();
