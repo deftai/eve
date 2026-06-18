@@ -244,6 +244,7 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   );
   const responseInFlightRef = useRef(false);
   const mediaStreamRef = useRef<StoppableMediaStream | null>(null);
+  const lastErrorRef = useRef<Error | undefined>(undefined);
 
   const model = useMemo(() => resolveRealtimeModel(options.model), [options.model]);
   const setupUrl = useMemo(() => voiceSession.setupUrl, [voiceSession]);
@@ -258,6 +259,7 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
 
   const handleError = useCallback(
     (nextError: Error) => {
+      lastErrorRef.current = nextError;
       setError(nextError);
       setIsUserSpeaking(false);
       options.onError?.(nextError);
@@ -409,16 +411,27 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
 
   const start = useCallback(async () => {
     setError(undefined);
+    lastErrorRef.current = undefined;
     try {
       const mediaStream = await getMicrophoneStream();
       mediaStreamRef.current = mediaStream;
       await realtime.connect();
+      // The AI SDK's connect() resolves even when the realtime session fails to
+      // open: it routes the failure through onError instead of rejecting. Treat
+      // a captured error as a thrown connection failure so the microphone is
+      // released and audio capture never starts against a dead session.
+      if (lastErrorRef.current !== undefined) {
+        throw lastErrorRef.current;
+      }
       realtime.startAudioCapture(mediaStream as Parameters<typeof realtime.startAudioCapture>[0]);
     } catch (cause) {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
       const nextError = cause instanceof Error ? cause : new Error(String(cause));
-      handleError(nextError);
+      // Avoid double-reporting when onError already surfaced this error.
+      if (nextError !== lastErrorRef.current) {
+        handleError(nextError);
+      }
     }
   }, [handleError, realtime]);
 

@@ -245,4 +245,35 @@ describe("useEveVoice", () => {
 
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("releases the microphone and skips capture when the realtime connection fails", async () => {
+    const stop = vi.fn();
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop }] }));
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    realtimeState.connect.mockImplementationOnce(async () => {
+      realtimeOptions[0].onError(new Error("realtime offline"));
+    });
+
+    const { useEveVoice } = await import("#react/voice.js");
+    const onError = vi.fn();
+    let voice: ReturnType<typeof useEveVoice> | undefined;
+    function TestComponent() {
+      voice = useEveVoice({ onError, voiceSessionId: "voice-1" });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    await act(async () => {
+      await voice!.start();
+    });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(realtimeState.startAudioCapture).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "realtime offline" }));
+  });
 });
