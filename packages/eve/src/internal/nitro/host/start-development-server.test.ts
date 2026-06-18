@@ -380,7 +380,7 @@ describe("startDevelopmentServer", () => {
     await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(
       [
         `A dev server is already running for this eve agent (pid ${process.pid}).`,
-        "To connect to the existing instance, run: npm exec -- eve dev http://127.0.0.1:4321/",
+        "To connect to the existing instance, run: npm exec --workspaces=false -- eve dev http://127.0.0.1:4321/",
         `To stop it, run: ${
           process.platform === "win32" ? "taskkill /PID" : "kill"
         } ${process.pid}`,
