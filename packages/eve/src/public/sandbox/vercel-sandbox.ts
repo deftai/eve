@@ -75,25 +75,25 @@ export type VercelSandboxNetworkPolicy =
 /**
  * Options accepted by `vercel(opts)`.
  *
- * The Vercel SDK create options remain available, while authenticated policy
- * rules opt into Eve-managed credential brokering.
+ * The Vercel SDK create options remain available. Record-form `networkPolicy`
+ * rules may attach `auth` for Eve-managed credential resolution.
  */
 export type VercelSandboxCreateOptions = VercelSandboxCreateOptionsWithAuth<VercelCreateOptions>;
 
 type VercelSandboxCreateOptionsWithAuth<T> = T extends unknown
   ? Omit<VercelSandboxAuthorCreateOptions<T>, "networkPolicy"> & {
-  /**
-   * Default resolution mode for authenticated rules. Required when any
-   * policy rule declares `auth`.
-   */
-  readonly credentialResolution?: VercelSandboxCredentialResolution;
-  /**
-   * Public HTTPS origin used by on-request rules and their interactive
-   * authorization callbacks. Required locally; hosted Vercel deployments
-   * derive their public origin from the environment.
-   */
-  readonly authProxyBaseUrl?: string;
-  /** Static policy whose individual rules may declare `auth`. */
+      /**
+       * Default resolution mode for authenticated rules. Required when any
+       * policy rule declares `auth`.
+       */
+      readonly credentialResolution?: VercelSandboxCredentialResolution;
+      /**
+       * Public HTTPS origin used by on-request rules and their interactive
+       * authorization callbacks. Required locally; hosted Vercel deployments
+       * derive their public origin from the environment.
+       */
+      readonly authProxyBaseUrl?: string;
+      /** Static policy whose individual rules may declare `auth`. */
       readonly networkPolicy?: VercelSandboxNetworkPolicy;
     }
   : never;

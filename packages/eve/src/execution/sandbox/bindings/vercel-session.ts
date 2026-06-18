@@ -178,6 +178,8 @@ export function createVercelNetworkPolicySetter(
 
 const MAX_ON_REQUEST_REPLAYS = 3;
 const DEMAND_POLL_INTERVAL_MS = 50;
+const ATTEMPT_LOG_TAIL_BYTES = 64 * 1024;
+const ATTEMPT_LOG_TAIL_DELAY_MS = 100;
 
 function adaptDemandAwareVercelProcess(
   initialCommand: Command,
@@ -198,13 +200,12 @@ function adaptDemandAwareVercelProcess(
 
   const execute = async (): Promise<{ readonly exitCode: number }> => {
     let replayCount = 0;
+    let activeLogs: ReplayAwareCommandLogs | undefined;
     try {
       while (true) {
         const command = activeCommand;
-        const attemptLogs: Array<{
-          readonly data: Uint8Array;
-          readonly stream: "stdout" | "stderr";
-        }> = [];
+        const attemptLogs = new ReplayAwareCommandLogs(stdoutController, stderrController);
+        activeLogs = attemptLogs;
         const logs = collectCommandLogs(command, encoder, attemptLogs);
         const finished = command.wait();
         let result: Awaited<typeof finished> | undefined;
@@ -215,12 +216,15 @@ function adaptDemandAwareVercelProcess(
             delay(DEMAND_POLL_INTERVAL_MS).then(() => ({ kind: "poll" as const })),
           ]);
           if (outcome.kind === "finished") {
+            attemptLogs.hold();
             result = outcome.value;
             break;
           }
           if (await demandHandler.hasDemand()) {
+            attemptLogs.discard();
             await command.kill().catch(() => {});
             await finished.catch(() => undefined);
+            await logs;
             await demandHandler.resolveDemand();
             replayRequired = true;
             break;
@@ -229,13 +233,15 @@ function adaptDemandAwareVercelProcess(
         await logs;
         const demandedAfterExit = await demandHandler.hasDemand();
         if (demandedAfterExit) {
+          attemptLogs.discard();
           await demandHandler.resolveDemand();
           replayRequired = true;
         }
         if (!replayRequired && result !== undefined) {
-          flushCommandLogs(attemptLogs, stdoutController, stderrController);
+          attemptLogs.flush();
           return { exitCode: result.exitCode };
         }
+        activeLogs = undefined;
         if (killed) return { exitCode: result?.exitCode ?? 137 };
         replayCount += 1;
         if (replayCount > MAX_ON_REQUEST_REPLAYS) {
@@ -246,6 +252,7 @@ function adaptDemandAwareVercelProcess(
         activeCommand = await startCommand();
       }
     } finally {
+      activeLogs?.discard();
       stdoutController.close();
       stderrController.close();
     }
@@ -278,20 +285,89 @@ interface VercelDemandHandler {
 async function collectCommandLogs(
   command: Command,
   encoder: TextEncoder,
-  output: Array<{ readonly data: Uint8Array; readonly stream: "stdout" | "stderr" }>,
+  output: ReplayAwareCommandLogs,
 ): Promise<void> {
   for await (const message of command.logs()) {
-    output.push({ data: encoder.encode(message.data), stream: message.stream });
+    output.push(encoder.encode(message.data), message.stream);
   }
 }
 
-function flushCommandLogs(
-  logs: readonly { readonly data: Uint8Array; readonly stream: "stdout" | "stderr" }[],
-  stdout: ReadableStreamDefaultController<Uint8Array>,
-  stderr: ReadableStreamDefaultController<Uint8Array>,
-): void {
-  for (const message of logs) {
-    (message.stream === "stdout" ? stdout : stderr).enqueue(message.data);
+class ReplayAwareCommandLogs {
+  readonly #stderr: ReadableStreamDefaultController<Uint8Array>;
+  readonly #stdout: ReadableStreamDefaultController<Uint8Array>;
+  #bytes = 0;
+  #discarded = false;
+  #held = false;
+  #messages: Array<{ readonly data: Uint8Array; readonly stream: "stdout" | "stderr" }> = [];
+  #timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(
+    stdout: ReadableStreamDefaultController<Uint8Array>,
+    stderr: ReadableStreamDefaultController<Uint8Array>,
+  ) {
+    this.#stdout = stdout;
+    this.#stderr = stderr;
+  }
+
+  push(data: Uint8Array, stream: "stdout" | "stderr"): void {
+    if (this.#discarded) return;
+    this.#messages.push({ data, stream });
+    this.#bytes += data.byteLength;
+    this.#flushOverflow();
+    if (!this.#held && this.#timer === undefined) {
+      this.#timer = setTimeout(() => this.flush(), ATTEMPT_LOG_TAIL_DELAY_MS);
+    }
+  }
+
+  hold(): void {
+    this.#held = true;
+    this.#clearTimer();
+  }
+
+  discard(): void {
+    this.#discarded = true;
+    this.#clearTimer();
+    this.#messages = [];
+    this.#bytes = 0;
+  }
+
+  flush(): void {
+    if (this.#discarded) return;
+    this.#clearTimer();
+    const messages = this.#messages;
+    this.#messages = [];
+    this.#bytes = 0;
+    for (const message of messages) {
+      this.#emit(message);
+    }
+  }
+
+  #flushOverflow(): void {
+    while (this.#bytes > ATTEMPT_LOG_TAIL_BYTES) {
+      const message = this.#messages[0];
+      if (message === undefined) return;
+      const overflow = this.#bytes - ATTEMPT_LOG_TAIL_BYTES;
+      if (message.data.byteLength <= overflow) {
+        this.#messages.shift();
+        this.#bytes -= message.data.byteLength;
+        this.#emit(message);
+        continue;
+      }
+      this.#emit({ ...message, data: message.data.subarray(0, overflow) });
+      this.#messages[0] = { ...message, data: message.data.subarray(overflow) };
+      this.#bytes -= overflow;
+    }
+  }
+
+  #emit(message: { readonly data: Uint8Array; readonly stream: "stdout" | "stderr" }): void {
+    (message.stream === "stdout" ? this.#stdout : this.#stderr).enqueue(message.data);
+  }
+
+  #clearTimer(): void {
+    if (this.#timer !== undefined) {
+      clearTimeout(this.#timer);
+      this.#timer = undefined;
+    }
   }
 }
 

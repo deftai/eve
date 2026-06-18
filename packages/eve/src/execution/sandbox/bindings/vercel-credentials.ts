@@ -44,9 +44,7 @@ type ResolvedCredentialEntry =
       readonly token: TokenResult;
     };
 
-export function getVercelSandboxFetch(
-  createOptions: VercelCreateOptions,
-): typeof globalThis.fetch {
+export function getVercelSandboxFetch(createOptions: VercelCreateOptions): typeof globalThis.fetch {
   const fetchOverride = (createOptions as { readonly fetch?: typeof globalThis.fetch }).fetch;
   return fetchOverride ?? globalThis.fetch;
 }
@@ -111,8 +109,7 @@ export function extractVercelCredentialBrokering(options: VercelSandboxCreateOpt
     );
   }
   const authoredPolicy = networkPolicy as VercelSandboxNetworkPolicy | undefined;
-  const discovered = discoverManagedRules(authoredPolicy, credentialResolution);
-  if (discovered.length === 0) {
+  if (!hasManagedAuthRules(authoredPolicy)) {
     return {
       brokering: undefined,
       createOptions:
@@ -126,6 +123,7 @@ export function extractVercelCredentialBrokering(options: VercelSandboxCreateOpt
       "vercel(): `credentialResolution` is required when `networkPolicy` contains an `auth` rule.",
     );
   }
+  const discovered = discoverManagedRules(authoredPolicy, credentialResolution);
   rejectAuthoredForwardUrls(authoredPolicy);
   const proxyBaseUrl = resolveAuthProxyBaseUrl(authProxyBaseUrl, discovered);
   const rules = new Map(discovered.map((rule) => [rule.id, rule]));
@@ -255,7 +253,7 @@ function createScopedCredential(
 
 function discoverManagedRules(
   policy: VercelSandboxNetworkPolicy | undefined,
-  defaultResolution: VercelSandboxCredentialResolution | undefined,
+  defaultResolution: VercelSandboxCredentialResolution,
 ): Array<VercelManagedAuthRule & { readonly domain: string; readonly index: number }> {
   if (typeof policy !== "object" || policy === null || Array.isArray(policy.allow)) return [];
   const rules: Array<VercelManagedAuthRule & { readonly domain: string; readonly index: number }> =
@@ -279,7 +277,7 @@ function discoverManagedRules(
           rule.auth,
           `vercel() egress rule "${domain}"[${index}]:`,
         ),
-        credentialResolution: rule.credentialResolution ?? defaultResolution ?? "eager",
+        credentialResolution: rule.credentialResolution ?? defaultResolution,
         domain,
         id,
         index,
@@ -288,6 +286,11 @@ function discoverManagedRules(
     domainIndex += 1;
   }
   return rules;
+}
+
+function hasManagedAuthRules(policy: VercelSandboxNetworkPolicy | undefined): boolean {
+  if (typeof policy !== "object" || policy === null || Array.isArray(policy.allow)) return false;
+  return Object.values(policy.allow ?? {}).some((rules) => rules.some(isAuthRule));
 }
 
 function isAuthRule(rule: unknown): rule is VercelSandboxAuthNetworkPolicyRule {
@@ -319,7 +322,7 @@ function resolveAuthProxyBaseUrl(
   rules: readonly VercelManagedAuthRule[],
 ): string | undefined {
   if (!rules.some((rule) => rule.credentialResolution === "on-request")) return undefined;
-  const candidate = authored ?? process.env.VERCEL_URL ?? process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  const candidate = authored ?? process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
   if (candidate === undefined || candidate.trim().length === 0) {
     throw new Error(
       "vercel(): `authProxyBaseUrl` is required for on-request credential resolution outside a Vercel deployment.",
