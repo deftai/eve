@@ -372,7 +372,6 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
           if (responseInFlightRef.current || Date.now() < ignoreInputUntilRef.current) {
             break;
           }
-          responseInFlightRef.current = false;
           enqueueEveTurn(transcript);
           break;
       }
