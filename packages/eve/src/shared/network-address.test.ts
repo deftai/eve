@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vitest";
 
-import { isReservedIpAddress } from "#shared/network-address.js";
+import {
+  isLoopbackHostname,
+  isLoopbackServerUrl,
+  isReservedIpAddress,
+} from "#shared/network-address.js";
+
+describe("isLoopbackHostname", () => {
+  it("accepts loopback hostnames and addresses", () => {
+    for (const host of [
+      "localhost",
+      "api.localhost",
+      "127.0.0.1",
+      "127.23.45.67",
+      "::1",
+      "[::1]",
+    ]) {
+      expect(isLoopbackHostname(host), host).toBe(true);
+    }
+  });
+
+  it("rejects wildcard, private, and public hosts", () => {
+    for (const host of ["0.0.0.0", "192.168.1.2", "example.com", "[::]"]) {
+      expect(isLoopbackHostname(host), host).toBe(false);
+    }
+  });
+});
+
+describe("isLoopbackServerUrl", () => {
+  it("requires HTTP(S), a valid URL, and a loopback hostname", () => {
+    expect(isLoopbackServerUrl("http://127.0.0.2:2000/")).toBe(true);
+    expect(isLoopbackServerUrl("https://agent.localhost/eve/v1/health")).toBe(true);
+    expect(isLoopbackServerUrl("ftp://127.0.0.1/resource")).toBe(false);
+    expect(isLoopbackServerUrl("https://example.com/")).toBe(false);
+    expect(isLoopbackServerUrl("not a url")).toBe(false);
+  });
+});
 
 describe("isReservedIpAddress", () => {
   it("blocks link-local (cloud metadata), private, CGNAT, ULA, and unspecified addresses", () => {

@@ -1,10 +1,7 @@
 import type { ClientOptions } from "#client/index.js";
+import { isLoopbackServerUrl } from "#shared/network-address.js";
 
-import {
-  isLocalDevelopmentServerUrl,
-  resolveDevelopmentClientHeaders,
-  resolveDevelopmentOidcToken,
-} from "./request-headers.js";
+import { resolveDevelopmentClientHeaders, resolveDevelopmentOidcToken } from "./request-headers.js";
 
 /**
  * Builds the {@link ClientOptions} every development client connects with:
@@ -18,7 +15,7 @@ export function resolveDevelopmentClientOptions(serverUrl: string): ClientOption
     host: serverUrl,
   };
 
-  if (isLocalDevelopmentServerUrl(serverUrl)) {
+  if (isLoopbackServerUrl(serverUrl)) {
     return base;
   }
 

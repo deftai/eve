@@ -1,11 +1,11 @@
 import type { UserContent } from "ai";
 import type { ClientSession } from "#client/session.js";
 import type { InputResponse } from "#runtime/input/types.js";
-import { isLocalDevelopmentServerUrl } from "#services/dev-client/request-headers.js";
 import {
   readDevelopmentRuntimeArtifactsRevision,
   rebuildDevelopmentRuntimeArtifacts,
 } from "#services/dev-client/runtime-artifacts.js";
+import { isLoopbackServerUrl } from "#shared/network-address.js";
 
 /**
  * Tracks local dev runtime-artifact revisions and starts a fresh session for
@@ -54,7 +54,7 @@ class LocalDevelopmentRuntimeArtifactSessionRefresher implements DevelopmentRunt
   #artifactRevision: string | undefined;
 
   constructor(input: { readonly serverUrl: string }) {
-    this.#isLocal = isLocalDevelopmentServerUrl(input.serverUrl);
+    this.#isLocal = isLoopbackServerUrl(input.serverUrl);
     this.#serverUrl = input.serverUrl;
   }
 
