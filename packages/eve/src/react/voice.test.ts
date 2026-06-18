@@ -276,4 +276,31 @@ describe("useEveVoice", () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "realtime offline" }));
   });
+
+  it("ignores re-entrant start() calls while a connection is in flight", async () => {
+    const stop = vi.fn();
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop }] }));
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    const { useEveVoice } = await import("#react/voice.js");
+    let voice: ReturnType<typeof useEveVoice> | undefined;
+    function TestComponent() {
+      voice = useEveVoice({ voiceSessionId: "voice-1" });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    // The second call is synchronous, before the first start() resolves its
+    // microphone request, so the re-entrancy guard must short-circuit it.
+    await act(async () => {
+      await Promise.all([voice!.start(), voice!.start()]);
+    });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(realtimeState.connect).toHaveBeenCalledTimes(1);
+    expect(realtimeState.startAudioCapture).toHaveBeenCalledTimes(1);
+  });
 });

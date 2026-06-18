@@ -245,6 +245,7 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   const responseInFlightRef = useRef(false);
   const mediaStreamRef = useRef<StoppableMediaStream | null>(null);
   const lastErrorRef = useRef<Error | undefined>(undefined);
+  const startingRef = useRef(false);
 
   const model = useMemo(() => resolveRealtimeModel(options.model), [options.model]);
   const setupUrl = useMemo(() => voiceSession.setupUrl, [voiceSession]);
@@ -409,6 +410,16 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   stopRef.current = stop;
 
   const start = useCallback(async () => {
+    // Ignore re-entrant starts: a second in-flight or already-live session
+    // would acquire another microphone stream and orphan the previous one.
+    if (
+      startingRef.current ||
+      realtime.status === "connecting" ||
+      realtime.status === "connected"
+    ) {
+      return;
+    }
+    startingRef.current = true;
     setError(undefined);
     lastErrorRef.current = undefined;
     try {
@@ -431,6 +442,8 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
       if (nextError !== lastErrorRef.current) {
         handleError(nextError);
       }
+    } finally {
+      startingRef.current = false;
     }
   }, [handleError, realtime]);
 
