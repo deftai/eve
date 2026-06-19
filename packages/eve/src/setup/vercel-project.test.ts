@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createPromptCommandOutput, WHIMSY_POOLS } from "#setup/cli/index.js";
-import { captureVercel, type VercelCaptureResult } from "#setup/primitives/index.js";
+import { captureVercel, runVercel, type VercelCaptureResult } from "#setup/primitives/index.js";
 
 import { HumanActionRequiredError } from "#setup/human-action.js";
 import type { Prompter, PrompterValue, SingleSelectOptions } from "./prompter.js";
@@ -22,20 +22,12 @@ vi.mock("#setup/primitives/index.js", async (importOriginal) => {
   return {
     ...original,
     captureVercel: vi.fn(),
+    runVercel: vi.fn(),
   };
 });
 
-vi.mock("./project-resolution.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./project-resolution.js")>()),
-  readProjectLink: vi.fn(),
-  writeProjectLink: vi.fn(),
-}));
-
-import { readProjectLink, writeProjectLink } from "./project-resolution.js";
-
 const mockedCaptureVercel = vi.mocked(captureVercel);
-const mockedReadProjectLink = vi.mocked(readProjectLink);
-const mockedWriteProjectLink = vi.mocked(writeProjectLink);
+const mockedRunVercel = vi.mocked(runVercel);
 
 /** Wraps stdout as a successful capture result for the mocked `captureVercel`. */
 const captured = (stdout: string): VercelCaptureResult => ({ ok: true, stdout });
@@ -61,8 +53,8 @@ function createSpyPrompter(overrides: {
 
 beforeEach(() => {
   mockedCaptureVercel.mockReset();
-  mockedReadProjectLink.mockReset();
-  mockedWriteProjectLink.mockReset();
+  mockedRunVercel.mockReset();
+  mockedRunVercel.mockResolvedValue(true);
 });
 
 describe("getVercelAuthStatus", () => {
@@ -244,11 +236,10 @@ describe("assertNewProjectNameAvailable", () => {
 });
 
 describe("linkProject", () => {
-  it("writes an already-resolved project without another API lookup", async () => {
+  it("links a resolved existing project through `vercel link`", async () => {
     mockedCaptureVercel.mockResolvedValue(
       captured(JSON.stringify({ id: "prj_existing", name: "my-agent", accountId: "team-a" })),
     );
-    mockedReadProjectLink.mockResolvedValue({ projectId: "prj_existing", orgId: "team-a" });
     const { prompter } = createFakePrompter();
 
     await expect(
@@ -261,18 +252,17 @@ describe("linkProject", () => {
     ).resolves.toBe(true);
 
     expect(mockedCaptureVercel).toHaveBeenCalledTimes(1);
-    expect(mockedWriteProjectLink).toHaveBeenCalledWith({
-      projectRoot: "/tmp/eve-agent",
-      link: { projectId: "prj_existing", orgId: "team-a", projectName: "my-agent" },
-      signal: undefined,
-    });
+    expect(mockedRunVercel).toHaveBeenCalledWith(
+      ["link", "--project", "prj_existing", "--scope", "team-a", "--yes"],
+      expect.objectContaining({ cwd: "/tmp/eve-agent", nonInteractive: true }),
+    );
   });
 
-  it("rejects a persisted link whose ids differ from the resolved project", async () => {
+  it("surfaces a failed `vercel link` as an incomplete link", async () => {
     mockedCaptureVercel.mockResolvedValue(
-      captured(JSON.stringify({ id: "prj_expected", name: "my-agent", accountId: "team-a" })),
+      captured(JSON.stringify({ id: "prj_existing", name: "my-agent", accountId: "team-a" })),
     );
-    mockedReadProjectLink.mockResolvedValue({ projectId: "prj_other", orgId: "team-a" });
+    mockedRunVercel.mockResolvedValue(false);
     const { prompter } = createFakePrompter();
 
     await expect(
@@ -282,7 +272,7 @@ describe("linkProject", () => {
         { kind: "existing", project: "my-agent", team: "team-a" },
         createPromptCommandOutput(prompter.log),
       ),
-    ).rejects.toThrow('Linked project identity did not match Vercel project "my-agent".');
+    ).resolves.toBe(false);
   });
 
   it("fails a new-project plan when that project name already exists", async () => {
@@ -301,7 +291,7 @@ describe("linkProject", () => {
     ).rejects.toThrow(
       'Vercel project "my-agent" already exists in team-a. Pass --project my-agent to link it, or choose a different project name.',
     );
-    expect(mockedWriteProjectLink).not.toHaveBeenCalled();
+    expect(mockedRunVercel).not.toHaveBeenCalled();
   });
 
   it("fails an existing-project plan when the project cannot be resolved exactly", async () => {
@@ -318,7 +308,7 @@ describe("linkProject", () => {
         createPromptCommandOutput(prompter.log),
       ),
     ).rejects.toThrow('Vercel project "missing-agent" was not found in team-a.');
-    expect(mockedWriteProjectLink).not.toHaveBeenCalled();
+    expect(mockedRunVercel).not.toHaveBeenCalled();
   });
 
   it("creates and links an available new project", async () => {
@@ -331,11 +321,6 @@ describe("linkProject", () => {
       .mockResolvedValueOnce(
         captured(JSON.stringify({ id: "prj_new", name: "my-agent", accountId: "team-a" })),
       );
-    mockedReadProjectLink.mockResolvedValue({
-      projectId: "prj_new",
-      orgId: "team-a",
-      projectName: "my-agent",
-    });
     const { prompter } = createFakePrompter();
 
     await expect(
@@ -366,11 +351,10 @@ describe("linkProject", () => {
       ],
       { cwd: "/tmp/eve-agent", onOutput: expect.any(Function) },
     );
-    expect(mockedWriteProjectLink).toHaveBeenCalledWith({
-      projectRoot: "/tmp/eve-agent",
-      link: { projectId: "prj_new", orgId: "team-a", projectName: "my-agent" },
-      signal: undefined,
-    });
+    expect(mockedRunVercel).toHaveBeenCalledWith(
+      ["link", "--project", "prj_new", "--scope", "team-a", "--yes"],
+      expect.objectContaining({ cwd: "/tmp/eve-agent", nonInteractive: true }),
+    );
   });
 });
 

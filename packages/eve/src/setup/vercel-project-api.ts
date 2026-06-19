@@ -14,7 +14,7 @@ const VercelTeamListEntrySchema = z.object({
 });
 
 /** One Vercel account scope returned by `vercel teams ls`. */
-export type VercelTeamListEntry = z.infer<typeof VercelTeamListEntrySchema>;
+type VercelTeamListEntry = z.infer<typeof VercelTeamListEntrySchema>;
 
 const VercelProjectListEntrySchema = z.object({
   name: z.string(),
@@ -23,7 +23,7 @@ const VercelProjectListEntrySchema = z.object({
 });
 
 /** Project identity used by the existing-project picker. */
-export type VercelProjectListEntry = z.infer<typeof VercelProjectListEntrySchema>;
+type VercelProjectListEntry = z.infer<typeof VercelProjectListEntrySchema>;
 
 const VercelPaginationSchema = z.object({
   next: z.number().int().nonnegative().nullable().optional(),

@@ -1,10 +1,10 @@
 import { createPromptCommandOutput, whimsyFor } from "#setup/cli/index.js";
 import { HumanActionRequiredError } from "#setup/human-action.js";
-import { captureVercel, type VercelCaptureFailure } from "#setup/primitives/index.js";
+import { captureVercel, runVercel, type VercelCaptureFailure } from "#setup/primitives/index.js";
 import pc from "picocolors";
 import { z } from "zod";
 
-import { readProjectLink, writeProjectLink, type ProjectResolution } from "./project-resolution.js";
+import type { ProjectResolution } from "./project-resolution.js";
 import type { Prompter } from "./prompter.js";
 import type { ResolvedVercelProjectSpec } from "./state.js";
 import {
@@ -470,6 +470,7 @@ export async function linkProject(
   onOutput: ReturnType<typeof createPromptCommandOutput>,
   options: VercelProjectOperationOptions = {},
 ): Promise<boolean> {
+  const scope = ["--scope", spec.team];
   let project: VercelProjectReference;
   if (spec.kind === "new") {
     project = await withNetworkSpinner(
@@ -487,24 +488,22 @@ export async function linkProject(
     }
     project = existing;
   }
-  await withNetworkSpinner(
+  return withNetworkSpinner(
     prompter,
     `Linking this directory to Vercel project "${project.name}"...`,
     () =>
-      writeProjectLink({
-        projectRoot,
-        link: {
-          projectId: project.id,
-          orgId: project.accountId,
-          projectName: project.name,
-        },
+      runVercel(["link", "--project", project.id, ...scope, "--yes"], {
+        cwd: projectRoot,
+        onOutput,
+        // The plan already names the team and project, so the link needs no
+        // input. eve strips the coding-agent env markers (so the CLI does not
+        // mis-react to the agent driving it), which also stops the CLI from
+        // auto-enabling its agent non-interactive default — left with an
+        // inherited TTY it would prompt (e.g. the MCP/plugin setup question)
+        // and read stdin, wedging the dev TUI. Force non-interactive: it both
+        // passes `--non-interactive` and closes the child's stdin.
+        nonInteractive: true,
         signal: options.signal,
       }),
   );
-
-  const link = await readProjectLink(projectRoot);
-  if (link === undefined || link.projectId !== project.id || link.orgId !== project.accountId) {
-    throw new Error(`Linked project identity did not match Vercel project "${project.name}".`);
-  }
-  return true;
 }

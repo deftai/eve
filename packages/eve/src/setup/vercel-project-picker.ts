@@ -1,14 +1,14 @@
 import type { Prompter } from "./prompter.js";
 
 /** Project fields needed by the existing-project picker. */
-export interface PickableVercelProject {
+interface PickableVercelProject {
   readonly id: string;
   readonly name: string;
   readonly updatedAt: number;
 }
 
 /** Inputs for choosing from recent projects with optional server-side search. */
-export interface VercelProjectPickerOptions {
+interface VercelProjectPickerOptions {
   readonly prompter: Prompter;
   readonly team: string;
   readonly projects: readonly PickableVercelProject[];
