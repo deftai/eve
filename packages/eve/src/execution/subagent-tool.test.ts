@@ -32,6 +32,19 @@ function makeAction(): RuntimeSubagentCallActionRequest {
 }
 
 describe("buildSubagentRunInput", () => {
+  it("forwards the child cancellation token", () => {
+    const { runInput } = buildSubagentRunInput({
+      action: makeAction(),
+      auth: null,
+      batchEvent: { sequence: 0, turnId: "turn-0" },
+      cancelToken: "child_cancel_1",
+      initiatorAuth: null,
+      session: makeSession(),
+    });
+
+    expect(runInput.cancelToken).toBe("child_cancel_1");
+  });
+
   it("forwards parent capabilities to the child run input", () => {
     const { runInput } = buildSubagentRunInput({
       action: makeAction(),
