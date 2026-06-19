@@ -57,13 +57,12 @@ The handle does more than `run` and `writeTextFile`. In every method, relative p
 
 ### Export files from the sandbox
 
-`sandbox.readFile()` returns `Promise<ReadableStream<Uint8Array> | null>`. Use this byte stream to copy a generated file out of `/workspace` without buffering the complete file in memory. A missing file returns `null`.
+`sandbox.readFile()` resolves to `ReadableStream<Uint8Array> | null`. Use this byte stream to copy a generated file out of `/workspace` without buffering the complete file in memory. A missing file returns `null`.
 
 The following helper streams a sandbox file into the app runtime filesystem:
 
 ```ts
 import { createWriteStream } from "node:fs";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { SandboxSession } from "eve/sandbox";
 
@@ -75,7 +74,7 @@ export async function copySandboxFile(
   const stream = await sandbox.readFile({ path: sandboxPath });
   if (stream === null) return false;
 
-  await pipeline(Readable.fromWeb(stream), createWriteStream(destinationPath));
+  await pipeline(stream, createWriteStream(destinationPath));
   return true;
 }
 ```
