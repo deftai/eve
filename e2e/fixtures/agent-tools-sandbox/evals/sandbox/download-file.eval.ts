@@ -1,15 +1,16 @@
 import { defineEval } from "eve/evals";
 
-const DOWNLOAD_TOKEN = "sandbox-download-ok-N4P";
-const DOWNLOAD_PATH = "/workspace/download-report.txt";
+import { WORKSPACE_SEED_PATH, WORKSPACE_SEED_TOKEN } from "./shared.js";
+
+const WORKSPACE_SEED_CONTENT = `${WORKSPACE_SEED_TOKEN}\n`;
 
 export default defineEval({
-  description: "Sandbox: a generated file is exposed through download_file.",
+  description: "Sandbox: a workspace-seeded file is exposed through download_file.",
   async test(t) {
     const turn = await t.send(
       [
-        `Use write_file to create ${DOWNLOAD_PATH} with exactly this content: ${DOWNLOAD_TOKEN}`,
-        `Then use download_file to make ${DOWNLOAD_PATH} available with mediaType text/plain.`,
+        `Use download_file to make ${WORKSPACE_SEED_PATH} available with mediaType text/plain.`,
+        "Do not call any other tools.",
         "Reply briefly when it is ready.",
       ].join("\n"),
     );
@@ -17,16 +18,15 @@ export default defineEval({
 
     t.didNotFail();
     t.completed();
-    t.calledTool("write_file", { isError: false });
     t.calledTool("download_file", {
-      input: { filePath: DOWNLOAD_PATH, mediaType: "text/plain" },
+      input: { filePath: WORKSPACE_SEED_PATH, mediaType: "text/plain" },
       isError: false,
       output: {
-        filename: "download-report.txt",
+        filename: "seed-data.txt",
         mediaType: "text/plain",
-        size: DOWNLOAD_TOKEN.length,
+        size: Buffer.byteLength(WORKSPACE_SEED_CONTENT),
         type: "file",
-        url: /^data:text\/plain;base64,/,
+        url: `data:text/plain;base64,${Buffer.from(WORKSPACE_SEED_CONTENT).toString("base64")}`,
       },
     });
   },
