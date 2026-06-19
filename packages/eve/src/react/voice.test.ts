@@ -37,6 +37,60 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const SESSION_ID_HEADER = "x-eve-session-id";
+
+function completedMessageEvent(message: string) {
+  return {
+    type: "message.completed",
+    data: { finishReason: "stop", message, sequence: 1, stepIndex: 0, turnId: "turn-1" },
+  };
+}
+
+function ndjsonResponse(events: readonly unknown[]): Response {
+  const body = events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "application/x-ndjson" },
+  });
+}
+
+/**
+ * Mocks the durable session API the voice hook now drives: a create/continue
+ * POST that acknowledges immediately, followed by an NDJSON event stream.
+ * Each entry in `turns` supplies the events for one turn, in order.
+ */
+function sessionFetchMock(turns: ReadonlyArray<{ sessionId: string; events: readonly unknown[] }>) {
+  let streamedTurns = 0;
+  return vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    const turn = turns[Math.min(streamedTurns, turns.length - 1)]!;
+
+    if (method === "POST" && /\/eve\/v1\/session(\/[^/]+)?$/.test(url)) {
+      return Response.json(
+        { ok: true, sessionId: turn.sessionId, continuationToken: "eve:token" },
+        { status: 202, headers: { [SESSION_ID_HEADER]: turn.sessionId } },
+      );
+    }
+    if (method === "GET" && /\/stream(\?|$)/.test(url)) {
+      const response = ndjsonResponse(turn.events);
+      streamedTurns += 1;
+      return response;
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+}
+
+function postCalls(fetch: ReturnType<typeof vi.fn>): unknown[][] {
+  return fetch.mock.calls.filter(
+    (call) => ((call[1] as RequestInit | undefined)?.method ?? "GET").toUpperCase() === "POST",
+  );
+}
+
+function streamCalls(fetch: ReturnType<typeof vi.fn>): unknown[][] {
+  return fetch.mock.calls.filter((call) => /\/stream(\?|$)/.test(String(call[0])));
+}
+
 describe("useEveVoice", () => {
   it("configures realtime with a stable voice session setup URL", async () => {
     const { useEveVoice } = await import("#react/voice.js");
@@ -68,38 +122,18 @@ describe("useEveVoice", () => {
     });
   });
 
-  it("bridges finalized transcription to the Eve turn route with the stream cursor", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          continuationToken: "voice-1",
-          sessionId: "session-1",
-          streamIndex: 4,
-          text: "Agent reply",
-          voiceSessionId: "voice-1",
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          continuationToken: "voice-1",
-          sessionId: "session-1",
-          streamIndex: 7,
-          text: "Second reply",
-          voiceSessionId: "voice-1",
-        }),
-      );
+  it("bridges finalized transcription into durable session turns and speaks the reply", async () => {
+    const fetch = sessionFetchMock([
+      { sessionId: "session-1", events: [completedMessageEvent("Agent reply"), waiting()] },
+      { sessionId: "session-1", events: [completedMessageEvent("Second reply"), waiting()] },
+    ]);
     vi.stubGlobal("fetch", fetch);
 
     const { useEveVoice } = await import("#react/voice.js");
     const onReply = vi.fn();
 
     function TestComponent() {
-      useEveVoice({
-        context: ["voice context"],
-        onReply,
-        voiceSessionId: "voice-1",
-      });
+      useEveVoice({ context: ["voice context"], onReply, voiceSessionId: "voice-1" });
       return null;
     }
 
@@ -116,35 +150,27 @@ describe("useEveVoice", () => {
 
     await vi.waitFor(() => expect(onReply).toHaveBeenCalled());
 
-    expect(fetch).toHaveBeenCalledWith(
-      "/eve/v1/realtime-speech/turn",
-      expect.objectContaining({
-        body: JSON.stringify({
-          context: ["voice context"],
-          message: "Hello over speech",
-          streamIndex: 0,
-          voiceSessionId: "voice-1",
-        }),
-        method: "POST",
-      }),
-    );
+    // First turn creates the session and consumes its event stream.
+    const firstPost = postCalls(fetch)[0]!;
+    expect(String(firstPost[0])).toBe("/eve/v1/session");
+    expect(JSON.parse((firstPost[1] as RequestInit).body as string)).toEqual({
+      message: "Hello over speech",
+      clientContext: ["voice context"],
+    });
+
     expect(onReply).toHaveBeenCalledWith({
       message: "Hello over speech",
       sessionId: "session-1",
-      streamIndex: 4,
+      streamIndex: 2,
       text: "Agent reply",
     });
     expect(realtimeState.sendEvent).toHaveBeenCalledWith({
       type: "conversation-item-create",
-      item: {
-        type: "text-message",
-        role: "user",
-        text: "EVE_SPEAK:\nAgent reply",
-      },
+      item: { type: "text-message", role: "user", text: "EVE_SPEAK:\nAgent reply" },
     });
     expect(realtimeState.requestResponse).toHaveBeenCalledWith({ modalities: ["audio"] });
-    expect(realtimeState.cancelResponse).not.toHaveBeenCalled();
 
+    // Second turn continues the same session and resumes the stream cursor.
     realtimeOptions[0].onEvent({
       itemId: "item-2",
       raw: {},
@@ -152,15 +178,48 @@ describe("useEveVoice", () => {
       type: "input-transcription-completed",
     });
 
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(postCalls(fetch)).toHaveLength(2));
 
-    const secondRequest = (fetch as ReturnType<typeof vi.fn>).mock.calls[1]![1] as RequestInit;
-    expect(JSON.parse(secondRequest.body as string)).toMatchObject({
-      message: "Second message",
-      sessionId: "session-1",
-      streamIndex: 4,
-      voiceSessionId: "voice-1",
+    const secondPost = postCalls(fetch)[1]!;
+    expect(String(secondPost[0])).toBe("/eve/v1/session/session-1");
+    const secondStream = streamCalls(fetch).at(-1)!;
+    expect(String(secondStream[0])).toContain("startIndex=2");
+  });
+
+  it("speaks the configured fallback when a turn fails without producing text", async () => {
+    const fetch = sessionFetchMock([{ sessionId: "session-1", events: [sessionFailed()] }]);
+    vi.stubGlobal("fetch", fetch);
+
+    const { useEveVoice } = await import("#react/voice.js");
+    const onReply = vi.fn();
+
+    function TestComponent() {
+      useEveVoice({
+        fallbackReply: "Sorry, please try again.",
+        onReply,
+        voiceSessionId: "voice-1",
+      });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
     });
+
+    realtimeOptions[0].onEvent({
+      itemId: "item-1",
+      raw: {},
+      transcript: "Hello",
+      type: "input-transcription-completed",
+    });
+
+    await vi.waitFor(() =>
+      expect(realtimeState.sendEvent).toHaveBeenCalledWith({
+        type: "conversation-item-create",
+        item: { type: "text-message", role: "user", text: "EVE_SPEAK:\nSorry, please try again." },
+      }),
+    );
+    expect(onReply).not.toHaveBeenCalled();
   });
 
   it("ignores unsolicited model responses", async () => {
@@ -182,15 +241,9 @@ describe("useEveVoice", () => {
   });
 
   it("suppresses transcriptions that arrive while the Eve reply is speaking", async () => {
-    const fetch = vi.fn(async () =>
-      Response.json({
-        continuationToken: "voice-1",
-        sessionId: "session-1",
-        streamIndex: 1,
-        text: "Agent reply",
-        voiceSessionId: "voice-1",
-      }),
-    );
+    const fetch = sessionFetchMock([
+      { sessionId: "session-1", events: [completedMessageEvent("Agent reply"), waiting()] },
+    ]);
     vi.stubGlobal("fetch", fetch);
     const { useEveVoice } = await import("#react/voice.js");
 
@@ -209,7 +262,7 @@ describe("useEveVoice", () => {
       transcript: "First utterance",
       type: "input-transcription-completed",
     });
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(postCalls(fetch)).toHaveLength(1));
 
     realtimeOptions[0].onEvent({ raw: {}, responseId: "response-1", type: "response-created" });
     realtimeOptions[0].onEvent({
@@ -219,7 +272,7 @@ describe("useEveVoice", () => {
       type: "input-transcription-completed",
     });
 
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(postCalls(fetch)).toHaveLength(1);
   });
 
   it("ignores empty transcription completions", async () => {
@@ -335,3 +388,11 @@ describe("useEveVoice", () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 });
+
+function waiting() {
+  return { type: "session.waiting", data: { wait: "next-user-message" } };
+}
+
+function sessionFailed() {
+  return { type: "session.failed", data: { reason: "boom" } };
+}

@@ -308,11 +308,11 @@ Point your frontend at the session routes eve serves (\`/eve/v1/session\`) and s
 \`\`\`bash
 npm install eve@latest @ai-sdk/react
 \`\`\``,
-    quickStart: `Create \`agent/channels/realtime-speech.ts\`:
+    quickStart: `Create \`agent/channels/speech.ts\`:
 
 \`\`\`ts
-// agent/channels/realtime-speech.ts
-import { realtimeSpeechChannel } from "eve/channels/realtime-speech";
+// agent/channels/speech.ts
+import { realtimeSpeechChannel } from "eve/channels/vercel/speech";
 import { localDev, vercelOidc } from "eve/channels/auth";
 
 export default realtimeSpeechChannel({

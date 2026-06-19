@@ -1,11 +1,10 @@
 "use client";
 
 import { experimental_useRealtime } from "@ai-sdk/react";
-import {
-  EVE_VOICE_SETUP_ROUTE_PATH,
-  EVE_VOICE_TURN_ROUTE_PATH,
-  EveVoiceSession,
-} from "#client/voice.js";
+import { Client } from "#client/client.js";
+import type { ClientSession } from "#client/session.js";
+import type { ClientAuth, HeadersValue } from "#client/types.js";
+import { EVE_VOICE_SETUP_ROUTE_PATH, voiceSetupUrl } from "#client/voice.js";
 import type {
   Experimental_RealtimeClientEvent,
   Experimental_RealtimeModel,
@@ -30,10 +29,27 @@ type StoppableMediaStream = {
 export interface UseEveVoiceOptions {
   readonly context?: string | readonly string[];
   readonly model?: string;
-  readonly sessionConfig?: EveVoiceSessionConfig;
+  readonly sessionConfig?: EveVoiceConfig;
   readonly setupUrl?: string;
-  readonly turnUrl?: string;
   readonly voiceSessionId?: string;
+  /**
+   * Spoken when a turn fails before producing any assistant text. Off by
+   * default: a failed turn surfaces through `onError`/`status` instead of
+   * speaking a canned line, and a fallback is never spoken when the turn
+   * already produced a usable reply.
+   */
+  readonly fallbackReply?: string;
+  /**
+   * Run voice turns against an existing session/client instead of an internal
+   * one. Pass `session` to share a `ClientSession`, `client` to reuse an
+   * authenticated `Client`, or `host`/`auth`/`headers` to configure the
+   * internal client. Read once when the hook first renders; remount to change.
+   */
+  readonly client?: Client;
+  readonly session?: ClientSession;
+  readonly host?: string;
+  readonly auth?: ClientAuth;
+  readonly headers?: HeadersValue;
   readonly onError?: (error: Error) => void;
   readonly onEvent?: (event: EveVoiceEvent) => void;
   readonly onTranscript?: (input: {
@@ -59,7 +75,7 @@ export type EveVoiceActivity =
 
 export type EveVoiceStatus = "disconnected" | "connecting" | "connected" | "error";
 
-export interface EveVoiceSessionConfig {
+export interface EveVoiceConfig {
   readonly instructions?: string;
   readonly inputAudioTranscription?: {
     readonly language?: string;
@@ -224,21 +240,18 @@ export interface UseEveVoiceResult {
 }
 
 export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult {
-  const voiceSession = useMemo(
-    () =>
-      new EveVoiceSession({
-        setupUrl: options.setupUrl ?? EVE_VOICE_SETUP_ROUTE_PATH,
-        turnUrl: options.turnUrl ?? EVE_VOICE_TURN_ROUTE_PATH,
-        voiceSessionId: options.voiceSessionId,
-      }),
-    [options.setupUrl, options.turnUrl, options.voiceSessionId],
-  );
-  const voiceSessionId = voiceSession.state.voiceSessionId;
+  const voiceSessionIdRef = useRef(options.voiceSessionId ?? crypto.randomUUID());
+  const voiceSessionId = voiceSessionIdRef.current;
+  const sessionRef = useRef<ClientSession | undefined>(undefined);
+  if (sessionRef.current === undefined) {
+    sessionRef.current = resolveVoiceSession(options);
+  }
+  const session = sessionRef.current;
   const [error, setError] = useState<Error | undefined>(undefined);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
   const [lastReply, setLastReply] = useState<string | undefined>(undefined);
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
-  const [streamIndex, setStreamIndex] = useState(voiceSession.state.streamIndex);
+  const [sessionId, setSessionId] = useState<string | undefined>(session.state.sessionId);
+  const [streamIndex, setStreamIndex] = useState(session.state.streamIndex);
   const expectSpeechResponseRef = useRef(false);
   const ignoreInputUntilRef = useRef(0);
   const processedInputItemsRef = useRef(new Set<string>());
@@ -252,7 +265,10 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   const stopAudioCaptureRef = useRef<(() => void) | undefined>(undefined);
 
   const model = useMemo(() => resolveRealtimeModel(options.model), [options.model]);
-  const setupUrl = useMemo(() => voiceSession.setupUrl, [voiceSession]);
+  const setupUrl = useMemo(
+    () => voiceSetupUrl(options.setupUrl ?? EVE_VOICE_SETUP_ROUTE_PATH, voiceSessionId),
+    [options.setupUrl, voiceSessionId],
+  );
   const sessionConfig = useMemo(
     () =>
       buildSessionConfig({
@@ -301,6 +317,13 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
     requestResponseRef.current?.({ modalities: ["audio"] });
   }, []);
 
+  const speakFallbackReply = useCallback(() => {
+    const fallback = options.fallbackReply;
+    if (fallback === undefined || fallback.trim().length === 0) return;
+    setLastReply(fallback);
+    speakEveReply(fallback);
+  }, [options.fallbackReply, speakEveReply]);
+
   const runEveTurn = useCallback(
     async (message: string) => {
       if (options.onTranscript !== undefined) {
@@ -316,24 +339,62 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
         return;
       }
 
-      const data = await voiceSession.sendTranscript({ context: options.context, message });
-      setSessionId(data.sessionId);
-      setStreamIndex(data.streamIndex);
-      setLastReply(data.text);
-      options.onReply?.({
-        message,
-        sessionId: data.sessionId,
-        streamIndex: data.streamIndex,
-        text: data.text,
-      });
-      speakEveReply(data.text);
+      let replyText: string | undefined;
+      let spokeReply = false;
+      try {
+        const turn: { message: string; clientContext?: string | readonly string[] } = { message };
+        if (options.context !== undefined) turn.clientContext = options.context;
+        const response = await session.send(turn);
+
+        let failed = false;
+        for await (const event of response) {
+          if (
+            event.type === "message.completed" &&
+            event.data.finishReason !== "tool-calls" &&
+            typeof event.data.message === "string" &&
+            event.data.message.length > 0
+          ) {
+            replyText = event.data.message;
+          } else if (event.type === "session.failed") {
+            failed = true;
+          }
+        }
+
+        setSessionId(session.state.sessionId);
+        setStreamIndex(session.state.streamIndex);
+
+        if (replyText !== undefined && replyText.trim().length > 0) {
+          setLastReply(replyText);
+          options.onReply?.({
+            message,
+            sessionId: response.sessionId,
+            streamIndex: session.state.streamIndex,
+            text: replyText,
+          });
+          speakEveReply(replyText);
+          spokeReply = true;
+          return;
+        }
+
+        // A terminal failure that produced no assistant text would be dead
+        // air, so optionally speak the configured fallback.
+        if (failed) speakFallbackReply();
+      } catch (cause) {
+        // Only fall back when this turn produced no usable reply, so a late
+        // transport error cannot overwrite or double-speak a real answer.
+        if (!spokeReply && (replyText === undefined || replyText.trim().length === 0)) {
+          speakFallbackReply();
+        }
+        throw cause;
+      }
     },
     [
       options.context,
       options.onReply,
       options.onTranscript,
+      session,
       speakEveReply,
-      voiceSession,
+      speakFallbackReply,
       voiceSessionId,
     ],
   );
@@ -506,8 +567,20 @@ function resolveActivity(input: {
   return "listening";
 }
 
+function resolveVoiceSession(options: UseEveVoiceOptions): ClientSession {
+  if (options.session !== undefined) return options.session;
+  if (options.client !== undefined) return options.client.session();
+  const clientOptions: { host: string; auth?: ClientAuth; headers?: HeadersValue } = {
+    host: options.host ?? "",
+  };
+  if (options.auth !== undefined) clientOptions.auth = options.auth;
+  if (options.headers !== undefined) clientOptions.headers = options.headers;
+  const client = new Client(clientOptions);
+  return client.session();
+}
+
 function buildSessionConfig(input: {
-  readonly sessionConfig: EveVoiceSessionConfig | undefined;
+  readonly sessionConfig: EveVoiceConfig | undefined;
   readonly voiceSessionId: string;
 }): Partial<Experimental_RealtimeSessionConfig> {
   const baseGatewayOptions = {

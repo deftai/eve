@@ -1,78 +1,72 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { Client } from "#client/client.js";
-import { EveVoiceSession } from "#client/voice.js";
+import { setupVoice, voiceSetupUrl } from "#client/voice.js";
 
-describe("EveVoiceSession", () => {
-  it("builds a stable setup URL for the voice session", () => {
-    const session = new EveVoiceSession({ voiceSessionId: "voice-1" });
-    expect(session.setupUrl).toBe("/eve/v1/realtime-speech/setup?voiceSessionId=voice-1");
+describe("voiceSetupUrl", () => {
+  it("appends the voice session id to a relative setup route", () => {
+    expect(voiceSetupUrl("/eve/v1/realtime-speech/setup", "voice-1")).toBe(
+      "/eve/v1/realtime-speech/setup?voiceSessionId=voice-1",
+    );
   });
 
-  it("sends finalized transcripts with the session cursor and advances state", async () => {
+  it("appends the voice session id to an absolute setup route", () => {
+    expect(voiceSetupUrl("https://eve.example.com/eve/v1/realtime-speech/setup", "voice-1")).toBe(
+      "https://eve.example.com/eve/v1/realtime-speech/setup?voiceSessionId=voice-1",
+    );
+  });
+});
+
+describe("setupVoice", () => {
+  it("mints a realtime token through the setup route with the voice session id", async () => {
     const fetch = vi.fn(async () =>
       Response.json({
-        continuationToken: "voice-1",
-        sessionId: "session-1",
-        streamIndex: 3,
-        text: "Agent reply",
+        expiresAt: 1_700_000_060,
+        token: "vcst_test",
+        url: "wss://gateway.example/realtime-model",
         voiceSessionId: "voice-1",
       }),
     );
-    const session = new EveVoiceSession({ fetch, voiceSessionId: "voice-1" });
 
-    const result = await session.sendTranscript({
-      context: ["voice context"],
-      message: "Hello",
-    });
+    const result = await setupVoice({ fetch }, { voiceSessionId: "voice-1" });
 
     expect(fetch).toHaveBeenCalledWith(
-      "/eve/v1/realtime-speech/turn",
-      expect.objectContaining({
-        body: JSON.stringify({
-          context: ["voice context"],
-          message: "Hello",
-          sessionId: undefined,
-          streamIndex: 0,
-          voiceSessionId: "voice-1",
-        }),
-      }),
+      "/eve/v1/realtime-speech/setup?voiceSessionId=voice-1",
+      expect.objectContaining({ method: "POST" }),
     );
-    expect(result.text).toBe("Agent reply");
-    expect(session.state).toEqual({
-      sessionId: "session-1",
-      streamIndex: 3,
+    expect(result).toEqual({
+      expiresAt: 1_700_000_060,
+      token: "vcst_test",
+      url: "wss://gateway.example/realtime-model",
       voiceSessionId: "voice-1",
     });
   });
 
-  it("can be created from the authenticated Eve client", async () => {
+  it("throws when the setup response is malformed", async () => {
+    const fetch = vi.fn(async () => Response.json({ token: "vcst_test" }));
+    await expect(setupVoice({ fetch }, { voiceSessionId: "voice-1" })).rejects.toThrow(/malformed/);
+  });
+
+  it("works against an authenticated Eve client and a remote host", async () => {
     const fetch = vi.fn(async () =>
       Response.json({
-        continuationToken: "voice-client",
-        sessionId: "session-client",
-        streamIndex: 2,
-        text: "Client reply",
+        token: "vcst_client",
+        url: "wss://gateway.example/realtime-model",
         voiceSessionId: "voice-client",
       }),
     );
     vi.stubGlobal("fetch", fetch);
 
-    const client = new Client({
-      auth: { bearer: "test-token" },
-      host: "https://eve.example.com",
-    });
-    const session = client.voiceSession("voice-client");
-    await session.sendTranscript("Hello from a TUI");
+    const client = new Client({ auth: { bearer: "test-token" }, host: "https://eve.example.com" });
+    await setupVoice(client, { voiceSessionId: "voice-client" });
 
     expect(fetch).toHaveBeenCalledWith(
-      "https://eve.example.com/eve/v1/realtime-speech/turn",
-      expect.objectContaining({
-        headers: expect.any(Headers),
-        method: "POST",
-      }),
+      "https://eve.example.com/eve/v1/realtime-speech/setup?voiceSessionId=voice-client",
+      expect.objectContaining({ method: "POST" }),
     );
     const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers as Headers;
     expect(headers.get("authorization")).toBe("Bearer test-token");
+
+    vi.unstubAllGlobals();
   });
 });

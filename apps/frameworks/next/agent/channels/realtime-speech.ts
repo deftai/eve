@@ -1,4 +1,4 @@
-import { realtimeSpeechChannel } from "eve/channels/realtime-speech";
+import { realtimeSpeechChannel } from "eve/channels/vercel/speech";
 import { agentChannelAuth } from "../channel-auth";
 
 export default realtimeSpeechChannel({

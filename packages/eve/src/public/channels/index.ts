@@ -36,8 +36,7 @@ export {
   realtimeSpeechChannel,
   type RealtimeSpeechChannelInput,
   type RealtimeSpeechSetupResponse,
-  type RealtimeSpeechTurnResponse,
-} from "#public/channels/realtime-speech.js";
+} from "#public/channels/vercel/speech.js";
 
 import { getChannelInstrumentationKind } from "#channel/compiled-channel.js";
 import type { Channel } from "#public/definitions/defineChannel.js";

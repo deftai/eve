@@ -216,10 +216,10 @@
       "import": "./dist/src/public/channels/eve.js",
       "default": "./dist/src/public/channels/eve.js"
     },
-    "./channels/realtime-speech": {
-      "types": "./dist/src/public/channels/realtime-speech.d.ts",
-      "import": "./dist/src/public/channels/realtime-speech.js",
-      "default": "./dist/src/public/channels/realtime-speech.js"
+    "./channels/vercel/speech": {
+      "types": "./dist/src/public/channels/vercel/speech.d.ts",
+      "import": "./dist/src/public/channels/vercel/speech.js",
+      "default": "./dist/src/public/channels/vercel/speech.js"
     },
     "./channels/auth": {
       "types": "./dist/src/public/channels/auth.d.ts",
