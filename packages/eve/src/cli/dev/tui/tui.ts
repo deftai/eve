@@ -1,5 +1,6 @@
 import { Client } from "#client/index.js";
 import { resolveDevelopmentClientOptions } from "#services/dev-client/client-options.js";
+import { resolveVerifiedRemoteDevelopmentClientOptions } from "#setup/verified-remote-client.js";
 import {
   formatVercelAuthChallengeMessage,
   isVercelAuthChallenge,
@@ -8,29 +9,31 @@ import { toErrorMessage } from "#shared/errors.js";
 
 import { createPromptCommandHandler } from "./prompt-command-handler.js";
 import { EveTUIRunner, type EveTUIRunnerOptions } from "./runner.js";
+import type { DevelopmentTuiTarget } from "./target.js";
 import type { TuiDisplayOptions } from "./types.js";
 
-/**
- * Options for running the `eve dev` terminal UI against a server URL.
- */
+export type { DevelopmentTuiTarget } from "./target.js";
+
 export interface RunDevelopmentTuiInput extends TuiDisplayOptions {
-  /**
-   * The eve server URL the TUI connects to — either the in-process dev
-   * server started by `eve dev`, or a remote `--url` target.
-   */
-  readonly serverUrl: string;
-  /**
-   * Absolute application root. When present and the server is a local dev
-   * server, enables the TUI's `/model` command to edit local agent source.
-   * Omitted for remote (`--url`) targets.
-   */
-  readonly appRoot?: string;
+  /** The local server or remote URL used by this TUI session. */
+  readonly target: DevelopmentTuiTarget;
   /**
    * Text to seed the prompt input with after the UI launches. The buffer is
    * editable and is not auto-submitted — the user presses Enter to send it.
    * Applies to the first prompt only.
    */
   readonly initialInput?: string;
+}
+
+async function resolveClientOptions(target: DevelopmentTuiTarget) {
+  if (target.kind === "local") {
+    return resolveDevelopmentClientOptions(target.serverUrl);
+  }
+
+  return await resolveVerifiedRemoteDevelopmentClientOptions({
+    serverUrl: target.serverUrl,
+    workspaceRoot: target.workspaceRoot,
+  });
 }
 
 /**
@@ -43,22 +46,25 @@ export interface RunDevelopmentTuiInput extends TuiDisplayOptions {
  * the inline error region rather than crashing the command.
  */
 export async function runDevelopmentTui(input: RunDevelopmentTuiInput): Promise<void> {
-  const { serverUrl, appRoot, initialInput, ...display } = input;
+  const { target, initialInput, ...display } = input;
+  const { serverUrl } = target;
 
-  const client = new Client(resolveDevelopmentClientOptions(serverUrl));
+  const client = new Client(await resolveClientOptions(target));
 
   const options: EveTUIRunnerOptions = {
     ...display,
     session: client.session(),
     client,
     serverUrl,
-    promptCommandHandler: createPromptCommandHandler({ appRoot }),
+    promptCommandHandler: createPromptCommandHandler(
+      target.kind === "local" ? { appRoot: target.appRoot } : {},
+    ),
     formatTransportError: (error) =>
       isVercelAuthChallenge(error)
         ? formatVercelAuthChallengeMessage({ serverUrl })
         : toErrorMessage(error),
   };
-  if (appRoot !== undefined) options.appRoot = appRoot;
+  if (target.kind === "local") options.appRoot = target.appRoot;
   if (initialInput !== undefined) options.initialInput = initialInput;
 
   await new EveTUIRunner(options).run();

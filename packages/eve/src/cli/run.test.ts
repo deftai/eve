@@ -55,7 +55,11 @@ describe("eve dev --input", () => {
     expect(runDevelopmentTui).toHaveBeenCalledWith(
       expect.objectContaining({
         initialInput: "/model",
-        serverUrl: "https://example.com/",
+        target: {
+          kind: "remote",
+          serverUrl: "https://example.com/",
+          workspaceRoot: process.cwd(),
+        },
       }),
     );
   });
@@ -95,7 +99,11 @@ describe("eve dev --logs", () => {
     expect(runDevelopmentTui).toHaveBeenCalledWith(
       expect.objectContaining({
         logs: "sandbox",
-        serverUrl: "https://example.com/",
+        target: {
+          kind: "remote",
+          serverUrl: "https://example.com/",
+          workspaceRoot: process.cwd(),
+        },
       }),
     );
   });

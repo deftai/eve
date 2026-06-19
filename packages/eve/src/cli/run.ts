@@ -60,7 +60,12 @@ interface CliRuntimeDependencies {
     options?: { json?: boolean },
   ): Promise<void>;
   runDevelopmentTui(
-    input: { serverUrl: string; appRoot?: string; initialInput?: string } & TuiDisplayOptions,
+    input: {
+      target:
+        | { kind: "local"; serverUrl: string; appRoot: string }
+        | { kind: "remote"; serverUrl: string; workspaceRoot: string };
+      initialInput?: string;
+    } & TuiDisplayOptions,
   ): Promise<void>;
   runEvalCommand(
     evalIds: readonly string[],
@@ -521,12 +526,12 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
         const title = resolveTuiTitle({ name: options.name, remoteServerUrl, appRoot });
         if (title !== undefined) display.name = title;
         const tuiInput: Parameters<CliRuntimeDependencies["runDevelopmentTui"]>[0] = {
-          serverUrl,
+          target:
+            remoteServerUrl === undefined
+              ? { kind: "local", serverUrl, appRoot }
+              : { kind: "remote", serverUrl, workspaceRoot: appRoot },
           ...display,
         };
-        if (remoteServerUrl === undefined) {
-          tuiInput.appRoot = appRoot;
-        }
         if (options.input !== undefined) {
           tuiInput.initialInput = options.input;
         }
