@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import type {
   SandboxCreateOptions,
   Sandbox as SdkSandbox,
@@ -8,7 +10,6 @@ import {
   applyInitialVercelNetworkPolicy,
   ensureVercelSandboxBaseRuntime,
 } from "#execution/sandbox/bindings/vercel-base-runtime.js";
-import { normalizeVercelFileStream } from "#execution/sandbox/bindings/vercel-file-stream.js";
 import type { SandboxBootstrapContext } from "#public/definitions/sandbox.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import type {
@@ -488,7 +489,8 @@ function createVercelInternalSandboxSession(
       return adaptVercelCommandToSandboxProcess(command);
     },
     async readFile(options: SandboxReadFileOptions) {
-      return normalizeVercelFileStream(await sandbox.readFile({ path: options.path }));
+      const stream = await sandbox.readFile({ path: options.path });
+      return stream === null ? null : Readable.toWeb(stream);
     },
     async writeFile(options: SandboxWriteFileOptions) {
       const bytes = await streamToBuffer(options.content);

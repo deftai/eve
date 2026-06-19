@@ -48,7 +48,7 @@ function createMockSandbox(input: {
       unlink: vi.fn().mockResolvedValue(undefined),
     },
     name: input.name,
-    readFile: vi.fn<() => Promise<unknown>>().mockResolvedValue(null),
+    readFile: vi.fn<() => Promise<NodeJS.ReadableStream | null>>().mockResolvedValue(null),
     runCommand: vi.fn().mockResolvedValue(createMockCommandResult()),
     snapshot: vi.fn().mockResolvedValue({ snapshotId: `${input.name}-snapshot` }),
     status: input.status ?? "running",
@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 describe("createVercelSandbox", () => {
-  it("adapts Vercel's Node file stream to Eve's Web stream contract", async () => {
+  it("adapts Vercel file reads to Eve's Web stream contract", async () => {
     const templateSandbox = createMockSandbox({ name: "template" });
     const sessionSandbox = createMockSandbox({ name: "session" });
     const sandboxModule = {
@@ -121,6 +121,7 @@ describe("createVercelSandbox", () => {
       throw new Error("Expected a file stream.");
     }
     await expect(streamToBuffer(stream)).resolves.toEqual(Buffer.from("vercel stream", "utf8"));
+    await expect(handle.session.readFile({ path: "missing.bin" })).resolves.toBeNull();
   });
 
   it("creates fresh Vercel sandboxes through the SDK with the eve image", async () => {
