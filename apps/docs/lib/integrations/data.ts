@@ -334,7 +334,7 @@ export function ComposerActions() {
   return <button onClick={() => (active ? voice.stop() : void voice.start())}>Talk</button>;
 }
 \`\`\``,
-    configure: `Set \`AI_GATEWAY_API_KEY\` so the setup route can mint short-lived AI Gateway realtime client secrets. The browser keeps the realtime audio socket open, while each finalized utterance calls Eve's turn route. Eve binds the voice session id to the authenticated principal before deriving the durable continuation token.`,
+    configure: `Set \`AI_GATEWAY_API_KEY\` so the setup route can mint short-lived AI Gateway realtime client secrets. The browser keeps the realtime audio socket open, while each finalized utterance runs as an ordinary durable turn through the existing \`/eve/v1/session\` routes and event stream. The voice session id is a client-visible correlation id only; principal binding comes from normal session-route auth.`,
   },
 };
 

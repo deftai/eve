@@ -240,6 +240,73 @@ describe("useEveVoice", () => {
     expect(realtimeState.requestResponse).not.toHaveBeenCalled();
   });
 
+  it("suppresses transcripts during an unsolicited model response", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { useEveVoice } = await import("#react/voice.js");
+
+    function TestComponent() {
+      useEveVoice({ voiceSessionId: "voice-1" });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    // A server-VAD auto-response we never solicited still marks a response in
+    // flight, so its echoed-audio transcript must not start an Eve turn.
+    realtimeOptions[0].onEvent({ raw: {}, responseId: "auto-1", type: "response-created" });
+    realtimeOptions[0].onEvent({
+      itemId: "echo-1",
+      raw: {},
+      transcript: "model echo",
+      type: "input-transcription-completed",
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("passes each transcript's own itemId to onTranscript", async () => {
+    const { useEveVoice } = await import("#react/voice.js");
+    const seen: Array<{ itemId: string; transcript: string }> = [];
+
+    function TestComponent() {
+      useEveVoice({
+        voiceSessionId: "voice-1",
+        onTranscript: ({ itemId, transcript }) => {
+          seen.push({ itemId, transcript });
+        },
+      });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    // Both finalize before the serialized turn queue drains; each turn must
+    // report the itemId captured at enqueue time, not the latest one.
+    realtimeOptions[0].onEvent({
+      itemId: "item-1",
+      raw: {},
+      transcript: "first",
+      type: "input-transcription-completed",
+    });
+    realtimeOptions[0].onEvent({
+      itemId: "item-2",
+      raw: {},
+      transcript: "second",
+      type: "input-transcription-completed",
+    });
+
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen).toEqual([
+      { itemId: "item-1", transcript: "first" },
+      { itemId: "item-2", transcript: "second" },
+    ]);
+  });
+
   it("suppresses transcriptions that arrive while the Eve reply is speaking", async () => {
     const fetch = sessionFetchMock([
       { sessionId: "session-1", events: [completedMessageEvent("Agent reply"), waiting()] },

@@ -252,7 +252,6 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   const [lastReply, setLastReply] = useState<string | undefined>(undefined);
   const [sessionId, setSessionId] = useState<string | undefined>(session.state.sessionId);
   const [streamIndex, setStreamIndex] = useState(session.state.streamIndex);
-  const expectSpeechResponseRef = useRef(false);
   const ignoreInputUntilRef = useRef(0);
   const processedInputItemsRef = useRef(new Set<string>());
   const requestResponseRef = useRef<((options?: { modalities?: string[] }) => void) | undefined>(
@@ -305,7 +304,6 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
-    expectSpeechResponseRef.current = true;
     sendEventRef.current?.({
       type: "conversation-item-create",
       item: {
@@ -325,10 +323,10 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   }, [options.fallbackReply, speakEveReply]);
 
   const runEveTurn = useCallback(
-    async (message: string) => {
+    async (message: string, itemId: string) => {
       if (options.onTranscript !== undefined) {
         const reply = await options.onTranscript({
-          itemId: latestInputItemIdRef.current ?? "",
+          itemId,
           transcript: message,
           voiceSessionId,
         });
@@ -400,12 +398,11 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
   );
 
   const turnQueueRef = useRef(Promise.resolve());
-  const latestInputItemIdRef = useRef<string | undefined>(undefined);
   const enqueueEveTurn = useCallback(
-    (message: string) => {
+    (message: string, itemId: string) => {
       turnQueueRef.current = turnQueueRef.current
         .catch(() => undefined)
-        .then(() => runEveTurn(message))
+        .then(() => runEveTurn(message, itemId))
         .catch((cause) => {
           const nextError = cause instanceof Error ? cause : new Error(String(cause));
           handleError(nextError);
@@ -418,16 +415,15 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
     (event: Experimental_RealtimeServerEvent) => {
       switch (event.type) {
         case "response-created":
-          if (!expectSpeechResponseRef.current) {
-            break;
-          }
-          expectSpeechResponseRef.current = false;
+          // Suppress user transcripts for the lifetime of ANY model response,
+          // not only ones solicited via speak(). A server-VAD auto-response
+          // would otherwise play with no in-flight flag set, and its own audio
+          // could be transcribed back and enqueued as a spurious user turn.
           responseInFlightRef.current = true;
           break;
         case "response-done":
         case "error":
           responseInFlightRef.current = false;
-          expectSpeechResponseRef.current = false;
           ignoreInputUntilRef.current = Date.now() + ECHO_SUPPRESSION_MS;
           break;
         case "speech-started":
@@ -447,7 +443,6 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
             const oldest = processedInputItemsRef.current.values().next().value;
             if (oldest !== undefined) processedInputItemsRef.current.delete(oldest);
           }
-          latestInputItemIdRef.current = event.itemId;
           const transcript = event.transcript.trim();
           if (transcript.length === 0) {
             break;
@@ -455,7 +450,7 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
           if (responseInFlightRef.current || Date.now() < ignoreInputUntilRef.current) {
             break;
           }
-          enqueueEveTurn(transcript);
+          enqueueEveTurn(transcript, event.itemId);
           break;
       }
       options.onEvent?.(event as EveVoiceEvent);
@@ -481,7 +476,6 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
     realtime.stopAudioCapture();
     realtime.stopPlayback();
     realtime.disconnect();
-    expectSpeechResponseRef.current = false;
     ignoreInputUntilRef.current = 0;
     processedInputItemsRef.current.clear();
     responseInFlightRef.current = false;
