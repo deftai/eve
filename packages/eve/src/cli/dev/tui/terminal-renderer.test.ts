@@ -200,6 +200,8 @@ describe("TerminalRenderer (inline scrollback)", () => {
     renderer.shutdown();
   });
 
+  // The first Ctrl+C is a turn-level action, so the TUI must preserve the
+  // session cursor while returning control to the prompt instead of exiting.
   it("interrupts a running response and returns to the prompt without exiting", async () => {
     const { screen, input, renderer } = makeRenderer();
     let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;

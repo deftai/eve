@@ -197,6 +197,8 @@ describe("EveAgentStore (Vue composable backing store)", () => {
     ]);
   });
 
+  // Async preparation is still pre-dispatch: stopping here must leave no
+  // optimistic message or submitted state behind when preparation resolves.
   it("returns to ready when stopped while prepareSend is pending", async () => {
     const preparedInput = createDeferred<SendTurnPayload>();
     const fetchMock = vi

@@ -225,6 +225,8 @@ describe("useEveAgent", () => {
     );
   });
 
+  // Stop can arrive before the POST returns its cancel token, so the client
+  // must replay that intent as soon as the server handle becomes available.
   it("remembers a stop requested while the turn POST is pending", async () => {
     const startResponse = createDeferred<Response>();
     const streamResponse = createEagerStreamResponse([createSessionWaitingEvent()]);

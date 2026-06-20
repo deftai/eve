@@ -50,6 +50,8 @@ function createStreamResponse(events: readonly unknown[]) {
 }
 
 describe("ClientSession", () => {
+  // Repeated stop actions must share one server request so rapid clicks cannot
+  // race multiple cancellations for the same turn.
   it("cancels the active server turn without aborting the session", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
