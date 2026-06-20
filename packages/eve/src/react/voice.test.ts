@@ -342,6 +342,32 @@ describe("useEveVoice", () => {
     expect(postCalls(fetch)).toHaveLength(1);
   });
 
+  it("does not run client turns in gateway-control mode", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { useEveVoice } = await import("#react/voice.js");
+
+    function TestComponent() {
+      useEveVoice({ voiceSessionId: "voice-1", controlMode: true });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    // Gateway drives turns over its control socket; the browser only streams
+    // audio, so a finalized transcript must not start a client-side turn.
+    realtimeOptions[0].onEvent({
+      itemId: "item-1",
+      raw: {},
+      transcript: "hello",
+      type: "input-transcription-completed",
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("ignores empty transcription completions", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

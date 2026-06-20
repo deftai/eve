@@ -34,7 +34,9 @@ export {
 } from "#channel/websocket-upgrade-server.js";
 export {
   realtimeSpeechChannel,
+  type RealtimeControlConfig,
   type RealtimeSpeechChannelInput,
+  type RealtimeSpeechControlInput,
   type RealtimeSpeechSetupResponse,
 } from "#public/channels/vercel/speech.js";
 

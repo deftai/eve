@@ -109,6 +109,10 @@ export function App() {
   });
   agentRef.current = agent;
   const voice = useEveVoice({
+    // Opt into Gateway-owned control mode (A-lite): the Gateway drives turns
+    // over its server-side control socket, so the browser only streams audio
+    // and `onTranscript` below is not used. Defaults off (client-driven path).
+    controlMode: process.env.NEXT_PUBLIC_EVE_VOICE_CONTROL === "1",
     onEvent(event) {
       if (event.type === "input-transcription-completed") {
         setVoiceCaption(`Heard: ${event.transcript}`);

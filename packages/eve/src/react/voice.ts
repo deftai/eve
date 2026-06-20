@@ -33,6 +33,14 @@ export interface UseEveVoiceOptions {
   readonly setupUrl?: string;
   readonly voiceSessionId?: string;
   /**
+   * Gateway-owned control mode (A-lite). When true, AI Gateway drives durable
+   * turns over its server-side control socket, so the browser only streams
+   * audio: the hook does not run client-side `/eve/v1/session` turns, call
+   * `onTranscript`, or speak replies (Gateway injects TTS). Use this when the
+   * channel is configured with `control`.
+   */
+  readonly controlMode?: boolean;
+  /**
    * Spoken when a turn fails before producing any assistant text. Off by
    * default: a failed turn surfaces through `onError`/`status` instead of
    * speaking a canned line, and a fallback is never spoken when the turn
@@ -435,6 +443,11 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
           break;
         case "input-transcription-completed":
           setIsUserSpeaking(false);
+          // In Gateway-control mode the server drives turns over its control
+          // socket; the browser only streams audio and never runs client turns.
+          if (options.controlMode) {
+            break;
+          }
           if (processedInputItemsRef.current.has(event.itemId)) {
             break;
           }
@@ -455,7 +468,7 @@ export function useEveVoice(options: UseEveVoiceOptions = {}): UseEveVoiceResult
       }
       options.onEvent?.(event as EveVoiceEvent);
     },
-    [enqueueEveTurn, options.onEvent],
+    [enqueueEveTurn, options.controlMode, options.onEvent],
   );
 
   const sendEventRef = useRef<((event: Experimental_RealtimeClientEvent) => void) | undefined>(

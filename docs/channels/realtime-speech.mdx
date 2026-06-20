@@ -102,6 +102,29 @@ The default client session config uses `outputModalities: ["audio"]`, `inputAudi
 
 `sessionConfig` is merged over the defaults, so passing `instructions` replaces the built-in speech-adapter prompt that drives reply playback (it tells the model to speak only the text after the `EVE_SPEAK:` marker). If you override `instructions`, keep that marker behavior or Eve's replies will not be spoken.
 
-## Roadmap
+## Gateway-owned control mode (A-lite, experimental)
 
-In the shipped mode above, the client (or app) owns turn timing. A future **server-owned control mode** is planned but **not yet available**: AI Gateway will dial an Eve `WS()` control route with a signed, short-lived control token. Eve will verify the token and own turn coordination (debounce, barge-in, enforced ears-only), receiving final-transcript and lifecycle packets and streaming `response.delta` / `response.done` back as semantic packets for Gateway to inject into the provider's TTS. Audio still never flows through Eve. Until that ships, use the durable-session path described here.
+In the default mode above the client (or app) owns turn timing. The experimental **Gateway-owned control mode** instead lets AI Gateway drive turns: per live session it dials an Eve `WS()` control route with a signed, short-lived control token; Eve verifies it, owns turn coordination (settle-debounce, backchannel/duplicate suppression, barge-in), runs durable turns, and streams reply text back as semantic `response.delta` / `response.done` packets that Gateway injects into the provider's TTS. Audio still never flows through Eve, and the browser is frame-filtered by Gateway so only Eve can trigger speech.
+
+This requires the matching AI Gateway control feature to be enabled for your team. Enable it on the channel:
+
+```ts
+export default realtimeSpeechChannel({
+  auth: [localDev(), vercelOidc()],
+  control: true,
+});
+```
+
+and put the browser hook in control mode so it only streams audio (no client-driven turns):
+
+```tsx
+const voice = useEveVoice({ controlMode: true });
+```
+
+`control: true` makes `/setup` mint a token carrying an Eve control URL + signed control token, and serves the `{basePath}/ws` route Gateway dials. Configuration:
+
+- **`EVE_REALTIME_CONTROL_URL`** — full `wss://` (or `ws://localhost`) control URL. For local dev, expose Eve via a tunnel (ngrok/cloudflared) or a preview deployment and point this at `wss://<host>/eve/v1/realtime-speech/ws`. Otherwise Eve derives it from the deployment host (`VERCEL_BRANCH_URL` / `VERCEL_URL`).
+- **`EVE_REALTIME_CONTROL_SECRET`** — HMAC secret for control tokens. Falls back to a derivation of `AI_GATEWAY_API_KEY` so previews work without extra config.
+- **`VERCEL_AUTOMATION_BYPASS_SECRET`** (or `VERCEL_DPBP`) — when set, appended to the minted control URL as `x-vercel-protection-bypass` so Gateway can dial a protection-enabled preview. Temporary, for protected-preview testing.
+
+Eve degrades gracefully: it uses final transcripts (partials are optional), only promises barge-in when Gateway sends interruption signals, and still runs durable turns even if the provider cannot speak. The default durable-session path remains available and is the recommended fallback.
