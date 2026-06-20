@@ -810,6 +810,9 @@ function createRecordingDispatch(
           async readTextFile() {
             return null;
           },
+          getNetworkPolicy() {
+            return "allow-all";
+          },
           async setNetworkPolicy() {},
           async removePath() {},
           resolvePath(path: string) {

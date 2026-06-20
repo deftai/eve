@@ -52,6 +52,10 @@ export interface MockSandboxInput {
   readonly run?: (
     options: SandboxRunOptions,
   ) => Promise<SandboxCommandResult> | SandboxCommandResult;
+  /**
+   * Network policy seeded on the mock before any `setNetworkPolicy` call.
+   */
+  readonly initialNetworkPolicy?: SandboxNetworkPolicy;
 }
 
 /**
@@ -119,6 +123,7 @@ export function mockSandbox(input: MockSandboxInput = {}): MockSandbox {
   const commandLog: string[] = [];
   const removedPaths: string[] = [];
   const networkPolicyUpdates: SandboxNetworkPolicy[] = [];
+  let currentNetworkPolicy: SandboxNetworkPolicy = input.initialNetworkPolicy ?? "allow-all";
 
   for (const [path, contents] of Object.entries(input.initialFiles ?? {})) {
     const resolved = resolveWorkspacePath(path);
@@ -179,7 +184,11 @@ export function mockSandbox(input: MockSandboxInput = {}): MockSandbox {
     resolvePath(path: string): string {
       return resolveWorkspacePath(path);
     },
+    getNetworkPolicy(): SandboxNetworkPolicy {
+      return currentNetworkPolicy;
+    },
     async setNetworkPolicy(policy: SandboxNetworkPolicy): Promise<void> {
+      currentNetworkPolicy = policy;
       networkPolicyUpdates.push(policy);
     },
     async run(options: SandboxRunOptions): Promise<SandboxCommandResult> {

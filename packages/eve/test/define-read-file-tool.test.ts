@@ -27,6 +27,9 @@ function createFakeAccess(files: Record<string, string>): SandboxAccess {
         async readTextFile({ path }: { path: string }) {
           return files[path] ?? null;
         },
+        getNetworkPolicy() {
+          return "allow-all";
+        },
         async setNetworkPolicy() {},
         async removePath() {},
         resolvePath(path: string) {

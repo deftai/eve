@@ -34,7 +34,7 @@ import type {
 } from "#public/sandbox/vercel-sandbox.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
-import { buildSandboxSession } from "#execution/sandbox/session.js";
+import { buildSandboxSession, type SandboxNetworkPolicyRef } from "#execution/sandbox/session.js";
 import { streamToBuffer } from "#execution/sandbox/stream-utils.js";
 import {
   createVercelEveImageSandbox,
@@ -54,12 +54,7 @@ export interface CreateVercelSandboxInput {
   readonly loadSandboxModule?: () => Promise<VercelSandboxModule>;
 }
 /**
- * Creates the Vercel-backed sandbox backend.
- *
- * Any author-supplied `createOptions` are forwarded to Vercel's sandbox
- * create API for every fresh sandbox the framework creates (template at
- * prewarm time, session at first-time session-create). On resume
- * (`Sandbox.get`) no create happens, so they are not re-applied.
+ * Vercel-backed sandbox backend. Author `createOptions` apply on fresh create/prewarm; resume via `Sandbox.get` does not re-apply them.
  */
 export function createVercelSandbox(
   input: CreateVercelSandboxInput = {},
@@ -78,8 +73,7 @@ export function createVercelSandbox(
     async create(
       createInput: SandboxBackendCreateInput,
     ): Promise<SandboxBackendHandle<VercelSandboxSessionUseOptions>> {
-      // Resolve tags up-front so tag-count validation fails fast before
-      // we go to the network for the template snapshot.
+      // Fail fast on tag limits before fetching the template snapshot.
       const tags = resolveVercelSandboxTags(createOptions.tags, createInput.tags);
 
       const template =
@@ -132,7 +126,7 @@ export function createVercelSandbox(
         await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
       }
 
-      return createHandle(session.sandbox, createInput.sessionKey);
+      return createHandle(session.sandbox, createInput.sessionKey, createOptions.networkPolicy);
     },
     async prewarm(
       prewarmInput: SandboxBackendPrewarmInput<VercelSandboxBootstrapUseOptions>,
@@ -249,12 +243,7 @@ async function readTemplateForCreate(input: {
   }
 }
 
-/**
- * Creates or refreshes one named Vercel sandbox template and returns the
- * resulting snapshot metadata along with whether an existing snapshot
- * was reused. Internal — exposed only to the prewarm pipeline through
- * the backend's `prewarm` method.
- */
+/** Creates or refreshes one named template snapshot for prewarm; returns reuse metadata. */
 async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplateOutcome> {
   const sandboxModule = await input.loadSandboxModule();
   let sandbox = await getNamedVercelSandbox({
@@ -284,16 +273,7 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
     await ensureVercelSandboxTags(sandbox, tags);
   }
 
-  /*
-   * A non-empty `currentSnapshotId` normally means "this template was
-   * prewarmed in a previous run — reuse it." But with an author-supplied
-   * `source: snapshot`, the SDK pre-populates `currentSnapshotId` with
-   * the *author's* snapshotId both on a fresh create and on every
-   * subsequent `getNamedSandbox` reuse until we run our own snapshot.
-   * So we ignore that exact value: it's the author's base layer, not a
-   * framework snapshot, and we still owe `ensureSandboxWorkingDirectory`,
-   * bootstrap, seed file writes, and `sandbox.snapshot()` on top.
-   */
+  // Author `source: snapshot` seeds currentSnapshotId before our framework snapshot; ignore until bootstrap + snapshot complete.
   const hasFrameworkSnapshot =
     typeof sandbox.currentSnapshotId === "string" &&
     sandbox.currentSnapshotId.length > 0 &&
@@ -317,6 +297,7 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
   const templateSession = buildSandboxSession(
     createVercelInternalSandboxSession(sandbox, input.templateKey),
     createVercelNetworkPolicySetter(sandbox),
+    input.createOptions.networkPolicy,
   );
 
   if (input.bootstrap !== undefined) {
@@ -408,13 +389,7 @@ function createSessionCreateParams(
     });
   }
 
-  /*
-   * Strip both `source` and `runtime` from author-supplied create
-   * options for the template-backed session path. The framework owns
-   * the session source there, and the Vercel SDK rejects `runtime`
-   * when `source` is a snapshot because the runtime is already baked
-   * into the snapshot filesystem.
-   */
+  // Template-backed sessions: framework owns snapshot source; strip author source/runtime (SDK rejects runtime on snapshot source).
   const { runtime: _runtime, source: _source, ...sessionCreateOptions } = input.createOptions;
 
   return {
@@ -434,20 +409,26 @@ function withBaseSetupNetworkPolicy(
 function createHandle(
   sandbox: SdkSandbox,
   sessionKey: string,
+  initialNetworkPolicy?: SandboxNetworkPolicy,
 ): SandboxBackendHandle<VercelSandboxSessionUseOptions> {
+  const policyRef: SandboxNetworkPolicyRef = { current: initialNetworkPolicy ?? "allow-all" };
+  const session = buildSandboxSession(
+    createVercelInternalSandboxSession(sandbox, sessionKey),
+    createVercelNetworkPolicySetter(sandbox),
+    undefined,
+    policyRef,
+  );
+
   return {
-    session: buildSandboxSession(
-      createVercelInternalSandboxSession(sandbox, sessionKey),
-      createVercelNetworkPolicySetter(sandbox),
-    ),
+    session,
     useSessionFn: async (options?: VercelSandboxSessionUseOptions) => {
       if (options !== undefined) {
         await sandbox.update(options);
+        if (options.networkPolicy !== undefined) {
+          policyRef.current = options.networkPolicy;
+        }
       }
-      return buildSandboxSession(
-        createVercelInternalSandboxSession(sandbox, sessionKey),
-        createVercelNetworkPolicySetter(sandbox),
-      );
+      return session;
     },
     async captureState() {
       return {
@@ -504,12 +485,7 @@ function createVercelInternalSandboxSession(
   };
 }
 
-/**
- * Wraps a Vercel `Command` (returned from `runCommand({ detached: true })`)
- * in the AI SDK `Experimental_SandboxProcess` shape. Splits the single
- * `logs()` iterator into two byte streams, exposes a `wait()` that
- * resolves with the exit code, and forwards `kill()` to the SDK.
- */
+/** Adapts a detached Vercel command to the AI SDK `Experimental_SandboxProcess` shape (split logs, wait, kill). */
 function adaptVercelCommandToSandboxProcess(command: SdkSandboxCommand): SandboxProcess {
   const encoder = new TextEncoder();
   let stdoutController: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -691,10 +667,8 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-/**
- * 30 minutes. The `@vercel/sandbox` SDK defaults to 5 minutes which is
- * too short for multi-step workflows — the VM expires between steps.
- */
+/** 30 minutes — `@vercel/sandbox` defaults to 5 minutes, too short for multi-step workflows. */
 const DEFAULT_SANDBOX_TIMEOUT_MS = 30 * 60 * 1_000;
 
+/** Max tags per Vercel sandbox (eve reserves agent, channel, and sessionId). */
 const VERCEL_SANDBOX_TAG_LIMIT = 5;

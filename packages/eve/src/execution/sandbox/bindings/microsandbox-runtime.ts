@@ -85,6 +85,10 @@ export class MicrosandboxVm {
     return this.#input.sessionKey;
   }
 
+  get networkPolicy(): SandboxNetworkPolicy | undefined {
+    return this.#networkPolicy;
+  }
+
   async captureState(optionsHash: string): Promise<MicrosandboxSessionMetadata> {
     this.#optionsHash = optionsHash;
     if (isEveDevEnvironment()) {
@@ -319,6 +323,8 @@ export async function createPreparedMicrosandbox(input: {
     await withProgressHeartbeat("preparing base runtime inside VM", input.log, async () => {
       await ensureMicrosandboxBaseRuntime(sandbox, { log: input.log });
     });
+    // Base setup runs at allow-all; setNetworkPolicy recreates the VM, so skip
+    // when the author's target policy is already the open default.
     if (input.networkPolicy !== undefined && input.networkPolicy !== "allow-all") {
       input.log?.("applying network policy");
       await vm.setNetworkPolicy(input.networkPolicy);

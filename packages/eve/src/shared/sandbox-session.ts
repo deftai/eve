@@ -136,6 +136,12 @@ export interface SandboxSession extends Pick<
    */
   setNetworkPolicy(policy: SandboxNetworkPolicy): Promise<void>;
   /**
+   * Returns the network policy in effect on this session handle: the last
+   * value passed to {@link setNetworkPolicy}, the policy seeded at
+   * construction, or `"allow-all"` when neither applies.
+   */
+  getNetworkPolicy(): SandboxNetworkPolicy;
+  /**
    * Removes one file or directory from the sandbox filesystem.
    *
    * Relative paths resolve from `/workspace`; absolute paths pass through.

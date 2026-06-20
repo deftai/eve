@@ -17,6 +17,9 @@ import { bufferToStream, streamToBuffer } from "./stream-utils.js";
 
 export type { InternalSandboxSession };
 
+/** Shared network-policy slot for handles that outlive a single {@link SandboxSession} build. */
+export type SandboxNetworkPolicyRef = { current: SandboxNetworkPolicy };
+
 /**
  * Builds a public {@link SandboxSession} from backend-specific primitives.
  *
@@ -33,7 +36,21 @@ export type { InternalSandboxSession };
 export function buildSandboxSession(
   primitives: InternalSandboxSession,
   setNetworkPolicy: (policy: SandboxNetworkPolicy) => Promise<void> = async () => {},
+  initialNetworkPolicy?: SandboxNetworkPolicy,
+  policyRef?: SandboxNetworkPolicyRef,
 ): SandboxSession {
+  const state: SandboxNetworkPolicyRef = policyRef ?? {
+    current: initialNetworkPolicy ?? "allow-all",
+  };
+  if (policyRef !== undefined && initialNetworkPolicy !== undefined) {
+    policyRef.current = initialNetworkPolicy;
+  }
+
+  async function applyNetworkPolicy(policy: SandboxNetworkPolicy): Promise<void> {
+    state.current = policy;
+    await setNetworkPolicy(policy);
+  }
+
   async function run(options: SandboxRunOptions) {
     const process = await primitives.spawn(options);
     const [stdout, stderr, { exitCode }] = await Promise.all([
@@ -111,7 +128,10 @@ export function buildSandboxSession(
         recursive: options.recursive,
       });
     },
-    setNetworkPolicy,
+    getNetworkPolicy(): SandboxNetworkPolicy {
+      return state.current;
+    },
+    setNetworkPolicy: applyNetworkPolicy,
   };
 }
 

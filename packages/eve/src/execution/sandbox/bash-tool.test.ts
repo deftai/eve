@@ -48,6 +48,9 @@ function createTestSandboxSession(result: SandboxCommandResult): SandboxSession 
     removePath: async () => {},
     resolvePath: (path) => path,
     run: vi.fn().mockResolvedValue(result),
+    getNetworkPolicy() {
+      return "allow-all";
+    },
     setNetworkPolicy: async () => {},
     spawn: async () => {
       throw new Error("spawn is not implemented in this test sandbox");

@@ -35,6 +35,9 @@ function createFakeAccess(files: Record<string, string | null>): SandboxAccess {
           if (content === undefined) return null;
           return content;
         },
+        getNetworkPolicy() {
+          return "allow-all";
+        },
         async setNetworkPolicy() {},
         async removePath() {},
         resolvePath(path: string) {

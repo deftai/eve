@@ -128,6 +128,7 @@ export function createDockerSandboxBackend(
       try {
         prewarmInput.log?.("preparing base runtime inside container");
         await runDockerBaseSetup(cli, buildContainerName);
+        // Bootstrap runs on bridge (allow-all); skip redundant docker network calls.
         if (options.networkPolicy !== "allow-all") {
           prewarmInput.log?.("applying network policy");
           await setDockerNetworkPolicy(cli, buildContainerName, options.networkPolicy);
@@ -140,6 +141,7 @@ export function createDockerSandboxBackend(
             id: prewarmInput.templateKey,
           }),
           (policy) => setDockerNetworkPolicy(cli, buildContainerName, policy),
+          options.networkPolicy,
         );
 
         if (prewarmInput.bootstrap !== undefined) {
@@ -256,6 +258,7 @@ export function createDockerSandboxBackend(
 
         if (createInput.templateKey === null) {
           await runDockerBaseSetup(cli, containerName);
+          // Container started on bridge; only apply when locking down egress.
           if (options.networkPolicy !== "allow-all") {
             await setDockerNetworkPolicy(cli, containerName, options.networkPolicy);
           }
@@ -265,6 +268,7 @@ export function createDockerSandboxBackend(
       const session = buildSandboxSession(
         createDockerInternalSession({ cli, containerName, id: createInput.sessionKey }),
         (policy) => setDockerNetworkPolicy(cli, containerName, policy),
+        options.networkPolicy,
       );
 
       return {

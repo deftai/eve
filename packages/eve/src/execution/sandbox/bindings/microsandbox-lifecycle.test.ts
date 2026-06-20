@@ -236,6 +236,9 @@ function createFakeMicrosandboxVm(sessionKey: string) {
       files.delete(path);
     },
     async removePersisted() {},
+    getNetworkPolicy() {
+      return "allow-all";
+    },
     async setNetworkPolicy() {},
     async spawn() {
       throw new Error("spawn is not used by this test.");

@@ -35,6 +35,9 @@ function createFakeAccess(files: Record<string, string>): {
       const content = files[path];
       return content ?? null;
     },
+    getNetworkPolicy() {
+      return "allow-all";
+    },
     async setNetworkPolicy() {},
     async removePath({ path }: { path: string }) {
       delete files[path];

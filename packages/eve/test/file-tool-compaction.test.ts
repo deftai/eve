@@ -31,6 +31,9 @@ function createFakeAccess(files: Record<string, string>): {
     async readTextFile({ path }: { path: string }) {
       return files[path] ?? null;
     },
+    getNetworkPolicy() {
+      return "allow-all";
+    },
     async setNetworkPolicy() {},
     async removePath({ path }: { path: string }) {
       delete files[path];

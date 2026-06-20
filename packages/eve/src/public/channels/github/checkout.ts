@@ -93,53 +93,58 @@ export async function checkoutGitHubRepository(
   });
   const remote = publicRemoteUrl({ owner: descriptor.owner, repo: descriptor.repo });
   const fetchedRef = isFullSha(checkoutRef) ? checkoutRef : "FETCH_HEAD";
+  const priorPolicy = sandbox.getNetworkPolicy();
 
-  // Broker the installation token at the sandbox firewall: git fetches a clean
-  // (token-free) URL and the platform injects `Authorization` on egress to
-  // GitHub, so the token never enters the sandbox process. The `"*"` rule keeps
-  // the agent's other egress open.
-  await sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token));
+  try {
+    // Broker the installation token at the sandbox firewall: git fetches a clean
+    // (token-free) URL and the platform injects `Authorization` on egress to
+    // GitHub, so the token never enters the sandbox process. The `"*"` rule keeps
+    // the agent's other egress open for the duration of the fetch window only.
+    await sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token));
 
-  await runCheckoutCommand({
-    command: `mkdir -p ${shellQuote(checkoutPath)}`,
-    label: "create checkout directory",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git init`,
-    label: "initialize git repository",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git remote remove origin >/dev/null 2>&1 || true`,
-    label: "reset git remote",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git remote add origin ${shellQuote(remote)}`,
-    label: "configure git remote",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
-      checkoutRef,
-    )}`,
-    label: "fetch GitHub ref",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git checkout --detach ${shellQuote(fetchedRef)}`,
-    label: "checkout GitHub ref",
-    sandbox,
-  });
-  if (input.includeBase === true && descriptor.baseSha !== null) {
     await runCheckoutCommand({
-      command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
-        descriptor.baseSha,
-      )}`,
-      label: "fetch GitHub base ref",
+      command: `mkdir -p ${shellQuote(checkoutPath)}`,
+      label: "create checkout directory",
       sandbox,
     });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git init`,
+      label: "initialize git repository",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git remote remove origin >/dev/null 2>&1 || true`,
+      label: "reset git remote",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git remote add origin ${shellQuote(remote)}`,
+      label: "configure git remote",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
+        checkoutRef,
+      )}`,
+      label: "fetch GitHub ref",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git checkout --detach ${shellQuote(fetchedRef)}`,
+      label: "checkout GitHub ref",
+      sandbox,
+    });
+    if (input.includeBase === true && descriptor.baseSha !== null) {
+      await runCheckoutCommand({
+        command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
+          descriptor.baseSha,
+        )}`,
+        label: "fetch GitHub base ref",
+        sandbox,
+      });
+    }
+  } finally {
+    await sandbox.setNetworkPolicy(priorPolicy);
   }
 
   const head = await runCheckoutCommand({

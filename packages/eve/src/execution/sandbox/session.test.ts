@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { InternalSandboxSession } from "#execution/sandbox/session.js";
 import type { SandboxProcess } from "#shared/sandbox-session.js";
-import { buildSandboxSession } from "#execution/sandbox/session.js";
+import { buildSandboxSession, type SandboxNetworkPolicyRef } from "#execution/sandbox/session.js";
 import { bufferToStream, streamToBuffer } from "#execution/sandbox/stream-utils.js";
 
 function textStream(content: string): ReadableStream<Uint8Array> {
@@ -71,6 +71,40 @@ describe("buildSandboxSession", () => {
     const session = buildSandboxSession(createTestPrimitives());
 
     await expect(session.setNetworkPolicy("deny-all")).resolves.toBeUndefined();
+  });
+
+  it("defaults getNetworkPolicy to allow-all", () => {
+    const session = buildSandboxSession(createTestPrimitives());
+
+    expect(session.getNetworkPolicy()).toBe("allow-all");
+  });
+
+  it("seeds getNetworkPolicy from the initial policy", () => {
+    const session = buildSandboxSession(createTestPrimitives(), async () => {}, "deny-all");
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("updates getNetworkPolicy after setNetworkPolicy", async () => {
+    const session = buildSandboxSession(createTestPrimitives(), async () => {}, "allow-all");
+
+    await session.setNetworkPolicy("deny-all");
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("tracks network policy through a shared ref", async () => {
+    const policyRef: SandboxNetworkPolicyRef = { current: "allow-all" };
+    const session = buildSandboxSession(
+      createTestPrimitives(),
+      async () => {},
+      undefined,
+      policyRef,
+    );
+
+    policyRef.current = "deny-all";
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
   });
 
   // ---------------------------------------------------------------------------

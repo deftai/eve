@@ -34,7 +34,7 @@ import {
 } from "#execution/sandbox/bindings/microsandbox-templates.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
 import { withDevelopmentSandboxMetadataPathTag } from "#execution/sandbox/development-run.js";
-import { buildSandboxSession } from "#execution/sandbox/session.js";
+import { buildSandboxSession, type SandboxNetworkPolicyRef } from "#execution/sandbox/session.js";
 import { resolveSandboxCacheDirectory } from "#internal/application/paths.js";
 import type {
   SandboxBackendCreateInput,
@@ -115,6 +115,7 @@ export async function prewarmMicrosandboxTemplate(input: {
     async (policy) => {
       await templateSandbox.setNetworkPolicy(policy);
     },
+    input.options.networkPolicy,
   );
 
   try {
@@ -284,21 +285,26 @@ function createHandle(
   optionsHash: string,
   onDispose?: () => void,
 ): SandboxBackendHandle<MicrosandboxSessionUseOptions> {
+  const policyRef: SandboxNetworkPolicyRef = {
+    current: sandbox.networkPolicy ?? "allow-all",
+  };
   const session = buildSandboxSession(
     createMicrosandboxInternalSession(sandbox),
     async (policy) => {
       await sandbox.setNetworkPolicy(policy);
     },
+    undefined,
+    policyRef,
   );
+
   return {
     session,
     useSessionFn: async (options?: MicrosandboxSessionUseOptions) => {
       if (options?.networkPolicy !== undefined) {
         await sandbox.setNetworkPolicy(options.networkPolicy);
+        policyRef.current = options.networkPolicy;
       }
-      return buildSandboxSession(createMicrosandboxInternalSession(sandbox), async (policy) => {
-        await sandbox.setNetworkPolicy(policy);
-      });
+      return session;
     },
     async captureState() {
       const metadata = await sandbox.captureState(optionsHash);
