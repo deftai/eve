@@ -5,11 +5,6 @@ import {
   isVercelAuthChallenge,
   vercelTrustedSourcesErrorCode,
 } from "#services/dev-client/vercel-auth-error.js";
-import {
-  appendRemoteAuthMutationSummary,
-  type RemoteAuthCompletedMutation,
-  type RemoteAuthPreparation,
-} from "#setup/flows/remote-auth.js";
 import type {
   ResolvedVercelDeployment,
   VercelDeploymentResolution,
@@ -18,6 +13,11 @@ import type {
 import { toErrorMessage } from "#shared/errors.js";
 import { isObject } from "#shared/guards.js";
 
+import {
+  appendRemoteAuthMutationSummary,
+  type RemoteAuthCompletedMutation,
+  type RemoteAuthPreparation,
+} from "./remote-auth-result.js";
 import { remoteHost, type RemoteDevelopmentTarget } from "./target.js";
 
 export type RemoteAuthChallenge =
@@ -319,7 +319,7 @@ export function createRemoteConnectionController(
         };
       }
       if (preparation.kind === "failed") {
-        update({ state: "auth-failed", challenge });
+        update(previous.state === "ready" ? previous : { state: "auth-failed", challenge });
         return { kind: "failed", message: preparation.message };
       }
       if (operation.signal.aborted) {

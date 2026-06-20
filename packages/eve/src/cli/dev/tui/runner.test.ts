@@ -10,7 +10,6 @@ import {
 } from "#client/index.js";
 import { resolveTestVercelTarget } from "#internal/testing/verified-vercel-target.js";
 import { createDevelopmentCredentialGate } from "#services/dev-client/credential-gate.js";
-import type { RemoteAuthCompletedMutation, RemoteAuthFlow } from "#setup/flows/remote-auth.js";
 
 import {
   EveTUIRunner,
@@ -23,6 +22,8 @@ import {
 } from "./runner.js";
 import { createPromptCommandHandler } from "./prompt-command-handler.js";
 import { promptCommandsFor } from "./prompt-commands.js";
+import type { RemoteAuthFlow } from "./remote-auth.js";
+import type { RemoteAuthCompletedMutation } from "./remote-auth-result.js";
 import type { SetupFlowRenderer } from "./setup-flow.js";
 import type { VercelStatusSnapshot } from "./vercel-status.js";
 
@@ -1241,7 +1242,9 @@ describe("EveTUIRunner remote authentication", () => {
       );
     const commandInvocations: Array<{ text: string; status: "failed" | undefined }> = [];
     const commandResults: string[] = [];
-    const flow = successfulAuth([{ kind: "environment-pulled" }]);
+    const flow = successfulAuth([
+      { kind: "trusted-sources-updated", targetProjectName: "remote-agent" },
+    ]);
 
     await runRemoteAuth({
       client,
@@ -1256,7 +1259,7 @@ describe("EveTUIRunner remote authentication", () => {
     expect(commandResults).toEqual([
       "Authentication was refreshed, but vpoke.playground-vercel.tools is unavailable: " +
         "Your trusted sources OIDC token's environment is not permitted to access this deployment.\n\n" +
-        "TRUSTED_SOURCES_ENVIRONMENT_MISMATCH Completed before the failure: refreshed .env.local.",
+        "TRUSTED_SOURCES_ENVIRONMENT_MISMATCH Completed before the failure: updated Trusted Sources for remote-agent.",
     ]);
   });
 
@@ -1290,6 +1293,36 @@ describe("EveTUIRunner remote authentication", () => {
     }).run();
 
     expect(statuses.at(-1)).toBe("unavailable");
+  });
+
+  it("keeps a ready remote connected after an agent session failure", async () => {
+    const client = stubClient();
+    vi.spyOn(client, "info").mockResolvedValue(AGENT_INFO);
+    const session = sessionYielding([
+      {
+        type: "session.failed",
+        data: { code: "HookConflictError", message: "HookConflictError: token in use" },
+      },
+    ]);
+    const statuses: string[] = [];
+    const readPrompt = vi.fn().mockResolvedValueOnce("hello").mockResolvedValueOnce(undefined);
+
+    await new EveTUIRunner({
+      session,
+      client,
+      renderer: fakeRenderer({
+        readPrompt,
+        renderStream: vi.fn(async (result) => {
+          for await (const event of result.events as AsyncIterable<unknown>) void event;
+        }),
+        setRemoteConnectionStatus: (snapshot) => statuses.push(snapshot.connection.state),
+      }),
+      serverUrl: target.serverUrl,
+      remote: remoteOptions(),
+    }).run();
+
+    expect(statuses.at(-1)).toBe("ready");
+    expect(statuses).not.toContain("unavailable");
   });
 });
 

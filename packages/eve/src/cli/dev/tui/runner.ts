@@ -200,7 +200,7 @@ export type AgentTUIRenderer = {
   renderSetupWarning?(text: string): void;
   /** Clears the setup attention line once its issue is resolved. */
   clearSetupWarning?(): void;
-  /** Commits a synthetic slash-command invocation, used by automatic setup flows. */
+  /** Commits the startup `/vc:auth` invocation to the transcript. */
   renderCommandInvocation?(text: string, status?: "failed"): void;
   renderCommandResult?(text: string): void;
   readonly setupFlow?: SetupFlowRenderer;
@@ -920,8 +920,7 @@ export class EveTUIRunner {
         onSubagentCompleted: (callId) => this.#stopSubagentChildPump(callId),
         onConnectionAuthRequired: (event) => this.#handleConnectionAuthRequired(event),
         onConnectionAuthCompleted: (event) => this.#handleConnectionAuthCompleted(event),
-        onTerminalFailure: (event) => {
-          this.#remoteConnection?.reportFailure(new Error(event.data.message));
+        onTerminalFailure: () => {
           this.#sessionFailed = true;
         },
         failureOverride:
@@ -1045,7 +1044,7 @@ export class EveTUIRunner {
     }
     if (outcome?.vercelEffect !== undefined) {
       this.#vercelStatus?.applyEffect(outcome.vercelEffect);
-      // A command changed Vercel state (e.g. /vc:login). Stop a still-pending
+      // A command changed Vercel state (e.g. /login). Stop a still-pending
       // boot probe from painting a now-stale hint, and re-evaluate the
       // attention line so a fixed issue clears instead of lingering.
       this.#authHintStale = true;

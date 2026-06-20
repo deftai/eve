@@ -57,14 +57,14 @@ function projectConnectionOption(authStatus: VercelAuthStatus): SelectOption<Gat
       return {
         ...option,
         disabled: true,
-        disabledReason: "Vercel CLI not found, see /vc:install",
+        disabledReason: "Vercel CLI not found, see /vc",
         disabledReasonTone: "warning",
       };
     case "logged-out":
       return {
         ...option,
         disabled: true,
-        disabledReason: "Log in to Vercel first, see /vc:login",
+        disabledReason: "Log in to Vercel first, see /login",
         disabledReasonTone: "warning",
       };
     case "unavailable":

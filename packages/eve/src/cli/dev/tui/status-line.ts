@@ -41,7 +41,11 @@ export function buildStatusLine(input: StatusLineInput): string | undefined {
   const model =
     input.model === undefined
       ? undefined
-      : c.dim(stripAnsi(input.model).replace(/\s+/gu, " ").trim());
+      : c.dim(
+          input.remote === undefined
+            ? input.model
+            : stripAnsi(input.model).replace(/\s+/gu, " ").trim(),
+        );
   const tokens = input.tokens === undefined ? undefined : c.dim(input.tokens);
   const pending = input.vercel?.pendingDeploy ? c.yellow("/deploy pending") : undefined;
   const remote = input.remote === undefined ? undefined : formatRemoteStatus(input.remote, theme);

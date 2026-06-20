@@ -1,43 +1,17 @@
-import { z } from "zod";
+import type {
+  TrustedSourceEnvironmentRule,
+  TrustedSourceEnvironmentSet,
+  VercelTrustedSources,
+} from "./vendor/vercel-sdk-trusted-sources.js";
 
-const TrustedSourceEnvironmentSetSchema = z
-  .object({
-    slugs: z.array(z.string()).optional(),
-    preset: z.literal("all-custom").optional(),
-  })
-  .passthrough();
-
-const TrustedSourceEnvironmentRuleSchema = z
-  .object({
-    from: TrustedSourceEnvironmentSetSchema,
-    to: TrustedSourceEnvironmentSetSchema,
-  })
-  .passthrough();
-
-const TrustedSourceProjectRuleSchema = z
-  .object({
-    label: z.string().optional(),
-    customAllow: z.array(TrustedSourceEnvironmentRuleSchema).optional(),
-  })
-  .passthrough();
-
-export const VercelTrustedSourcesSchema = z
-  .object({
-    projects: z.record(z.string(), TrustedSourceProjectRuleSchema).optional(),
-    oidcProviders: z.record(z.string(), z.array(z.unknown())).optional(),
-  })
-  .passthrough();
-
-export type TrustedSourceEnvironmentSet = z.infer<typeof TrustedSourceEnvironmentSetSchema>;
-export type TrustedSourceEnvironmentRule = z.infer<typeof TrustedSourceEnvironmentRuleSchema>;
-export type VercelTrustedSources = z.infer<typeof VercelTrustedSourcesSchema>;
+export type { TrustedSourceEnvironmentRule } from "./vendor/vercel-sdk-trusted-sources.js";
 
 export interface TrustedSourceProject {
   readonly projectId: string;
   readonly customEnvironmentSlugs: readonly string[];
 }
 
-export type TrustedSourceAccessPlan =
+type TrustedSourceAccessPlan =
   | { readonly kind: "unchanged" }
   | { readonly kind: "update"; readonly trustedSources: VercelTrustedSources };
 

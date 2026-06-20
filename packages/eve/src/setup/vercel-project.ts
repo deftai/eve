@@ -4,7 +4,7 @@ import { captureVercel, runVercel, type VercelCaptureFailure } from "#setup/prim
 import pc from "picocolors";
 import { z } from "zod";
 
-import type { ProjectResolution } from "./project-resolution.js";
+import type { ProjectResolution, VercelProjectReference } from "./project-resolution.js";
 import type { Prompter } from "./prompter.js";
 import type { ResolvedVercelProjectSpec } from "./state.js";
 import {
@@ -23,21 +23,12 @@ import {
 } from "./vercel-project-api.js";
 import { pickExistingVercelProject } from "./vercel-project-picker.js";
 
-export {
-  listRecentProjects,
-  listTeams,
-  requireVercelTeamAccess,
-  searchProjects,
-  type VercelProjectOperationOptions,
-} from "./vercel-project-api.js";
-
-const VercelProjectReferenceSchema = z.object({
+/** Shape of the Vercel REST API project resource (`/v9/projects/:id`). */
+const VercelApiProjectSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   accountId: z.string().min(1),
 });
-
-export type VercelProjectReference = z.infer<typeof VercelProjectReferenceSchema>;
 
 export interface PickProjectOptions extends VercelProjectOperationOptions {
   /** Whether an empty project list may fall back to entering a name to create. */
@@ -72,11 +63,15 @@ export function projectIdFromResolution(project: ProjectResolution): string | un
 }
 
 function parseProjectReference(stdout: string, description: string): VercelProjectReference {
-  const parsed = VercelProjectReferenceSchema.safeParse(parseVercelJson(stdout, description));
+  const parsed = VercelApiProjectSchema.safeParse(parseVercelJson(stdout, description));
   if (!parsed.success) {
     throw new Error(`Could not read Vercel project identity from ${description}.`);
   }
-  return parsed.data;
+  return {
+    projectId: parsed.data.id,
+    orgId: parsed.data.accountId,
+    projectName: parsed.data.name,
+  };
 }
 
 /** Resolves one project by exact name or id through the Vercel API. */
@@ -490,9 +485,9 @@ export async function linkProject(
   }
   return withNetworkSpinner(
     prompter,
-    `Linking this directory to Vercel project "${project.name}"...`,
+    `Linking this directory to Vercel project "${project.projectName ?? project.projectId}"...`,
     () =>
-      runVercel(["link", "--project", project.id, ...scope, "--yes"], {
+      runVercel(["link", "--project", project.projectId, ...scope, "--yes"], {
         cwd: projectRoot,
         onOutput,
         // The plan already names the team and project, so the link needs no

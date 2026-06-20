@@ -23,7 +23,7 @@ const VercelProjectListEntrySchema = z.object({
 });
 
 /** Project identity used by the existing-project picker. */
-type VercelProjectListEntry = z.infer<typeof VercelProjectListEntrySchema>;
+export type VercelProjectListEntry = z.infer<typeof VercelProjectListEntrySchema>;
 
 const VercelPaginationSchema = z.object({
   next: z.number().int().nonnegative().nullable().optional(),

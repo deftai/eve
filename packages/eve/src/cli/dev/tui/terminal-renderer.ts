@@ -38,11 +38,10 @@ import {
   renderTextQuestion,
   type FlowPanelContent,
   type FlowPanelLine,
+  type SetupPanelOption,
   type SetupSelectPanelState,
 } from "./setup-panel.js";
-import { BACK } from "./setup-flow.js";
 import type {
-  Back,
   SetupEditableSelectResult,
   SetupFlowRenderer,
   SetupSelectRequest,
@@ -88,7 +87,7 @@ import { LiveRegion } from "./live-region.js";
 import { buildStatusLine } from "./status-line.js";
 import { nextLogDisplayMode } from "./log-display-mode.js";
 import { createTheme, detectUnicode, type Theme } from "./theme.js";
-import { clipVisible, stripAnsi, stripTerminalControls } from "./terminal-text.js";
+import { sliceVisible, stripAnsi, stripTerminalControls, visibleLength } from "./terminal-text.js";
 import type { VercelStatusSnapshot } from "./vercel-status.js";
 import type { RemoteConnectionSnapshot } from "./remote-connection.js";
 import { summarizeToolArgs, summarizeToolResult } from "./tool-format.js";
@@ -151,7 +150,6 @@ function completedTurnStatus(interrupted: boolean, continueSession: boolean): st
 
 type SetupFlowState = {
   title: string;
-  description?: readonly string[];
   lines: FlowPanelLine[];
   status?: string;
   /** Latest subprocess output line; replaced per write, never persisted. */
@@ -355,14 +353,14 @@ export class TerminalRenderer implements AgentTUIRenderer {
   #pendingEchoedPrompt?: string;
   /** The active setup flow's bordered panel: progress, question, status. */
   #setupFlow?: SetupFlowState;
-  /** The clearable setup attention line (`⚠ … · /vc:login`), rendered in the live footer. */
+  /** The clearable setup attention line (`⚠ … · /login`), rendered in the live footer. */
   #setupAttention?: string;
   /** Armed by {@link SetupFlowRenderer.waitForInterrupt}; fired by the idle key trap. */
   #flowInterrupt?: () => void;
   /** The installed working-state key consumer, so re-arming and disposal can recognize it. */
   #flowIdleConsumer?: (key: TerminalKey) => void;
   readonly setupFlow: SetupFlowRenderer = {
-    begin: (title, description) => this.#beginSetupFlow(title, description),
+    begin: (title) => this.#beginSetupFlow(title),
     end: (options) => this.#endSetupFlow(options?.preserveDiagnostics ?? true),
     readSelect: (options) => this.#readSetupSelect(options),
     readEditableSelect: (options) => this.#readSetupEditableSelect(options),
@@ -1022,7 +1020,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
   /**
    * Sets the setup attention line (yellow `⚠`, commands blue) as a live footer
    * element above the prompt. Unlike committed scrollback, it can be cleared:
-   * once the underlying issue is fixed (e.g. `/vc:login` succeeds) the runner calls
+   * once the underlying issue is fixed (e.g. `/login` succeeds) the runner calls
    * {@link clearSetupWarning} and the line disappears rather than lingering
    * stale in the transcript.
    */
@@ -1080,20 +1078,16 @@ export class TerminalRenderer implements AgentTUIRenderer {
    * every flow line, question, and status renders inside it; the transcript
    * above stays untouched.
    */
-  #beginSetupFlow(title: string, description?: readonly string[]): void {
+  #beginSetupFlow(title: string): void {
     this.#start();
     this.#inputActive = false;
     this.#working = false;
     this.#status = "";
-    const flow: SetupFlowState = {
+    this.#setupFlow = {
       title: stripTerminalControls(title),
       lines: [],
       outputBuffer: [],
     };
-    if (description !== undefined) {
-      flow.description = description.map((line) => stripTerminalControls(line));
-    }
-    this.#setupFlow = flow;
     // The ticker runs for the whole flow: the idle pulse, the status spinner,
     // and the output preview all animate through it.
     this.#startTicker();
@@ -1143,10 +1137,11 @@ export class TerminalRenderer implements AgentTUIRenderer {
   /**
    * Asks one select question inside the flow panel. Behavior comes from the
    * shared select reducer (filter, cursor, toggle, locked rows, the
-   * multi-select Submit row). Resolves the chosen value keys, `BACK` for Esc,
-   * or `undefined` for Ctrl-C. One question at a time; it vanishes on resolve.
+   * multi-select Submit row). Resolves the chosen value keys, or `undefined`
+   * when the user cancels with Esc or Ctrl-C (cancel folds into the flow,
+   * never the TUI). One question at a time; it vanishes on resolve.
    */
-  async #readSetupSelect(opts: SetupSelectRequest): Promise<readonly string[] | undefined | Back> {
+  async #readSetupSelect(opts: SetupSelectRequest): Promise<readonly string[] | undefined> {
     const flow = this.#beginSetupQuestion();
     const multiple = isMultiSelectRequest(opts);
 
@@ -1186,39 +1181,34 @@ export class TerminalRenderer implements AgentTUIRenderer {
     flow.question = (width) => renderSelectQuestion(panelState(), this.#theme, width);
     this.#paint();
 
-    const question = this.#captureSetupQuestion<readonly string[] | undefined | Back>(
-      (key, settle) => {
-        const base = { key, options: opts.options, select };
-        const result = multiple
-          ? reduceSetupSelectInput({ ...base, kind: opts.kind, required: opts.required })
-          : reduceSetupSelectInput({ ...base, kind: opts.kind });
-        switch (result.kind) {
-          case "cancel":
-            settle(undefined);
-            return;
-          case "back":
-            settle(BACK);
-            return;
-          case "repaint":
-            this.#paint();
-            return;
-          case "update":
-            select = result.select;
-            error = undefined;
-            this.#paint();
-            return;
-          case "submit":
-            settle(result.values);
-            return;
-          case "error":
-            error = result.message;
-            this.#paint();
-            return;
-          case "ignore":
-            return;
-        }
-      },
-    );
+    const question = this.#captureSetupQuestion<readonly string[] | undefined>((key, settle) => {
+      const base = { key, options: opts.options, select };
+      const result = multiple
+        ? reduceSetupSelectInput({ ...base, kind: opts.kind, required: opts.required })
+        : reduceSetupSelectInput({ ...base, kind: opts.kind });
+      switch (result.kind) {
+        case "cancel":
+          settle(undefined);
+          return;
+        case "repaint":
+          this.#paint();
+          return;
+        case "update":
+          select = result.select;
+          error = undefined;
+          this.#paint();
+          return;
+        case "submit":
+          settle(result.values);
+          return;
+        case "error":
+          error = result.message;
+          this.#paint();
+          return;
+        case "ignore":
+          return;
+      }
+    });
     return await question.promise;
   }
 
@@ -1254,9 +1244,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
       (key, settle) => {
         const intent = setupSelectionIntent(key);
         switch (intent?.kind) {
-          // The await-menu has no step to go back to; Esc closes it like Ctrl-C.
           case "cancel":
-          case "back":
             settle(undefined);
             return;
           case "move":
@@ -1281,9 +1269,17 @@ export class TerminalRenderer implements AgentTUIRenderer {
     return { choice: question.promise, close: () => question.settle(undefined) };
   }
 
-  async #readSetupEditableSelect(
-    opts: Parameters<SetupFlowRenderer["readEditableSelect"]>[0],
-  ): Promise<SetupEditableSelectResult | undefined | Back> {
+  async #readSetupEditableSelect(opts: {
+    message: string;
+    options: readonly SetupPanelOption[];
+    initialValue?: string;
+    editable: {
+      value: string;
+      defaultValue: string;
+      formatHint: (value: string) => string;
+      validate?: (value: string) => string | undefined;
+    };
+  }): Promise<SetupEditableSelectResult | undefined> {
     const flow = this.#beginSetupQuestion();
 
     const initial: Parameters<typeof initialSelectState>[0] = { options: opts.options };
@@ -1306,7 +1302,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
           caretVisible: this.#caretVisible,
         },
       };
-      if (opts.escape !== undefined) state.escape = opts.escape;
       if (error !== undefined) state.error = error;
       return renderSelectQuestion(state, this.#theme, width);
     };
@@ -1328,7 +1323,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
     syncEditableRow();
     this.#paint();
 
-    const question = this.#captureSetupQuestion<SetupEditableSelectResult | undefined | Back>(
+    const question = this.#captureSetupQuestion<SetupEditableSelectResult | undefined>(
       (key, settle) => {
         const applyEditor = (next: LineState) => {
           editor = next;
@@ -1370,9 +1365,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
           case "cancel":
             settle(undefined);
             return;
-          case "back":
-            settle(BACK);
-            return;
           case "move":
             applySelect({ type: intent.direction });
             return;
@@ -1401,11 +1393,16 @@ export class TerminalRenderer implements AgentTUIRenderer {
    * Asks one text question through the bordered setup panel. `mask` renders
    * bullets (passwords); `validate` paints its message red inside the panel
    * and keeps the prompt open. Resolves the submitted value (the default when
-   * submitted empty), `BACK` on Esc, or `undefined` on Ctrl-C.
+   * submitted empty), or `undefined` on Esc/Ctrl-C.
    */
-  async #readSetupText(
-    opts: Parameters<SetupFlowRenderer["readText"]>[0],
-  ): Promise<string | undefined | Back> {
+  async #readSetupText(opts: {
+    message: string;
+    placeholder?: string;
+    defaultValue?: string;
+    mask?: boolean;
+    validate?: (value: string) => string | undefined;
+    notices?: readonly SelectNotice[];
+  }): Promise<string | undefined> {
     const flow = this.#beginSetupQuestion();
 
     let editor: LineState = lineOf("");
@@ -1417,7 +1414,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
         editor,
         mask: opts.mask === true,
       };
-      if (opts.escape !== undefined) state.escape = opts.escape;
       if (opts.placeholder !== undefined) state.placeholder = opts.placeholder;
       if (opts.notices !== undefined) state.notices = opts.notices;
       if (error !== undefined) state.error = error;
@@ -1426,7 +1422,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
     this.#startCaretBlink();
     this.#paint();
 
-    const question = this.#captureSetupQuestion<string | undefined | Back>(
+    const question = this.#captureSetupQuestion<string | undefined>(
       (key, settle) => {
         const apply = (next: LineState) => {
           editor = next;
@@ -1442,10 +1438,8 @@ export class TerminalRenderer implements AgentTUIRenderer {
         }
         switch (key.type) {
           case "ctrl-c":
-            settle(undefined);
-            return;
           case "escape":
-            settle(BACK);
+            settle(undefined);
             return;
           case "ctrl-r":
             this.#paint();
@@ -2365,7 +2359,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
         lines: flow.hideLinesWhileQuestion === true ? [] : flow.lines,
         content,
       };
-      if (flow.description !== undefined) state.description = flow.description;
       rows.push(...renderFlowPanel(state, this.#theme, width));
       this.#pushRemoteStatusLine(rows, width);
       return rows;
@@ -2420,7 +2413,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
       ? `${icon} ${status}  ${c.dim(this.#theme.glyph.dot)}  ${meta}`
       : `${icon} ${status}`;
     rows.push(clip(line, width));
-    if (this.#working) rows.push("");
     this.#pushStatusLine(rows, width);
     return rows;
   }
@@ -2430,7 +2422,8 @@ export class TerminalRenderer implements AgentTUIRenderer {
    * pending deploy) when any segment has content.
    */
   #pushStatusLine(rows: string[], width: number): void {
-    const contentWidth = Math.max(1, width - STATUS_LINE_LEFT_PADDING.length);
+    const padding = this.#remoteConnection === undefined ? "" : STATUS_LINE_LEFT_PADDING;
+    const contentWidth = Math.max(1, width - padding.length);
     const input: Parameters<typeof buildStatusLine>[0] = {
       theme: this.#theme,
       width: contentWidth,
@@ -2455,7 +2448,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
     if (this.#vercelStatus !== undefined) input.vercel = this.#vercelStatus;
     if (this.#remoteConnection !== undefined) input.remote = this.#remoteConnection;
     const line = buildStatusLine(input);
-    if (line !== undefined) rows.push(clip(`${STATUS_LINE_LEFT_PADDING}${line}`, width));
+    if (line !== undefined) rows.push(clip(`${padding}${line}`, width));
   }
 
   #pushRemoteStatusLine(rows: string[], width: number): void {
@@ -2759,7 +2752,7 @@ async function* iterateTUIStream(
 }
 
 function clip(line: string, width: number): string {
-  return clipVisible(line, width);
+  return visibleLength(line) > width ? sliceVisible(line, width) : line;
 }
 
 /**

@@ -92,27 +92,3 @@ export function formatVercelTrustedSourcesFailure(message: string): string {
   if (reason.length === 0) return message;
   return `${reason}\n\n${code}`;
 }
-
-/**
- * Builds the human-readable message rendered when
- * {@link isVercelAuthChallenge} returns `true`.
- *
- * The message states the cause, the target URL, and the supported escape
- * hatches (link the project so an OIDC token can be minted, set an
- * automation bypass token, or disable protection). It is intentionally
- * short — multi-line CLI output is harder to scan than a focused
- * directive.
- */
-export function formatVercelAuthChallengeMessage(input: { readonly serverUrl: string }): string {
-  return [
-    `Vercel Deployment Protection blocked the request to ${input.serverUrl}.`,
-    "",
-    "To access the deployment from `eve dev`, do one of:",
-    "  • Run `/vc:auth` to select a Vercel project and refresh its OIDC token.",
-    "  • Set VERCEL_AUTOMATION_BYPASS_SECRET to a Protection Bypass for",
-    "    Automation token (Project Settings → Deployment Protection).",
-    "  • Disable Deployment Protection on the target deployment.",
-    "",
-    "Docs: https://vercel.com/docs/deployment-protection",
-  ].join("\n");
-}

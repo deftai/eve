@@ -35,14 +35,14 @@ describe("parsePromptCommand", () => {
   });
 
   it("parses the setup commands", () => {
-    expect(parsePromptCommand("/vc:install")).toEqual({
+    expect(parsePromptCommand("/vc")).toEqual({
       type: "extension",
-      name: "vc:install",
+      name: "vc",
       argument: "",
     });
-    expect(parsePromptCommand("/vc:login")).toEqual({
+    expect(parsePromptCommand("/login")).toEqual({
       type: "extension",
-      name: "vc:login",
+      name: "login",
       argument: "",
     });
     expect(parsePromptCommand("/vc:auth")).toEqual({
@@ -83,7 +83,7 @@ describe("parsePromptCommand", () => {
   it("rejects near-misses and ordinary prompts", () => {
     expect(parsePromptCommand("/models")).toBeNull();
     expect(parsePromptCommand("/vercel")).toBeNull();
-    expect(parsePromptCommand("/vc")).toBeNull();
+    expect(parsePromptCommand("/vc:install")).toBeNull();
     expect(parsePromptCommand("/channels extra")).toBeNull();
     expect(parsePromptCommand("tell me about /channels")).toBeNull();
     expect(parsePromptCommand("/")).toBeNull();
@@ -98,13 +98,15 @@ describe("promptCommandsFor", () => {
     expect(names).toContain("model");
     expect(names).toContain("channels");
     expect(names).toContain("deploy");
+    expect(names).toContain("vc");
+    expect(names).toContain("login");
     expect(names).not.toContain("vc:auth");
   });
 
   it("exposes remote OIDC auth only for remote sessions", () => {
     const names = promptCommandsFor("remote").map((command) => command.name);
-    expect(names).toContain("vc:install");
-    expect(names).toContain("vc:login");
+    expect(names).not.toContain("vc");
+    expect(names).not.toContain("login");
     expect(names).toContain("vc:auth");
     expect(names).not.toContain("model");
     expect(names).not.toContain("channels");

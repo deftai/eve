@@ -1,6 +1,39 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Client } from "#client/client.js";
+import type { AgentInfoResult } from "#client/types.js";
+
+const AGENT_INFO: AgentInfoResult = {
+  agent: {
+    agentRoot: "/tmp/weather-agent/agent",
+    appRoot: "/tmp/weather-agent",
+    model: { id: "openai/gpt-5.5" },
+    name: "Weather Agent",
+  },
+  capabilities: { devRoutes: true },
+  channels: { authored: [], available: [], disabledFramework: [], framework: [] },
+  connections: [],
+  diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
+  hooks: [],
+  instructions: { dynamic: [], static: null },
+  kind: "eve-agent-info",
+  mode: "development",
+  sandbox: null,
+  schedules: [],
+  skills: { dynamic: [], static: [] },
+  subagents: { local: [], total: 0 },
+  tools: {
+    authored: [],
+    available: [],
+    disabledFramework: [],
+    dynamic: [],
+    framework: [],
+    reserved: [],
+  },
+  version: 1,
+  workflow: { enabled: false, toolName: "Workflow" },
+  workspace: { resourceRoot: null, rootEntries: [] },
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -10,14 +43,7 @@ describe("Client request policy", () => {
   it("enforces its redirect policy for info, health, raw fetch, and sessions", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        Response.json({
-          agent: { model: { id: "openai/gpt-5.5" } },
-          diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
-          kind: "eve-agent-info",
-          version: 1,
-        }),
-      )
+      .mockResolvedValueOnce(Response.json(AGENT_INFO))
       .mockResolvedValueOnce(Response.json({ ok: true, status: "ready", workflowId: "wf" }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(
@@ -50,15 +76,30 @@ describe("Client request policy", () => {
     await expect(client.info()).rejects.toThrow(SyntaxError);
   });
 
+  it("rejects an incomplete agent info payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        agent: { model: { id: "openai/gpt-5.5" } },
+        diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
+        kind: "eve-agent-info",
+        version: 1,
+      }),
+    );
+    const client = new Client({ host: "https://eve.test" });
+
+    await expect(client.info()).rejects.toThrow(SyntaxError);
+  });
+
   it.each([null, { kind: "gateway", connected: true }, { kind: "external" }])(
     "rejects an invalid model endpoint from the agent info route",
     async (endpoint) => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
         Response.json({
-          agent: { model: { endpoint, id: "openai/gpt-5.5" } },
-          diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
-          kind: "eve-agent-info",
-          version: 1,
+          ...AGENT_INFO,
+          agent: {
+            ...AGENT_INFO.agent,
+            model: { ...AGENT_INFO.agent.model, endpoint },
+          },
         }),
       );
       const client = new Client({ host: "https://eve.test" });

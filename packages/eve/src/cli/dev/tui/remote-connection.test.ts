@@ -6,9 +6,9 @@ import {
   createDevelopmentCredentialGate,
   type DevelopmentCredentialGate,
 } from "#services/dev-client/credential-gate.js";
-import type { RemoteAuthPreparation } from "#setup/flows/remote-auth.js";
 import type { VercelDeploymentResolution } from "#setup/vercel-deployment.js";
 
+import type { RemoteAuthPreparation } from "./remote-auth-result.js";
 import {
   createRemoteConnectionController,
   type RemoteConnectionControllerOptions,
@@ -281,13 +281,27 @@ describe("createRemoteConnectionController", () => {
     expect(harness.controller.current().connection).toEqual({ state: "ready", info: INFO });
   });
 
+  it("keeps a ready connection when manual authentication preparation fails", async () => {
+    const harness = createHarness();
+
+    await expect(harness.controller.check()).resolves.toEqual({ state: "ready", info: INFO });
+    await expect(
+      harness.controller.authenticate(async () => ({
+        kind: "failed",
+        message: "Vercel login failed.",
+        completedMutations: [],
+      })),
+    ).resolves.toEqual({ kind: "failed", message: "Vercel login failed." });
+    expect(harness.controller.current().connection).toEqual({ state: "ready", info: INFO });
+  });
+
   it("reports a rejected token and its completed mutations without retrying", async () => {
     const info = vi.fn<() => Promise<AgentInfoResult>>().mockRejectedValue(eveUnauthorized());
     const attempt = vi.fn<() => Promise<RemoteAuthPreparation>>(async () => ({
       kind: "prepared",
       target: VERIFIED_TARGET,
       resolveToken: async () => "rejected-token",
-      completedMutations: [{ kind: "environment-pulled" }],
+      completedMutations: [{ kind: "trusted-sources-updated", targetProjectName: "remote-agent" }],
     }));
     const harness = createHarness({ info });
 
@@ -296,7 +310,7 @@ describe("createRemoteConnectionController", () => {
       kind: "failed",
       message:
         "The selected Vercel project did not authorize vpoke.playground-vercel.tools. " +
-        "Completed before the failure: refreshed .env.local.",
+        "Completed before the failure: updated Trusted Sources for remote-agent.",
     });
     expect(attempt).toHaveBeenCalledOnce();
     expect(info).toHaveBeenCalledTimes(2);

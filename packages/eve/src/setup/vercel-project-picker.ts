@@ -1,31 +1,26 @@
 import type { Prompter } from "./prompter.js";
-
-/** Project fields needed by the existing-project picker. */
-interface PickableVercelProject {
-  readonly id: string;
-  readonly name: string;
-  readonly updatedAt: number;
-}
+import type { VercelProjectListEntry } from "./vercel-project-api.js";
 
 /** Inputs for choosing from recent projects with optional server-side search. */
 interface VercelProjectPickerOptions {
   readonly prompter: Prompter;
   readonly team: string;
-  readonly message?: string;
-  readonly projects: readonly PickableVercelProject[];
-  search(query: string): Promise<readonly PickableVercelProject[]>;
+  readonly projects: readonly VercelProjectListEntry[];
+  search(query: string): Promise<readonly VercelProjectListEntry[]>;
 }
 
 const SEARCH_ALL_PROJECTS = "\0search-all-projects";
 
-function newestProjectsFirst(projects: readonly PickableVercelProject[]): PickableVercelProject[] {
+function newestProjectsFirst(
+  projects: readonly VercelProjectListEntry[],
+): VercelProjectListEntry[] {
   return projects.toSorted((left, right) => right.updatedAt - left.updatedAt);
 }
 
 function mergeProjects(
-  current: readonly PickableVercelProject[],
-  found: readonly PickableVercelProject[],
-): PickableVercelProject[] {
+  current: readonly VercelProjectListEntry[],
+  found: readonly VercelProjectListEntry[],
+): VercelProjectListEntry[] {
   const projects = new Map(current.map((project) => [project.id, project]));
   for (const project of found) projects.set(project.id, project);
   return newestProjectsFirst([...projects.values()]);
@@ -39,7 +34,7 @@ export async function pickExistingVercelProject(
 
   while (true) {
     const selected = await options.prompter.select({
-      message: options.message ?? "Project to link",
+      message: "Project to link",
       search: true,
       placeholder: "type to filter projects",
       options: [

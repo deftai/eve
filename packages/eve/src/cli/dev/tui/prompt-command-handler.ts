@@ -1,5 +1,4 @@
 import type { ApplyModelOutcome } from "#setup/flows/model.js";
-import type { RemoteAuthFlow } from "#setup/flows/remote-auth.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 import type {
@@ -8,6 +7,7 @@ import type {
   PromptCommandOutcome,
 } from "./runner.js";
 import { isPromptCommandAvailableFor, type PromptCommand } from "./prompt-commands.js";
+import type { RemoteAuthFlow } from "./remote-auth.js";
 import type { TuiSetupCommandInput, TuiSetupFlows } from "./setup-commands.js";
 import type { DevelopmentTuiTarget } from "./target.js";
 
@@ -84,31 +84,41 @@ export function createPromptCommandHandler(
         return { message: `/${command.name} is not supported by this renderer.` };
       }
 
+      if (command.name === "vc:auth") {
+        if (target.kind !== "remote" || context.remoteConnection === undefined) {
+          return { message: "/vc:auth is not available in this session." };
+        }
+        let runRemoteAuthCommand: (typeof import("./remote-auth-command.js"))["runRemoteAuthCommand"];
+        try {
+          ({ runRemoteAuthCommand } = await import("./remote-auth-command.js"));
+        } catch (error) {
+          return { message: `/vc:auth failed: ${toErrorMessage(error)}` };
+        }
+        const message = await runRemoteAuthCommand({
+          connection: context.remoteConnection,
+          flow: options.remoteAuthFlow,
+          renderer: flow,
+        });
+        return { message };
+      }
+      if (target.kind !== "local") {
+        return { message: `/${command.name} is not available in this session.` };
+      }
+
       let setupCommands: typeof import("./setup-commands.js");
       try {
         setupCommands = await import("./setup-commands.js");
       } catch (error) {
         return { message: `/${command.name} failed: ${toErrorMessage(error)}` };
       }
-      const { runRemoteAuthSetupCommand, runTuiSetupCommand, SETUP_FLOW_TITLES } = setupCommands;
-      if (command.name === "vc:auth") {
-        if (target.kind !== "remote" || context.remoteConnection === undefined) {
-          return { message: "/vc:auth is not available in this session." };
-        }
-        const result = await runRemoteAuthSetupCommand({
-          connection: context.remoteConnection,
-          flow: options.remoteAuthFlow,
-          renderer: flow,
-        });
-        return { message: result.message };
-      }
+      const { runTuiSetupCommand, SETUP_FLOW_TITLES } = setupCommands;
 
       flow.begin(SETUP_FLOW_TITLES[command.name]);
       let preserveFlowDiagnostics = true;
       try {
         const commandInput: TuiSetupCommandInput = {
           command: command.name,
-          target,
+          appRoot: target.appRoot,
           renderer: flow,
         };
         if (options.flows !== undefined) commandInput.flows = options.flows;

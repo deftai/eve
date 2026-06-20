@@ -77,20 +77,17 @@ export const BOOT_DETECTIONS: readonly BootDetection[] = [modelProvider];
  * runner probes it off the critical path and renders this issue only when the
  * probe resolves logged-out.
  */
-export const LOGIN_SETUP_ISSUE: SetupIssue = {
-  label: "not logged in",
-  command: "/vc:login",
-};
+export const LOGIN_SETUP_ISSUE: SetupIssue = { label: "not logged in", command: "/login" };
 
 /**
  * The CLI-missing hint, surfaced by the same off-critical-path probe as
  * {@link LOGIN_SETUP_ISSUE}. When the `vercel` binary is absent the probe
  * reports this instead of the login hint, so the diagnostic points at its fix
- * command (`/vc:install`) rather than a logged-out state the probe can't determine.
+ * command (`/vc`) rather than a logged-out state the probe can't determine.
  */
 export const CLI_MISSING_SETUP_ISSUE: SetupIssue = {
   label: "Vercel CLI not found",
-  command: "/vc:install",
+  command: "/vc",
 };
 
 /**

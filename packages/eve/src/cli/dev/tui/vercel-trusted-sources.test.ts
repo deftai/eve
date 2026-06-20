@@ -114,7 +114,10 @@ describe("planTrustedSourceAccess", () => {
           },
           oidcProviders: {
             "https://token.actions.githubusercontent.com": [
-              { claims: { repository: ["acme/app"] } },
+              {
+                to: { slugs: ["production"] },
+                claims: { repository: ["acme/app"] },
+              },
             ],
           },
         },
@@ -134,7 +137,12 @@ describe("planTrustedSourceAccess", () => {
           },
         },
         oidcProviders: {
-          "https://token.actions.githubusercontent.com": [{ claims: { repository: ["acme/app"] } }],
+          "https://token.actions.githubusercontent.com": [
+            {
+              to: { slugs: ["production"] },
+              claims: { repository: ["acme/app"] },
+            },
+          ],
         },
       },
     });
@@ -309,10 +317,11 @@ describe("prepareVercelTrustedSourceAccess", () => {
     expect(captureVercel).toHaveBeenCalledTimes(3);
     expect(captureVercel).toHaveBeenNthCalledWith(
       3,
-      expect.any(Array),
-      expect.objectContaining({
-        stdin: expect.stringContaining('"prj_other":{"label":"concurrent rule"}'),
-      }),
+      expect.arrayContaining([
+        "--field",
+        expect.stringContaining('"prj_other":{"label":"concurrent rule"}'),
+      ]),
+      expect.any(Object),
     );
   });
 
@@ -353,26 +362,23 @@ describe("prepareVercelTrustedSourceAccess", () => {
         "team_test",
         "--method",
         "PATCH",
-        "--input",
-        "-",
+        "--field",
+        `trustedSources=${JSON.stringify({
+          projects: {
+            prj_target: {
+              customAllow: [
+                rule("production", "production"),
+                rule("preview", "preview"),
+                rule("development", "preview"),
+                rule("development", "production"),
+              ],
+            },
+          },
+        })}`,
         "--raw",
       ],
       expect.objectContaining({
         cwd: "/repo",
-        stdin: JSON.stringify({
-          trustedSources: {
-            projects: {
-              prj_target: {
-                customAllow: [
-                  rule("production", "production"),
-                  rule("preview", "preview"),
-                  rule("development", "preview"),
-                  rule("development", "production"),
-                ],
-              },
-            },
-          },
-        }),
       }),
     );
   });

@@ -1,11 +1,7 @@
 import type { ChannelSetupChoice, ChannelSetupChoiceOptions } from "#setup/cli/index.js";
-import type { SelectMessageTone, SelectNotice } from "#setup/prompter.js";
+import type { SelectNotice } from "#setup/prompter.js";
 
 import type { SetupPanelOption } from "./setup-panel.js";
-
-/** Returned when Esc asks a reversible setup sequence to revisit its previous prompt. */
-export const BACK: unique symbol = Symbol("setup-step-back");
-export type Back = typeof BACK;
 
 export type SetupEditableSelectResult =
   | { kind: "selected"; value: string }
@@ -13,8 +9,6 @@ export type SetupEditableSelectResult =
 
 interface SetupSelectRequestBase {
   message: string;
-  escape?: "back" | "cancel";
-  messageTone?: SelectMessageTone;
   options: readonly SetupPanelOption[];
   notices?: readonly SelectNotice[];
 }
@@ -55,13 +49,12 @@ export type SetupSelectRequest =
   | SetupSearchableMultiSelectRequest;
 
 export interface SetupFlowRenderer {
-  begin(title: string, description?: readonly string[]): void;
+  begin(title: string): void;
   end(options?: { preserveDiagnostics?: boolean }): void;
-  readSelect(options: SetupSelectRequest): Promise<readonly string[] | undefined | Back>;
+  readSelect(options: SetupSelectRequest): Promise<readonly string[] | undefined>;
   readEditableSelect(options: {
     message: string;
     options: readonly SetupPanelOption[];
-    escape?: "back" | "cancel";
     initialValue?: string;
     editable: {
       value: string;
@@ -69,16 +62,15 @@ export interface SetupFlowRenderer {
       formatHint: (value: string) => string;
       validate?: (value: string) => string | undefined;
     };
-  }): Promise<SetupEditableSelectResult | undefined | Back>;
+  }): Promise<SetupEditableSelectResult | undefined>;
   readText(options: {
     message: string;
     placeholder?: string;
-    escape?: "back" | "cancel";
     defaultValue?: string;
     mask?: boolean;
     validate?: (value: string) => string | undefined;
     notices?: readonly SelectNotice[];
-  }): Promise<string | undefined | Back>;
+  }): Promise<string | undefined>;
   readAcknowledge(options: { message: string; lines: readonly string[] }): Promise<void>;
   /**
    * Presents an inert context row and a separate action menu beside the live

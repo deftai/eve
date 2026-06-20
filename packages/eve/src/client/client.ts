@@ -1,4 +1,5 @@
 import { EVE_HEALTH_ROUTE_PATH, EVE_INFO_ROUTE_PATH } from "#protocol/routes.js";
+import { AgentInfoResultSchema } from "#client/agent-info-schema.js";
 import { ClientError } from "#client/client-error.js";
 import { ClientSession } from "#client/session.js";
 import { createInitialSessionState } from "#client/session-utils.js";
@@ -13,7 +14,6 @@ import type {
   SessionState,
   TokenValue,
 } from "#client/types.js";
-import { isObject } from "#shared/guards.js";
 
 /**
  * HTTP client for talking to a deployed eve agent.
@@ -190,26 +190,7 @@ export class Client {
 // ---------------------------------------------------------------------------
 
 function isAgentInfoResult(value: unknown): value is AgentInfoResult {
-  return (
-    isObject(value) &&
-    value.kind === "eve-agent-info" &&
-    value.version === 1 &&
-    isObject(value.agent) &&
-    isObject(value.agent.model) &&
-    typeof value.agent.model.id === "string" &&
-    (value.agent.model.endpoint === undefined ||
-      isModelEndpointStatus(value.agent.model.endpoint)) &&
-    isObject(value.diagnostics) &&
-    typeof value.diagnostics.discoveryErrors === "number" &&
-    typeof value.diagnostics.discoveryWarnings === "number"
-  );
-}
-
-function isModelEndpointStatus(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  if (value.kind === "external") return typeof value.provider === "string";
-  if (value.kind !== "gateway" || typeof value.connected !== "boolean") return false;
-  return value.connected === false || value.credential === "api-key" || value.credential === "oidc";
+  return AgentInfoResultSchema.safeParse(value).success;
 }
 
 async function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {

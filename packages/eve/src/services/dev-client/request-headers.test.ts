@@ -30,6 +30,20 @@ describe("resolveDevelopmentOidcToken", () => {
     });
   });
 
+  it("forces a refresh for an explicitly selected project", async () => {
+    const expected = token({ owner_id: target.ownerId, project_id: target.projectId });
+    vi.mocked(getVercelOidcToken).mockResolvedValue(expected);
+
+    await expect(resolveDevelopmentOidcToken({ ...target, forceRefresh: true })).resolves.toBe(
+      expected,
+    );
+    expect(getVercelOidcToken).toHaveBeenCalledWith({
+      team: target.ownerId,
+      project: target.projectId,
+      expirationBufferMs: Number.MAX_SAFE_INTEGER,
+    });
+  });
+
   it.each([
     ["mismatched claims", token({ owner_id: "team_other", project_id: "prj_other" })],
     ["missing claims", token({ subject: "user" })],

@@ -8,7 +8,6 @@ import {
 } from "#internal/nitro/host/dev-watcher-log.js";
 
 import type { AgentTUIStreamEvent, AgentTUIStreamResult } from "./runner.js";
-import { BACK } from "./setup-flow.js";
 import { promptCommandsFor } from "./prompt-commands.js";
 import { TerminalRenderer } from "./terminal-renderer.js";
 import { MockScreen, MockUserInput } from "./test/mock-terminal.js";
@@ -468,7 +467,7 @@ describe("TerminalRenderer (inline scrollback)", () => {
 
   it("clears the setup attention line once its issue is resolved", () => {
     const { screen, renderer } = makeRenderer();
-    renderer.renderSetupWarning("1 setup issue: not logged in · /vc:login");
+    renderer.renderSetupWarning("1 setup issue: not logged in · /login");
     expect(screen.snapshot()).toContain("not logged in");
 
     renderer.clearSetupWarning();
@@ -543,41 +542,6 @@ describe("TerminalRenderer (inline scrollback)", () => {
     expect(thinkingRow).toBeGreaterThan(-1);
     expect(workingRow).toBeGreaterThan(thinkingRow);
     expect(inputRow).toBe(-1);
-
-    streamController?.close();
-    await rendering;
-    renderer.shutdown();
-  });
-
-  it("leaves blank space above and below the working spinner", async () => {
-    const { screen, renderer } = makeRenderer();
-    renderer.renderAgentHeader({
-      name: "Weather Agent",
-      serverUrl: "http://localhost:3000",
-      info: agentInfoWithModel("gpt-5"),
-    });
-    let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;
-    const rendering = renderer.renderStream(
-      {
-        events: new ReadableStream<AgentTUIStreamEvent>({
-          start(controller) {
-            streamController = controller;
-          },
-        }),
-      },
-      { submittedPrompt: "hello", continueSession: true },
-    );
-
-    await vi.waitFor(() => {
-      expect(screen.snapshot()).toContain("Working…");
-    });
-    const lines = screen.snapshot().split("\n");
-    const workingRow = lines.findIndex((line) => line.includes("Working…"));
-
-    expect(workingRow).toBeGreaterThan(0);
-    expect(lines[workingRow - 1]).toBe("");
-    expect(lines[workingRow + 1]).toBe("");
-    expect(lines[workingRow + 2]).toContain("gpt-5");
 
     streamController?.close();
     await rendering;
@@ -1290,29 +1254,17 @@ describe("TerminalRenderer setup panel", () => {
     expect(screen.snapshot()).not.toContain("esc to cancel");
   });
 
-  it("steps back on escape and cancels on Ctrl-C", async () => {
+  it("cancels the panel with escape", async () => {
     const { input, renderer } = makeRenderer();
 
-    // Esc resolves to BACK (step back one prompt); the prompter maps it to a
-    // StepBackError that reversible flows catch.
-    const back = renderer.setupFlow.readSelect({
+    const answer = renderer.setupFlow.readSelect({
       kind: "single",
       message: "Vercel project",
       options: [{ value: "new", label: "Create a new project" }],
     });
     input.send("\x1b");
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(back).resolves.toBe(BACK);
-
-    // Ctrl-C still resolves to undefined (cancel the whole flow).
-    const cancelled = renderer.setupFlow.readSelect({
-      kind: "single",
-      message: "Vercel project",
-      options: [{ value: "new", label: "Create a new project" }],
-    });
-    input.send("\x03");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(cancelled).resolves.toBeUndefined();
+    await expect(answer).resolves.toBeUndefined();
     renderer.shutdown();
   });
 
@@ -1579,7 +1531,7 @@ describe("TerminalRenderer setup flow session", () => {
     expect(snapshot).toContain("Dependency installation failed.");
 
     input.send("\x1b");
-    await expect(third).resolves.toBe(BACK);
+    await expect(third).resolves.toBeUndefined();
     renderer.setupFlow.end({ preserveDiagnostics: false });
     renderer.shutdown();
   });
@@ -2046,7 +1998,6 @@ describe("TerminalRenderer status line", () => {
     const promptRow = lines.findIndex((line) => line.includes("❯"));
     expect(promptRow).toBeGreaterThan(-1);
     const statusRow = lines.slice(promptRow + 1).join("\n");
-    expect(lines.find((line) => line.includes("anthropic/claude-sonnet-4-6"))).toMatch(/^  \S/);
     expect(statusRow).toContain("anthropic/claude-sonnet-4-6");
     // The linked project folds into the connected gateway label.
     expect(statusRow).toContain("AI Gateway (my-agent)");
@@ -2107,9 +2058,7 @@ describe("TerminalRenderer status line", () => {
       },
     });
 
-    renderer.setupFlow.begin("Authenticate via Vercel OIDC", [
-      "Connecting to this remote agent requires a Vercel OIDC token from its Vercel project.",
-    ]);
+    renderer.setupFlow.begin("Authenticate via Vercel OIDC");
     const answer = renderer.setupFlow.readSelect({
       kind: "search",
       message: "Select your team",
@@ -2122,10 +2071,8 @@ describe("TerminalRenderer status line", () => {
 
     const lines = screen.snapshot().split("\n");
     const title = lines.indexOf("   Authenticate via Vercel OIDC");
-    expect(lines.slice(title, title + 5)).toEqual([
+    expect(lines.slice(title, title + 3)).toEqual([
       "   Authenticate via Vercel OIDC",
-      "",
-      "   Connecting to this remote agent requires a Vercel OIDC token from its Vercel project.",
       "",
       "   Select your team",
     ]);
@@ -2134,7 +2081,7 @@ describe("TerminalRenderer status line", () => {
     expect(lines[status - 1]).toBe("");
 
     input.send("\x1b");
-    await expect(answer).resolves.toBe(BACK);
+    await expect(answer).resolves.toBeUndefined();
     renderer.setupFlow.end({ preserveDiagnostics: false });
     renderer.shutdown();
   });

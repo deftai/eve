@@ -1,7 +1,6 @@
 import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
 import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 import {
-  isLocalDevelopmentServerUrl,
   VERCEL_PROTECTION_BYPASS_HEADER,
   VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER,
 } from "#services/dev-client/request-headers.js";
@@ -13,6 +12,26 @@ export {
 
 const EVE_ROUTE_PREFIX_WITH_SEPARATOR = `${EVE_ROUTE_PREFIX}/`;
 export const VERCEL_OIDC_TOKEN_HEADER = "x-vercel-oidc-token";
+
+/**
+ * Hostnames served by the local development runtime; invalid URLs are remote.
+ * Kept local to this live-fixture harness — production locality is decided once
+ * by the `EnvironmentResolver`, not by inspecting the URL.
+ */
+const LOCAL_HOSTNAMES: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "[::1]",
+]);
+function isLocalDevelopmentServerUrl(serverUrl: string): boolean {
+  try {
+    return LOCAL_HOSTNAMES.has(new URL(serverUrl).hostname);
+  } catch {
+    return false;
+  }
+}
 
 /** Header values accepted by the test-only development client harness. */
 export type DevelopmentRequestHeaders =

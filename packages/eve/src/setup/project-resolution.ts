@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { captureVercel } from "./primitives/run-vercel.js";
+import { normalizeVercelApiResult } from "./vercel-api-failure.js";
 
 /** Link and production-deployment status for a Vercel project directory. */
 export type DeploymentState = "unlinked" | "linked" | "deployed";
@@ -87,9 +88,11 @@ async function fetchProductionAlias(
   projectPath: string,
   options: ProjectDetectionOptions,
 ): Promise<string | undefined> {
-  const result = await captureVercel(
-    ["api", `/v9/projects/${projectId}?teamId=${orgId}`, "--scope", orgId],
-    { cwd: projectPath, signal: options.signal },
+  const result = normalizeVercelApiResult(
+    await captureVercel(
+      ["api", `/v9/projects/${projectId}?teamId=${orgId}`, "--scope", orgId, "--raw"],
+      { cwd: projectPath, signal: options.signal },
+    ),
   );
   if (!result.ok) return undefined;
 
@@ -147,10 +150,12 @@ async function fetchVercelName(
   projectPath: string,
   options: ProjectDetectionOptions,
 ): Promise<string | undefined> {
-  const result = await captureVercel(["api", apiPath, "--scope", orgId], {
-    cwd: projectPath,
-    signal: options.signal,
-  });
+  const result = normalizeVercelApiResult(
+    await captureVercel(["api", apiPath, "--scope", orgId, "--raw"], {
+      cwd: projectPath,
+      signal: options.signal,
+    }),
+  );
   if (!result.ok) return undefined;
   try {
     const parsed = JSON.parse(result.stdout) as VercelApiNamed;

@@ -21,9 +21,8 @@ import { theme } from "./lib/theme.ts";
  *      region disappears and the screen returns to the empty prompt.
  *   3. `/deploy` (in a remote command context) renders the local-only notice
  *      instead of suspending into a setup flow.
- *   4. Namespaced Vercel commands dispatch through their shared setup flows.
- *   5. `/exit` terminates the runner, exactly as Ctrl+C would.
- *   6. Local `/channels` opens the real setup picker, Escape cancels it, and
+ *   4. `/exit` terminates the runner, exactly as Ctrl+C would.
+ *   5. Local `/channels` opens the real setup picker, Escape cancels it, and
  *      the TUI returns to the prompt.
  *
  * Needs no agent server and no model credentials.
@@ -47,10 +46,6 @@ void (async () => {
         kind: "remote",
         serverUrl: UNREACHABLE_HOST,
         workspaceRoot: process.cwd(),
-      },
-      flows: {
-        runLoginFlow: async () => ({ kind: "already" }),
-        runInstallVercelCliFlow: async () => ({ kind: "already" }),
       },
     }),
   });
@@ -86,18 +81,6 @@ void (async () => {
     input.enter();
     await screen.waitForText("/deploy needs eve dev running the local server", 5_000);
     console.log(theme.muted("[tui-slash-commands] /deploy rendered the local-only notice"));
-
-    await screen.waitForText("❯", 5_000);
-    input.type("/vc:login");
-    input.enter();
-    await screen.waitForText("already logged in to Vercel", 5_000);
-    console.log(theme.muted("[tui-slash-commands] /vc:login dispatched"));
-
-    await screen.waitForText("❯", 5_000);
-    input.type("/vc:install");
-    input.enter();
-    await screen.waitForText("Vercel CLI is already installed", 5_000);
-    console.log(theme.muted("[tui-slash-commands] /vc:install dispatched"));
 
     await screen.waitForText("❯", 5_000);
     input.type("/exit");

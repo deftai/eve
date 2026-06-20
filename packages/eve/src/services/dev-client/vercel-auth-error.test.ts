@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { ClientError } from "#client/client-error.js";
 import {
-  formatVercelAuthChallengeMessage,
   isVercelAuthChallenge,
   vercelTrustedSourcesErrorCode,
 } from "#services/dev-client/vercel-auth-error.js";
@@ -64,31 +63,6 @@ describe("isVercelAuthChallenge", () => {
     expect(isVercelAuthChallenge(new ClientError(400, '{"error":"Invalid JSON body."}'))).toBe(
       false,
     );
-  });
-});
-
-describe("formatVercelAuthChallengeMessage", () => {
-  it("renders the target URL and the supported escape hatches", () => {
-    const message = formatVercelAuthChallengeMessage({
-      serverUrl: "https://example.vercel.app",
-    });
-
-    expect(message).toContain("https://example.vercel.app");
-    expect(message).toContain("/vc:auth");
-    expect(message).toContain("VERCEL_AUTOMATION_BYPASS_SECRET");
-    expect(message).toContain("Disable Deployment Protection");
-    // Documentation pointer keeps the message actionable when neither
-    // escape hatch fits the user's setup.
-    expect(message).toContain("https://vercel.com/docs/deployment-protection");
-  });
-
-  it("does not include the raw HTML challenge body", () => {
-    const message = formatVercelAuthChallengeMessage({
-      serverUrl: "https://example.vercel.app",
-    });
-
-    expect(message).not.toContain("<");
-    expect(message).not.toContain("doctype");
   });
 });
 

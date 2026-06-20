@@ -1,7 +1,6 @@
 import type { UserContent } from "ai";
 import type { ClientSession } from "#client/session.js";
 import type { InputResponse } from "#runtime/input/types.js";
-import { isLocalDevelopmentServerUrl } from "#services/dev-client/request-headers.js";
 import {
   readDevelopmentRuntimeArtifactsRevision,
   rebuildDevelopmentRuntimeArtifacts,
@@ -49,12 +48,10 @@ export interface DevelopmentRuntimeArtifactChange {
 }
 
 class LocalDevelopmentRuntimeArtifactSessionRefresher implements DevelopmentRuntimeArtifactSessionRefresher {
-  readonly #isLocal: boolean;
   readonly #serverUrl: string;
   #artifactRevision: string | undefined;
 
   constructor(input: { readonly serverUrl: string }) {
-    this.#isLocal = isLocalDevelopmentServerUrl(input.serverUrl);
     this.#serverUrl = input.serverUrl;
   }
 
@@ -96,10 +93,6 @@ class LocalDevelopmentRuntimeArtifactSessionRefresher implements DevelopmentRunt
     readonly rebuild: boolean;
     readonly session: ClientSession;
   }): Promise<ClientSession> {
-    if (!this.#isLocal) {
-      return input.session;
-    }
-
     const revision =
       (input.rebuild
         ? await rebuildDevelopmentRuntimeArtifacts({ serverUrl: this.#serverUrl })

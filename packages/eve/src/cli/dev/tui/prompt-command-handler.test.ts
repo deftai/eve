@@ -158,12 +158,9 @@ describe("createPromptCommandHandler", () => {
         },
       ),
     ).resolves.toEqual({
-      message:
-        "/vc:auth cancelled after logging in to Vercel. No project, Trusted Sources, or environment changes were made.",
+      message: "/vc:auth cancelled after logging in to Vercel.",
     });
-    expect(setupFlow.begin).toHaveBeenCalledWith("Authenticate via Vercel OIDC", [
-      "Connecting to this remote agent requires a Vercel OIDC token from its Vercel project.",
-    ]);
+    expect(setupFlow.begin).toHaveBeenCalledWith("Authenticate via Vercel OIDC");
     expect(setupFlow.end).toHaveBeenCalledWith({ preserveDiagnostics: true });
   });
 
@@ -188,7 +185,9 @@ describe("createPromptCommandHandler", () => {
             () =>
               resolve({
                 kind: "cancelled" as const,
-                completedMutations: [{ kind: "environment-pulled" }],
+                completedMutations: [
+                  { kind: "trusted-sources-updated", targetProjectName: "remote-agent" },
+                ],
               }),
             { once: true },
           );
@@ -206,7 +205,8 @@ describe("createPromptCommandHandler", () => {
         { ...context({ setupFlow }), remoteConnection },
       ),
     ).resolves.toEqual({
-      message: "/vc:auth interrupted. Completed before interruption: refreshed .env.local.",
+      message:
+        "/vc:auth interrupted. Completed before interruption: updated Trusted Sources for remote-agent.",
     });
   });
 

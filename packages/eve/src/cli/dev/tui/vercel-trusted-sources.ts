@@ -1,23 +1,26 @@
 import { captureVercel } from "#setup/primitives/index.js";
+import type { Prompter } from "#setup/prompter.js";
+import { normalizeVercelApiResult } from "#setup/vercel-api-failure.js";
+import type { VerifiedVercelTarget } from "#setup/vercel-deployment.js";
+import { parseVercelJson } from "#setup/vercel-project-api.js";
 import { z } from "zod";
 
-import type { Prompter } from "./prompter.js";
-import { normalizeVercelApiResult } from "./vercel-api-failure.js";
-import type { VerifiedVercelTarget } from "./vercel-deployment.js";
-import { parseVercelJson } from "./vercel-project-api.js";
 import {
   planTrustedSourceAccess,
   type TrustedSourceProject,
-  VercelTrustedSourcesSchema,
 } from "./vercel-trusted-sources-policy.js";
+import {
+  serializeTrustedSourcesUpdate,
+  VercelTrustedSourcesSchema,
+} from "./vendor/vercel-sdk-trusted-sources.js";
 
-export type VercelTrustedSourcePreparation =
+type VercelTrustedSourcePreparation =
   | { readonly kind: "unchanged" }
   | { readonly kind: "approved"; readonly grant: VercelTrustedSourceGrant }
   | { readonly kind: "cancelled" }
   | { readonly kind: "failed"; readonly message: string };
 
-export type VercelTrustedSourceApplication =
+type VercelTrustedSourceApplication =
   | { readonly kind: "unchanged" }
   | {
       readonly kind: "updated";
@@ -114,7 +117,7 @@ export async function prepareVercelTrustedSourceAccess(input: {
   const deps: VercelTrustedSourceDeps = { ...defaultDeps, ...input.deps };
   const deployment = input.target.deployment;
 
-  // `vercel env pull` mints a Development token, regardless of the target.
+  // A local project-scoped OIDC token represents the Development environment.
   const projectResult = await readProject({
     deps,
     workspaceRoot: input.workspaceRoot,
@@ -211,15 +214,14 @@ export async function applyVercelTrustedSourceAccess(input: {
         input.grant.ownerId,
         "--method",
         "PATCH",
-        "--input",
-        "-",
+        "--field",
+        `trustedSources=${serializeTrustedSourcesUpdate(plan.trustedSources)}`,
         "--raw",
       ],
       {
         cwd: input.workspaceRoot,
         nonInteractive: true,
         signal: input.signal,
-        stdin: JSON.stringify({ trustedSources: plan.trustedSources }),
       },
     ),
   );

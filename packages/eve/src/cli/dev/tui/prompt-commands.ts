@@ -1,12 +1,8 @@
-export type PromptCommandExtensionName =
-  | "model"
-  | "channels"
-  | "deploy"
-  | "vc:install"
-  | "vc:login"
-  | "vc:auth";
+export type PromptCommandExtensionName = "model" | "channels" | "deploy" | "vc" | "login";
 
-export type PromptCommandTarget = "local" | "remote";
+type PromptCommandName = PromptCommandExtensionName | "vc:auth";
+
+type PromptCommandTarget = "local" | "remote";
 
 /** The slash commands the prompt accepts. */
 export type PromptCommand =
@@ -14,7 +10,7 @@ export type PromptCommand =
   | { type: "exit" }
   | { type: "help" }
   | { type: "loglevel"; argument: string }
-  | { type: "extension"; name: PromptCommandExtensionName; argument: string };
+  | { type: "extension"; name: PromptCommandName; argument: string };
 
 /**
  * Metadata for one slash command. The registry describes commands — their
@@ -64,20 +60,20 @@ const PROMPT_COMMAND_DEFINITIONS = [
     targets: ["local", "remote"],
   },
   {
-    name: "vc:install",
+    name: "vc",
     aliases: [],
     description: "Install the Vercel CLI",
     takesArgument: false,
-    build: () => ({ type: "extension", name: "vc:install", argument: "" }),
-    targets: ["local", "remote"],
+    build: () => ({ type: "extension", name: "vc", argument: "" }),
+    targets: ["local"],
   },
   {
-    name: "vc:login",
+    name: "login",
     aliases: [],
     description: "Log in to Vercel",
     takesArgument: false,
-    build: () => ({ type: "extension", name: "vc:login", argument: "" }),
-    targets: ["local", "remote"],
+    build: () => ({ type: "extension", name: "login", argument: "" }),
+    targets: ["local"],
   },
   {
     name: "vc:auth",
@@ -141,7 +137,7 @@ export function promptCommandsFor(target: PromptCommandTarget): readonly PromptC
 
 /** Whether a command runs against this target — the one authority dispatch shares with discovery. */
 export function isPromptCommandAvailableFor(
-  name: PromptCommandExtensionName,
+  name: PromptCommandName,
   target: PromptCommandTarget,
 ): boolean {
   const definition = PROMPT_COMMAND_DEFINITIONS.find((entry) => entry.name === name);

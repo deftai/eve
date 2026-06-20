@@ -5,15 +5,13 @@ import {
 } from "#services/dev-client/client-options.js";
 import { createDevelopmentCredentialGate } from "#services/dev-client/credential-gate.js";
 import { resolveDevelopmentOidcToken } from "#services/dev-client/request-headers.js";
-import {
-  formatVercelAuthChallengeMessage,
-  isVercelAuthChallenge,
-} from "#services/dev-client/vercel-auth-error.js";
+import { isVercelAuthChallenge } from "#services/dev-client/vercel-auth-error.js";
 import { resolveVercelDeployment } from "#setup/vercel-deployment.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 import { createPromptCommandHandler } from "./prompt-command-handler.js";
 import { promptCommandsFor } from "./prompt-commands.js";
+import { formatRemoteAuthChallengeMessage } from "./remote-auth-result.js";
 import { EveTUIRunner, type EveTUIRunnerOptions } from "./runner.js";
 import { remoteHost, type DevelopmentTuiTarget, type RemoteDevelopmentTarget } from "./target.js";
 import type { TuiDisplayOptions } from "./types.js";
@@ -95,7 +93,7 @@ export async function runDevelopmentTui(input: RunDevelopmentTuiInput): Promise<
     availablePromptCommands: promptCommandsFor(target.kind),
     formatTransportError: (error) =>
       isVercelAuthChallenge(error)
-        ? formatVercelAuthChallengeMessage({ serverUrl })
+        ? formatRemoteAuthChallengeMessage(serverUrl)
         : toErrorMessage(error),
   };
   if (prepared.kind === "local") {

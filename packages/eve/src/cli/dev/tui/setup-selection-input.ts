@@ -13,7 +13,6 @@ import type { TerminalKey } from "./stream-format.js";
 /** Shared navigation grammar for setup selects, actions, and editable selects. */
 export type SetupSelectionIntent =
   | { kind: "cancel" }
-  | { kind: "back" }
   | { kind: "move"; direction: "up" | "down" }
   | { kind: "repaint" }
   | { kind: "submit" };
@@ -22,9 +21,8 @@ export type SetupSelectionIntent =
 export function setupSelectionIntent(key: TerminalKey): SetupSelectionIntent | undefined {
   switch (key.type) {
     case "ctrl-c":
-      return { kind: "cancel" };
     case "escape":
-      return { kind: "back" };
+      return { kind: "cancel" };
     case "up":
       return { kind: "move", direction: "up" };
     case "down":
@@ -40,7 +38,6 @@ export function setupSelectionIntent(key: TerminalKey): SetupSelectionIntent | u
 
 export type SetupSelectInputResult =
   | { kind: "cancel" }
-  | { kind: "back" }
   | { kind: "repaint" }
   | { kind: "update"; select: SelectState }
   | { kind: "submit"; values: readonly string[] }
@@ -140,8 +137,6 @@ export function reduceSetupSelectInput(input: SetupSelectInputState): SetupSelec
   switch (intent?.kind) {
     case "cancel":
       return { kind: "cancel" };
-    case "back":
-      return { kind: "back" };
     case "repaint":
       return { kind: "repaint" };
     case "move":

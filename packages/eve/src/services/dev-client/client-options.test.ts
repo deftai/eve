@@ -5,7 +5,6 @@ import {
   resolveRemoteDevelopmentClientOptions,
 } from "./client-options.js";
 import { createDevelopmentCredentialGate } from "./credential-gate.js";
-import { isLocalDevelopmentServerUrl } from "./request-headers.js";
 
 describe("resolveDevelopmentClientOptions", () => {
   it("targets the given host without inferring credentials from locality", () => {
@@ -23,13 +22,6 @@ describe("resolveDevelopmentClientOptions", () => {
     expect(resolveDevelopmentClientOptions("http://localhost:3000").preserveCompletedSessions).toBe(
       undefined,
     );
-  });
-
-  it("skips the OIDC bearer for local hosts", () => {
-    for (const url of ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]) {
-      expect(isLocalDevelopmentServerUrl(url)).toBe(true);
-      expect(resolveDevelopmentClientOptions(url).auth).toBeUndefined();
-    }
   });
 
   it("binds an authorized credential gate to a non-redirecting client", () => {

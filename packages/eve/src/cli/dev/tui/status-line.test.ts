@@ -56,10 +56,11 @@ describe("buildStatusLine", () => {
     expect(
       buildStatusLine({
         model: "openai/gpt\x1b[31m-5\n",
+        remote: remote({ state: "ready", info: {} as never }),
         theme: plain,
         width: 120,
       }),
-    ).toBe("openai/gpt-5");
+    ).toBe(" ↗ vpoke.playground-vercel.tools   ·  openai/gpt-5");
   });
 
   it("dims every segment except the yellow pending-deploy marker", () => {
