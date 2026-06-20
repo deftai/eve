@@ -201,6 +201,8 @@ function contextAccessorFor(ctx: ContextContainer): ContextAccessor {
 }
 
 describe("eveChannel cancel route", () => {
+  // The public endpoint must cancel the addressed turn without terminating
+  // the durable session that owns it.
   it("cancels only the active turn for the requested session", async () => {
     const handler = createEveCancelHandler({ auth: none() });
 
@@ -428,6 +430,8 @@ describe("eveChannel — onMessage", () => {
 });
 
 describe("eveChannel — create session (text)", () => {
+  // The create response is where the client learns how to address this turn,
+  // so it must return the exact token passed into the runtime.
   it("accepts a plain-string message and opens a new session", async () => {
     const handler = createEveCreateHandler({ auth: none() });
 
@@ -957,6 +961,8 @@ describe("eveChannel — uploadPolicy enforcement", () => {
 });
 
 describe("eveChannel — continue session HITL (inputResponses)", () => {
+  // Every continuation turn needs a fresh cancellation handle, including
+  // turns that carry HITL responses alongside a message.
   it("forwards inputResponses alongside a message", async () => {
     const handler = createEveContinueHandler({ auth: none() });
 

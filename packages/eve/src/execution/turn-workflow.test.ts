@@ -30,6 +30,8 @@ describe("turnWorkflow", () => {
     resumeHookMock.mockReset();
   });
 
+  // The hook is the durable bridge from the cancel route to a running step;
+  // this proves that bridge also settles the step and closes its hook.
   it("aborts the active turn step when the cancellation hook resumes", async () => {
     const sessionState = createSessionState();
     let resolveCancellation!: (payload: { readonly kind: "cancel-turn" }) => void;

@@ -281,6 +281,8 @@ describe("createExecutionNodeStep", () => {
     expect(result.next).toEqual({ done: true, output: "tool-output" });
   });
 
+  // Authored tools can outlive the model call, so they need the same signal or
+  // client cancellation would leave tool work running.
   it("passes the active turn signal to authored tool contexts", async () => {
     setupMockAgentForToolExecution("regular-tool", {});
     const controller = new AbortController();

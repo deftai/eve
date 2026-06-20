@@ -101,6 +101,7 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     });
   }
 
+  // A valid session-scoped token must resume exactly the active turn hook.
   it("resumes the active turn cancellation hook", async () => {
     getHookByTokenMock.mockResolvedValue({
       metadata: { sessionId: "session_1" },
@@ -112,6 +113,8 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     expect(resumeHookMock).toHaveBeenCalledWith("cancel_1", { kind: "cancel-turn" });
   });
 
+  // The API can expose a cancel token before the child workflow registers its
+  // hook, so an immediate stop must bridge that registration race.
   it("waits for the child hook to register before returning", async () => {
     vi.useFakeTimers();
     const { HookNotFoundError } = await import("#compiled/@workflow/errors/index.js");
@@ -127,6 +130,7 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     expect(resumeHookMock).toHaveBeenCalledWith("cancel_1", { kind: "cancel-turn" });
   });
 
+  // A leaked or stale token must not let one session cancel another session's turn.
   it("does not cancel a token owned by another session", async () => {
     getHookByTokenMock.mockResolvedValue({
       metadata: { sessionId: "session_2" },
@@ -137,6 +141,7 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     expect(resumeHookMock).not.toHaveBeenCalled();
   });
 
+  // Missing hooks are an expected stale-turn outcome, not a server error.
   it("returns false when the active turn hook is not registered", async () => {
     const { HookNotFoundError } = await import("#compiled/@workflow/errors/index.js");
     getHookByTokenMock.mockRejectedValue(new HookNotFoundError("cancel_1"));

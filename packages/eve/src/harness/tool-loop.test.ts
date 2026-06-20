@@ -2014,6 +2014,8 @@ describe("createToolLoopHarness", () => {
     expect((stepFailed!.data as { details?: { errorId?: string } }).details?.errorId).toBeDefined();
   });
 
+  // Cancellation must park at a recoverable boundary so the next message can
+  // continue the same durable conversation.
   it("emits a recoverable cancellation boundary for an aborted turn", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -2040,6 +2042,8 @@ describe("createToolLoopHarness", () => {
     expect(ToolLoopAgent).not.toHaveBeenCalled();
   });
 
+  // Reaching the model call is what stops provider generation and billing,
+  // rather than merely hiding the response on the client.
   it("passes the durable turn signal to the AI SDK model call", async () => {
     setupMockAgent({
       finishReason: "stop",
