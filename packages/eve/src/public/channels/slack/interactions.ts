@@ -50,6 +50,8 @@ import type { SendFn } from "#public/definitions/defineChannel.js";
 
 const log = createLogger("slack.interactions");
 const UNAUTHORIZED_HITL_RESPONSE = "Only the person who requested this action can respond to it.";
+const UNBOUND_HITL_RESPONSE =
+  "This prompt is no longer valid. Start a new request so it can be bound to your Slack identity.";
 
 /**
  * Decoded view of a Slack `block_actions` payload. Returned by
@@ -78,9 +80,11 @@ interface AuthorizedHitlAction {
 interface RejectedHitlAction {
   readonly action: SlackInteractionAction;
   readonly kind: "rejected";
+  readonly reason: HitlRejectionReason;
 }
 
 type HitlActionAuthorization = AuthorizedHitlAction | RejectedHitlAction;
+type HitlRejectionReason = "unauthorized" | "unbound";
 
 /**
  * Decodes a Slack `block_actions` payload into a {@link ParsedBlockActionsPayload}.
@@ -223,10 +227,11 @@ export async function handleInteractionPost(
     (authorization) => authorization.kind === "rejected",
   );
   if (rejectedAction) {
-    queueUnauthorizedHitlNotice({
+    queueHitlRejectionNotice({
       channelId: interaction.channelId,
       ctx,
       deps,
+      reason: rejectedAction.reason,
       teamId: interaction.teamId,
       threadTs: interaction.threadTs,
       userId: rejectedAction.action.user.id,
@@ -417,10 +422,11 @@ async function handleViewSubmission(
       responderUserId: triggeringUserId,
     })
   ) {
-    queueUnauthorizedHitlNotice({
+    queueHitlRejectionNotice({
       channelId: metadata.channelId,
       ctx,
       deps,
+      reason: "unauthorized",
       teamId: teamId ?? undefined,
       threadTs: metadata.threadTs,
       userId: triggeringUserId,
@@ -473,19 +479,21 @@ function authorizeHitlAction(action: SlackInteractionAction): HitlActionAuthoriz
   const requestId = isFreeformAction(action.actionId)
     ? freeformRequestIdFromActionId(action.actionId)
     : deriveHitlResponse(action)?.requestId;
-  if (!requestId) return { action, kind: "rejected" };
+  if (!requestId) return { action, kind: "rejected", reason: "unauthorized" };
 
   const binding = parseHitlResponderBinding(action.blockId);
+  if (!binding) return { action, kind: "rejected", reason: "unbound" };
   if (!matchesHitlResponderBinding(binding, { requestId, responderUserId: action.user.id })) {
-    return { action, kind: "rejected" };
+    return { action, kind: "rejected", reason: "unauthorized" };
   }
   return { action, binding, kind: "authorized", requestId };
 }
 
-function queueUnauthorizedHitlNotice(input: {
+function queueHitlRejectionNotice(input: {
   readonly channelId: string;
   readonly ctx: { waitUntil: (task: Promise<unknown>) => void };
   readonly deps: InteractionHandlerDeps;
+  readonly reason: HitlRejectionReason;
   readonly teamId: string | undefined;
   readonly threadTs: string;
   readonly userId: string;
@@ -497,9 +505,14 @@ function queueUnauthorizedHitlNotice(input: {
     threadTs: input.threadTs,
   });
   input.ctx.waitUntil(
-    thread.postEphemeral(input.userId, UNAUTHORIZED_HITL_RESPONSE).catch((error: unknown) => {
-      log.error("unauthorized HITL notice failed", { error });
-    }),
+    thread
+      .postEphemeral(
+        input.userId,
+        input.reason === "unbound" ? UNBOUND_HITL_RESPONSE : UNAUTHORIZED_HITL_RESPONSE,
+      )
+      .catch((error: unknown) => {
+        log.error("HITL rejection notice failed", { error });
+      }),
   );
 }
 

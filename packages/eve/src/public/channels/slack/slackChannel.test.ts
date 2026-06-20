@@ -1402,6 +1402,32 @@ describe("slackChannel() HITL interaction pipeline", () => {
     });
   });
 
+  it("explains that an unbound HITL card must be recreated", async () => {
+    const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
+    const payload = buildHitlBlockActionPayload({
+      actorUserId: "U_OWNER",
+      kind: "button",
+      responderUserId: "U_OWNER",
+    });
+    const action = (payload.actions as Array<Record<string, unknown>>)[0];
+    if (!action) throw new Error("Expected an interaction action.");
+    action.block_id = "legacy-actions";
+
+    const { send } = await firePost(channel, buildSignedInteractionRequest(payload));
+
+    expect(send).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://slack.com/api/chat.postEphemeral");
+    expect(parseSlackRequestBody(init as RequestInit)).toMatchObject({
+      channel: "C01",
+      markdown_text:
+        "This prompt is no longer valid. Start a new request so it can be bound to your Slack identity.",
+      thread_ts: "1700000000.000001",
+      user: "U_OWNER",
+    });
+  });
+
   it("does not open a freeform modal for a different Slack user", async () => {
     const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
 
