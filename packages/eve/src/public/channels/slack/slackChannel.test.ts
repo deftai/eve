@@ -1375,6 +1375,12 @@ describe("slackChannel() HITL interaction pipeline", () => {
         triggeringUserId: "U_APPROVER",
       },
     });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://slack.com/api/chat.update");
+    const updateBody = parseSlackRequestBody(init as RequestInit);
+    expect(JSON.stringify(updateBody.blocks)).not.toContain("U_APPROVER");
   });
 
   it("rejects HITL button answers from a different Slack user", async () => {

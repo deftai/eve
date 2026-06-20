@@ -465,7 +465,6 @@ async function handleViewSubmission(
       channelId: metadata.channelId,
       messageTs: metadata.messageTs,
       answerLabel: text,
-      userId: triggeringUserId ?? undefined,
       deps,
     }).catch((error: unknown) => {
       log.error("freeform answered-card update failed", { error });
@@ -529,7 +528,6 @@ async function updateAnsweredHitlCard(
   const blocks = buildAnsweredBlocks({
     promptBlock: findPromptBlock(interaction.messageBlocks),
     answerLabel,
-    userId: hitlAction.user.id,
   });
 
   const token = await resolveSlackBotToken(deps.config.credentials?.botToken);
@@ -555,13 +553,11 @@ async function updateAnsweredFreeformCard(input: {
   readonly channelId: string;
   readonly messageTs: string;
   readonly answerLabel: string;
-  readonly userId?: string;
   readonly deps: InteractionHandlerDeps;
 }): Promise<void> {
   const blocks = buildAnsweredBlocks({
     promptBlock: undefined,
     answerLabel: input.answerLabel,
-    userId: input.userId,
   });
   const token = await resolveSlackBotToken(input.deps.config.credentials?.botToken);
   const response = await fetch("https://slack.com/api/chat.update", {

@@ -383,8 +383,7 @@ function buildOption(opt: NonNullable<InputRequest["options"]>[number]): Record<
 /**
  * Renders the "answered" replacement blocks for a previously-posted
  * HITL card. Preserves the original prompt block (so context stays
- * visible), appends a confirmation line naming the chosen answer, and
- * attributes the click to the user when their id is known.
+ * visible) and appends a confirmation line naming the chosen answer.
  *
  * Slack's `chat.update` replaces every block in one shot, so the caller
  * passes the full list to `blocks` and the rendered fallback text to
@@ -393,7 +392,6 @@ function buildOption(opt: NonNullable<InputRequest["options"]>[number]): Record<
 export function buildAnsweredBlocks(input: {
   readonly promptBlock: unknown;
   readonly answerLabel: string;
-  readonly userId?: string;
 }): unknown[] {
   const blocks: unknown[] = [];
   if (input.promptBlock !== undefined && input.promptBlock !== null) {
@@ -403,11 +401,5 @@ export function buildAnsweredBlocks(input: {
     type: "section",
     text: { type: "mrkdwn", text: `:white_check_mark: *${input.answerLabel}*` },
   });
-  if (input.userId && input.userId.length > 0) {
-    blocks.push({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: `Answered by <@${input.userId}>` }],
-    });
-  }
   return blocks;
 }

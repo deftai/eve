@@ -414,7 +414,7 @@ describe("buildFreeformModalView", () => {
 });
 
 describe("buildAnsweredBlocks", () => {
-  it("preserves the prompt block, appends a confirmation, and attributes the click", () => {
+  it("preserves the prompt and appends the answer confirmation", () => {
     const promptBlock = {
       type: "section",
       text: { type: "mrkdwn", text: "Approve deploy?" },
@@ -422,21 +422,17 @@ describe("buildAnsweredBlocks", () => {
     const blocks = buildAnsweredBlocks({
       promptBlock,
       answerLabel: "Approve",
-      userId: "U01",
     });
-    expect(blocks).toHaveLength(3);
+
+    expect(blocks).toHaveLength(2);
     expect(blocks[0]).toBe(promptBlock);
     expect(blocks[1]).toMatchObject({
       type: "section",
       text: { text: ":white_check_mark: *Approve*", type: "mrkdwn" },
     });
-    expect(blocks[2]).toMatchObject({
-      type: "context",
-      elements: [{ type: "mrkdwn", text: "Answered by <@U01>" }],
-    });
   });
 
-  it("omits the attribution block when no userId is supplied", () => {
+  it("renders the confirmation without a prompt block", () => {
     const blocks = buildAnsweredBlocks({ promptBlock: undefined, answerLabel: "Deny" });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
