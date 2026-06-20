@@ -67,10 +67,46 @@ function ConversationSection(props: {
   );
 }
 
+interface VoiceMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+// In Gateway-control mode the durable turn runs server-side (its own `voice:`
+// continuation), so the typed-chat feed (`agent.data.turns`) never sees it. The
+// browser instead receives the user transcript and the agent's spoken words as
+// realtime events, which this feed renders live, with a Thinking… row in the
+// gap while Eve runs the turn.
+function VoiceConversationSection(props: {
+  readonly messages: readonly VoiceMessage[];
+  readonly thinking: boolean;
+}) {
+  return (
+    <ul className="chat-feed">
+      {props.messages.map((message) => (
+        <li className={`chat-row role-${message.role}`} key={message.id}>
+          <div className="chat-bubble-stack">
+            <div className="chat-bubble">{message.text}</div>
+          </div>
+        </li>
+      ))}
+      {props.thinking ? (
+        <li className="chat-row role-assistant pending">
+          <div className="chat-bubble">Thinking…</div>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
 export function App() {
   const [composerInput, setComposerInput] = useState("");
   const [composerError, setComposerError] = useState<string | undefined>(undefined);
   const [voiceCaption, setVoiceCaption] = useState<string | undefined>(undefined);
+  const [voiceMessages, setVoiceMessages] = useState<VoiceMessage[]>([]);
+  const [voiceThinking, setVoiceThinking] = useState(false);
+  const controlMode = process.env.NEXT_PUBLIC_EVE_VOICE_CONTROL === "1";
   const conversationStageRef = useRef<HTMLElement | null>(null);
   const agentRef = useRef<ReturnType<typeof useEveAgent<TraceProjection>> | undefined>(undefined);
   const pendingVoiceMessagesRef = useRef<string[]>([]);
@@ -112,10 +148,62 @@ export function App() {
     // Opt into Gateway-owned control mode (A-lite): the Gateway drives turns
     // over its server-side control socket, so the browser only streams audio
     // and `onTranscript` below is not used. Defaults off (client-driven path).
-    controlMode: process.env.NEXT_PUBLIC_EVE_VOICE_CONTROL === "1",
+    controlMode,
     onEvent(event) {
-      if (event.type === "input-transcription-completed") {
-        setVoiceCaption(`Heard: ${event.transcript}`);
+      if (!controlMode) {
+        if (event.type === "input-transcription-completed") {
+          setVoiceCaption(`Heard: ${event.transcript}`);
+        }
+        return;
+      }
+
+      // Control mode: render the live transcript for both sides. The user's
+      // finalized transcript and the agent's streamed spoken words arrive as
+      // realtime events; the gap between them is Eve running the durable turn.
+      switch (event.type) {
+        case "input-transcription-completed": {
+          const transcript = event.transcript.trim();
+          if (transcript.length === 0) break;
+          const id = `user:${event.itemId}`;
+          setVoiceMessages((prev) =>
+            prev.some((message) => message.id === id)
+              ? prev
+              : [...prev, { id, role: "user", text: transcript }],
+          );
+          setVoiceThinking(true);
+          break;
+        }
+        case "audio-transcript-delta": {
+          setVoiceThinking(false);
+          const id = `assistant:${event.responseId}`;
+          setVoiceMessages((prev) => {
+            const index = prev.findIndex((message) => message.id === id);
+            if (index === -1) {
+              return [...prev, { id, role: "assistant", text: event.delta }];
+            }
+            const next = prev.slice();
+            next[index] = { ...next[index], text: next[index].text + event.delta };
+            return next;
+          });
+          break;
+        }
+        case "audio-transcript-done": {
+          setVoiceThinking(false);
+          const text = event.transcript?.trim();
+          if (text === undefined || text.length === 0) break;
+          const id = `assistant:${event.responseId}`;
+          setVoiceMessages((prev) => {
+            const index = prev.findIndex((message) => message.id === id);
+            if (index === -1) return [...prev, { id, role: "assistant", text }];
+            const next = prev.slice();
+            next[index] = { ...next[index], text };
+            return next;
+          });
+          break;
+        }
+        case "response-done":
+          setVoiceThinking(false);
+          break;
       }
     },
     async onTranscript({ transcript }) {
@@ -135,12 +223,16 @@ export function App() {
   const turns = agent.data.turns;
   const isComposeInProgress = agent.status === "submitted" || agent.status === "streaming";
   const hasComposerText = composerInput.trim().length > 0;
-  const hasConversation = turns.length > 0 || isComposeInProgress;
+  const hasVoiceConversation = controlMode && (voiceMessages.length > 0 || voiceThinking);
+  const hasConversation = turns.length > 0 || isComposeInProgress || hasVoiceConversation;
   const conversationActivityKey = [
     agent.session.sessionId ?? "new-thread",
     String(agent.session.streamIndex),
     String(agent.events.length),
     agent.status,
+    String(voiceMessages.length),
+    String(voiceMessages.at(-1)?.text.length ?? 0),
+    String(voiceThinking),
   ].join(":");
 
   useEffect(() => {
@@ -247,10 +339,14 @@ export function App() {
         <section className="conversation-stage" ref={conversationStageRef}>
           {hasConversation ? (
             <div className="conversation-scroll">
-              <ConversationSection
-                isSending={agent.status === "submitted" || agent.status === "streaming"}
-                turns={turns}
-              />
+              {controlMode ? (
+                <VoiceConversationSection messages={voiceMessages} thinking={voiceThinking} />
+              ) : (
+                <ConversationSection
+                  isSending={agent.status === "submitted" || agent.status === "streaming"}
+                  turns={turns}
+                />
+              )}
             </div>
           ) : (
             <div className="empty-state">
