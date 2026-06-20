@@ -32,6 +32,8 @@ function makeAction(): RuntimeSubagentCallActionRequest {
 }
 
 describe("buildSubagentRunInput", () => {
+  // A delegated child can register its cancellation hook only if the parent's
+  // freshly minted token survives run-input construction.
   it("forwards the child cancellation token", () => {
     const { runInput } = buildSubagentRunInput({
       action: makeAction(),

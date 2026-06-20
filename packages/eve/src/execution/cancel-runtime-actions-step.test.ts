@@ -35,6 +35,8 @@ afterEach(() => {
 });
 
 describe("cancelRuntimeActionsStep", () => {
+  // Local children run in node-specific runtimes, so cancellation must rebuild
+  // the matching runtime before it addresses the child session.
   it("cancels local delegated sessions through their runtime", async () => {
     const cancelTurn = vi.fn().mockResolvedValue(true);
     vi.mocked(createWorkflowRuntime).mockReturnValue({ cancelTurn } as never);
@@ -58,6 +60,8 @@ describe("cancelRuntimeActionsStep", () => {
     expect(cancelTurn).toHaveBeenCalledWith("child_session_1", "child_cancel_1");
   });
 
+  // Remote children may live in another Workflow world, so their authenticated
+  // Eve endpoint is the only reliable cancellation path.
   it("cancels remote delegated sessions through the eve protocol", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ cancelled: true }));
     vi.stubGlobal("fetch", fetchMock);

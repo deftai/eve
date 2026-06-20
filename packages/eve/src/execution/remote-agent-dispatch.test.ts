@@ -10,6 +10,8 @@ describe("startRemoteAgentSession", () => {
     vi.unstubAllEnvs();
   });
 
+  // The parent needs both identifiers from session creation so it can route
+  // results by session and later cancel that exact remote turn.
   it("posts the formatted subagent message and callback metadata", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

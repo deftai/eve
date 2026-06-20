@@ -15,6 +15,8 @@ afterEach(() => {
 });
 
 describe("runRuntimeActionCancellationScope", () => {
+  // Cancellation can beat target discovery; the scope must wait for dispatch
+  // and cancel every child that appeared during that race.
   it("cancels children started after cancellation arrives during dispatch", async () => {
     const cancellation = deferred<{ readonly kind: "cancel-turn" }>();
     const dispatch = deferred<DispatchResult>();

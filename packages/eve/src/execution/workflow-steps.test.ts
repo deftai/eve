@@ -240,6 +240,8 @@ describe("dispatchTurnStep", () => {
 });
 
 describe("dispatchRuntimeActionsStep", () => {
+  // Cancellation fan-out depends on recording the same token sent to the child
+  // together with the child session and node that own it.
   it("starts subagent child drivers on the latest deployment", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const compiledArtifactsSource = {} as never;
