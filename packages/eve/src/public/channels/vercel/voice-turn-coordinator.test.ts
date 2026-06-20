@@ -7,7 +7,11 @@ import {
   type GatewayToEveEvent,
   type RealtimeControlCapabilities,
 } from "#public/channels/vercel/voice-control-protocol.js";
-import { VoiceTurnCoordinator } from "#public/channels/vercel/voice-turn-coordinator.js";
+import {
+  createInMemoryVoiceControlStateStore,
+  VoiceTurnCoordinator,
+  type VoiceControlStateStore,
+} from "#public/channels/vercel/voice-turn-coordinator.js";
 
 function sessionOpened(
   overrides: Partial<RealtimeControlCapabilities>,
@@ -51,7 +55,11 @@ function sendReturning(events: readonly unknown[], id = "session-1") {
   return vi.fn(impl);
 }
 
-function harness(send: SendFn, settleMs = 5) {
+function harness(
+  send: SendFn,
+  settleMs = 5,
+  options: { stateStore?: VoiceControlStateStore } = {},
+) {
   const packets: Array<{ type: string; data: Record<string, unknown> }> = [];
   const coordinator = new VoiceTurnCoordinator({
     auth,
@@ -59,6 +67,7 @@ function harness(send: SendFn, settleMs = 5) {
     send,
     sendRaw: (packet) => packets.push(JSON.parse(packet)),
     closeSocket: () => undefined,
+    ...options,
     settleMs,
   });
   return { coordinator, packets, types: () => packets.map((p) => p.type) };
@@ -69,12 +78,13 @@ const reply = (message: string, stepIndex = 0, finishReason = "stop") => ({
   data: { finishReason, message, sequence: 1, stepIndex, turnId: "t1" },
 });
 const waiting = () => ({ type: "session.waiting", data: { wait: "next-user-message" } });
+const failed = () => ({ type: "session.failed", data: { code: "boom", message: "boom" } });
 
 describe("VoiceTurnCoordinator", () => {
-  it("emits session.ready on start", () => {
+  it("emits session.ready on start", async () => {
     const { coordinator, types } = harness(sendReturning([]));
     coordinator.start();
-    expect(types()).toEqual(["session.ready"]);
+    await vi.waitFor(() => expect(types()).toEqual(["session.ready"]));
   });
 
   it("runs a durable turn and streams response.delta + response.done", async () => {
@@ -132,6 +142,71 @@ describe("VoiceTurnCoordinator", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("de-duplicates immediate repeated transcript text when itemId is missing", async () => {
+    const send = sendReturning([reply("Hi"), waiting()]);
+    const { coordinator, packets } = harness(send);
+    coordinator.start();
+    coordinator.handle({ type: "input.transcript.final", data: { text: "hi" } });
+    coordinator.handle({ type: "input.transcript.final", data: { text: "hi" } });
+
+    await vi.waitFor(() => expect(packets.some((p) => p.type === "response.done")).toBe(true));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists continuation and stream cursor across control socket reconnects", async () => {
+    const stateStore = createInMemoryVoiceControlStateStore();
+    const streamStarts: Array<number | undefined> = [];
+    const send = vi.fn<SendFn>(async () => ({
+      id: "session-1",
+      continuationToken: "voice:stable",
+      getEventStream: async (options) => {
+        streamStarts.push(options?.startIndex);
+        return closedStream([reply("Hi"), waiting()]);
+      },
+    }));
+
+    const first = harness(send, 5, { stateStore });
+    first.coordinator.start();
+    first.coordinator.handle({ type: "input.transcript.final", data: { text: "first" } });
+    await vi.waitFor(() => expect(first.types()).toContain("response.done"));
+
+    const second = harness(send, 5, { stateStore });
+    second.coordinator.start();
+    second.coordinator.handle({ type: "input.transcript.final", data: { text: "second" } });
+    await vi.waitFor(() => expect(second.types()).toContain("response.done"));
+
+    expect(streamStarts).toEqual([0, 2]);
+    expect(send.mock.calls[0]?.[1].continuationToken).toBe(
+      send.mock.calls[1]?.[1].continuationToken,
+    );
+  });
+
+  it("emits error instead of response.done when the durable turn fails", async () => {
+    const send = sendReturning([failed()]);
+    const { coordinator, types } = harness(send);
+    coordinator.start();
+    coordinator.handle({ type: "input.transcript.final", data: { text: "hi", itemId: "i1" } });
+
+    await vi.waitFor(() => expect(types()).toContain("error"));
+    expect(types()).not.toContain("response.done");
+  });
+
+  it("clears pending transcript text on barge-in before the turn settles", async () => {
+    const send = sendReturning([reply("Hi"), waiting()]);
+    const { coordinator, packets } = harness(send);
+    coordinator.start();
+    coordinator.handle({ type: "input.transcript.final", data: { text: "first", itemId: "i1" } });
+    coordinator.handle({ type: "input.interrupted", data: {} });
+    coordinator.handle({ type: "input.transcript.final", data: { text: "second", itemId: "i2" } });
+
+    await vi.waitFor(() => expect(packets.some((p) => p.type === "response.done")).toBe(true));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "second" }),
+      expect.anything(),
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels an in-flight response on barge-in", async () => {
     let controller: ReadableStreamDefaultController<unknown> | undefined;
     const impl: SendFn = async () => ({
@@ -173,7 +248,7 @@ describe("VoiceTurnCoordinator", () => {
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(packets.some((p) => p.type === "response.delta")).toBe(false);
-    expect(packets.some((p) => p.type === "response.done")).toBe(false);
+    expect(packets.some((p) => p.type === "response.done")).toBe(true);
   });
 
   it("does not emit response.cancel on barge-in when output.cancel is false", async () => {

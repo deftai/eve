@@ -1,7 +1,7 @@
 "use client";
 
 import { useEveAgent } from "eve/react";
-import { useEveVoice } from "eve/react/voice";
+import { useEveVoice, type EveVoiceMessage } from "eve/react/voice";
 import { type FormEvent, type JSX, useEffect, useMemo, useRef, useState } from "react";
 
 import { traceReducer, type TraceProjection } from "./trace-reducer";
@@ -67,19 +67,13 @@ function ConversationSection(props: {
   );
 }
 
-interface VoiceMessage {
-  readonly id: string;
-  readonly role: "user" | "assistant";
-  readonly text: string;
-}
-
 // In Gateway-control mode the durable turn runs server-side (its own `voice:`
 // continuation), so the typed-chat feed (`agent.data.turns`) never sees it. The
-// browser instead receives the user transcript and the agent's spoken words as
-// realtime events, which this feed renders live, with a Thinking… row in the
-// gap while Eve runs the turn.
+// hook surfaces the live transcript (user finalized speech + the agent's
+// streamed spoken words) as `voice.messages`; this feed renders it, with a
+// Thinking… row in the gap while Eve runs the turn.
 function VoiceConversationSection(props: {
-  readonly messages: readonly VoiceMessage[];
+  readonly messages: readonly EveVoiceMessage[];
   readonly thinking: boolean;
 }) {
   return (
@@ -104,8 +98,6 @@ export function App() {
   const [composerInput, setComposerInput] = useState("");
   const [composerError, setComposerError] = useState<string | undefined>(undefined);
   const [voiceCaption, setVoiceCaption] = useState<string | undefined>(undefined);
-  const [voiceMessages, setVoiceMessages] = useState<VoiceMessage[]>([]);
-  const [voiceThinking, setVoiceThinking] = useState(false);
   const controlMode = process.env.NEXT_PUBLIC_EVE_VOICE_CONTROL === "1";
   const conversationStageRef = useRef<HTMLElement | null>(null);
   const agentRef = useRef<ReturnType<typeof useEveAgent<TraceProjection>> | undefined>(undefined);
@@ -150,60 +142,11 @@ export function App() {
     // and `onTranscript` below is not used. Defaults off (client-driven path).
     controlMode,
     onEvent(event) {
-      if (!controlMode) {
-        if (event.type === "input-transcription-completed") {
-          setVoiceCaption(`Heard: ${event.transcript}`);
-        }
-        return;
-      }
-
-      // Control mode: render the live transcript for both sides. The user's
-      // finalized transcript and the agent's streamed spoken words arrive as
-      // realtime events; the gap between them is Eve running the durable turn.
-      switch (event.type) {
-        case "input-transcription-completed": {
-          const transcript = event.transcript.trim();
-          if (transcript.length === 0) break;
-          const id = `user:${event.itemId}`;
-          setVoiceMessages((prev) =>
-            prev.some((message) => message.id === id)
-              ? prev
-              : [...prev, { id, role: "user", text: transcript }],
-          );
-          setVoiceThinking(true);
-          break;
-        }
-        case "audio-transcript-delta": {
-          setVoiceThinking(false);
-          const id = `assistant:${event.responseId}`;
-          setVoiceMessages((prev) => {
-            const index = prev.findIndex((message) => message.id === id);
-            if (index === -1) {
-              return [...prev, { id, role: "assistant", text: event.delta }];
-            }
-            const next = prev.slice();
-            next[index] = { ...next[index], text: next[index].text + event.delta };
-            return next;
-          });
-          break;
-        }
-        case "audio-transcript-done": {
-          setVoiceThinking(false);
-          const text = event.transcript?.trim();
-          if (text === undefined || text.length === 0) break;
-          const id = `assistant:${event.responseId}`;
-          setVoiceMessages((prev) => {
-            const index = prev.findIndex((message) => message.id === id);
-            if (index === -1) return [...prev, { id, role: "assistant", text }];
-            const next = prev.slice();
-            next[index] = { ...next[index], text };
-            return next;
-          });
-          break;
-        }
-        case "response-done":
-          setVoiceThinking(false);
-          break;
+      // The live transcript now comes from `voice.messages` / `voice.isThinking`
+      // (rendered by VoiceConversationSection). Only the client-driven path
+      // keeps the lightweight caption.
+      if (!controlMode && event.type === "input-transcription-completed") {
+        setVoiceCaption(`Heard: ${event.transcript}`);
       }
     },
     async onTranscript({ transcript }) {
@@ -223,16 +166,16 @@ export function App() {
   const turns = agent.data.turns;
   const isComposeInProgress = agent.status === "submitted" || agent.status === "streaming";
   const hasComposerText = composerInput.trim().length > 0;
-  const hasVoiceConversation = controlMode && (voiceMessages.length > 0 || voiceThinking);
+  const hasVoiceConversation = controlMode && (voice.messages.length > 0 || voice.isThinking);
   const hasConversation = turns.length > 0 || isComposeInProgress || hasVoiceConversation;
   const conversationActivityKey = [
     agent.session.sessionId ?? "new-thread",
     String(agent.session.streamIndex),
     String(agent.events.length),
     agent.status,
-    String(voiceMessages.length),
-    String(voiceMessages.at(-1)?.text.length ?? 0),
-    String(voiceThinking),
+    String(voice.messages.length),
+    String(voice.messages.at(-1)?.text.length ?? 0),
+    String(voice.isThinking),
   ].join(":");
 
   useEffect(() => {
@@ -340,7 +283,7 @@ export function App() {
           {hasConversation ? (
             <div className="conversation-scroll">
               {controlMode ? (
-                <VoiceConversationSection messages={voiceMessages} thinking={voiceThinking} />
+                <VoiceConversationSection messages={voice.messages} thinking={voice.isThinking} />
               ) : (
                 <ConversationSection
                   isSending={agent.status === "submitted" || agent.status === "streaming"}

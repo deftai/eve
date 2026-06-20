@@ -22,7 +22,6 @@ describe("resolveControlUrl", () => {
   it("honors an explicit override URL", () => {
     const url = resolveControlUrl({
       wsPath,
-      request: new Request("https://app.example.com/eve/v1/realtime-speech/setup"),
       explicitUrl: "wss://tunnel.ngrok.app/eve/v1/realtime-speech/ws",
     });
     expect(url).toBe("wss://tunnel.ngrok.app/eve/v1/realtime-speech/ws");
@@ -30,30 +29,32 @@ describe("resolveControlUrl", () => {
 
   it("derives a wss URL from the Vercel deployment host", () => {
     process.env.VERCEL_BRANCH_URL = "eve-preview.vercel.app";
-    const url = resolveControlUrl({
-      wsPath,
-      request: new Request("https://internal/eve/v1/realtime-speech/setup"),
-    });
+    const url = resolveControlUrl({ wsPath });
     expect(url).toBe("wss://eve-preview.vercel.app/eve/v1/realtime-speech/ws");
   });
 
   it("appends the deploy-protection bypass secret as a query param", () => {
     process.env.VERCEL_URL = "eve-preview.vercel.app";
     process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass123";
-    const url = new URL(
-      resolveControlUrl({
-        wsPath,
-        request: new Request("https://internal/eve/v1/realtime-speech/setup"),
-      }),
-    );
+    const url = new URL(resolveControlUrl({ wsPath }));
     expect(url.searchParams.get("x-vercel-protection-bypass")).toBe("bypass123");
   });
 
-  it("falls back to VERCEL_DPBP for the bypass secret", () => {
+  it("does not append deploy-protection bypass secrets to non-Vercel hosts", () => {
+    process.env.VERCEL_DPBP = "ambient-bypass";
     const url = new URL(
       resolveControlUrl({
         wsPath,
-        request: new Request("https://internal/eve/v1/realtime-speech/setup"),
+        explicitUrl: "wss://tunnel.ngrok.app/eve/v1/realtime-speech/ws",
+      }),
+    );
+    expect(url.searchParams.get("x-vercel-protection-bypass")).toBe(null);
+  });
+
+  it("uses an explicit bypass secret for Vercel hosts", () => {
+    const url = new URL(
+      resolveControlUrl({
+        wsPath,
         explicitUrl: "wss://eve-preview.vercel.app/eve/v1/realtime-speech/ws",
         bypassSecret: "explicit-bypass",
       }),
@@ -61,10 +62,22 @@ describe("resolveControlUrl", () => {
     expect(url.searchParams.get("x-vercel-protection-bypass")).toBe("explicit-bypass");
   });
 
+  it("throws when no control URL or deployment host is configured", () => {
+    expect(() => resolveControlUrl({ wsPath })).toThrow(/EVE_REALTIME_CONTROL_URL/);
+  });
+
+  it("rejects public ws:// control URLs", () => {
+    expect(() =>
+      resolveControlUrl({
+        wsPath,
+        explicitUrl: "ws://app.example.com/eve/v1/realtime-speech/ws",
+      }),
+    ).toThrow(/wss:\/\//);
+  });
+
   it("uses ws:// for localhost overrides", () => {
     const url = resolveControlUrl({
       wsPath,
-      request: new Request("http://localhost:3000/eve/v1/realtime-speech/setup"),
       explicitUrl: "ws://localhost:3000/eve/v1/realtime-speech/ws",
     });
     expect(url).toBe("ws://localhost:3000/eve/v1/realtime-speech/ws");

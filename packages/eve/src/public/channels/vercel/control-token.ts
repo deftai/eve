@@ -37,25 +37,41 @@ export interface CreateControlTokenInput {
   readonly now?: number;
 }
 
+export interface ResolveControlSecretOptions {
+  /**
+   * Allows preview/local setups to derive the signing secret from
+   * `AI_GATEWAY_API_KEY`. Disabled by default so the Gateway credential is not
+   * also the Eve control-plane signing root in production.
+   */
+  readonly allowGatewayKeyFallback?: boolean;
+}
+
 export type VerifyControlTokenResult =
   | { readonly ok: true; readonly auth: SessionAuthContext; readonly voiceSessionId: string }
   | { readonly ok: false; readonly reason: string };
 
 /**
  * Resolves the HMAC signing secret. Prefers an explicit value, then
- * `EVE_REALTIME_CONTROL_SECRET`, then a domain-separated derivation from
- * `AI_GATEWAY_API_KEY` so preview/dev works without extra configuration. The
- * mint endpoint already needs the Gateway key, so it is always present where a
- * control token is minted, and the WS route runs in the same deployment.
+ * `EVE_REALTIME_CONTROL_SECRET`. Preview/dev can opt into a domain-separated
+ * derivation from `AI_GATEWAY_API_KEY`, but production should use a dedicated
+ * control-plane secret.
  */
-export function resolveControlSecret(explicit?: string): string {
+export function resolveControlSecret(
+  explicit?: string,
+  options: ResolveControlSecretOptions = {},
+): string {
+  const allowGatewayKeyFallback =
+    options.allowGatewayKeyFallback === true ||
+    process.env.EVE_REALTIME_CONTROL_ALLOW_GATEWAY_KEY_FALLBACK === "1";
   const candidate =
     readNonEmpty(explicit) ??
     readNonEmpty(process.env.EVE_REALTIME_CONTROL_SECRET) ??
-    deriveFallbackSecret(readNonEmpty(process.env.AI_GATEWAY_API_KEY));
+    (allowGatewayKeyFallback
+      ? deriveFallbackSecret(readNonEmpty(process.env.AI_GATEWAY_API_KEY))
+      : undefined);
   if (candidate === undefined) {
     throw new Error(
-      "Eve realtime voice control requires a signing secret. Set EVE_REALTIME_CONTROL_SECRET or AI_GATEWAY_API_KEY.",
+      "Eve realtime voice control requires a signing secret. Set EVE_REALTIME_CONTROL_SECRET.",
     );
   }
   return candidate;

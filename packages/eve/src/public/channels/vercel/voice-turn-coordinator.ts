@@ -1,6 +1,7 @@
 import type { SendFn } from "#channel/routes.js";
+import type { Session } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
-import { isCurrentTurnBoundaryEvent } from "#protocol/message.js";
+import { isCurrentTurnBoundaryEvent, isTurnFailureEvent } from "#protocol/message.js";
 import {
   DEFAULT_CONTROL_CAPABILITIES,
   encodeControlPacket,
@@ -13,6 +14,8 @@ import {
 const DEFAULT_SETTLE_MS = 220;
 /** Bounds the dedupe set so a long session does not grow it without limit. */
 const MAX_TRACKED_ITEMS = 256;
+/** Suppresses immediate duplicate transcript finals when Gateway omits item ids. */
+const TEXT_DEDUPE_MS = 10_000;
 
 /** Short acknowledgements that should not trigger a durable Eve turn. */
 const BACKCHANNELS = new Set([
@@ -48,8 +51,35 @@ export interface VoiceTurnCoordinatorOptions {
   readonly closeSocket: (code: number, reason: string) => void;
   /** Optional durable context strings contributed on each turn. */
   readonly context?: readonly string[];
+  /** Stores durable voice continuation/cursor state across control WS reconnects. */
+  readonly stateStore?: VoiceControlStateStore;
   /** Settle delay override (ms). */
   readonly settleMs?: number;
+}
+
+export interface VoiceControlSessionState {
+  readonly continuationToken: string;
+  readonly sessionId?: string;
+  readonly streamIndex: number;
+}
+
+export interface VoiceControlStateStore {
+  get(
+    key: string,
+  ): Promise<VoiceControlSessionState | undefined> | VoiceControlSessionState | undefined;
+  set(key: string, state: VoiceControlSessionState): Promise<void> | void;
+}
+
+export function createInMemoryVoiceControlStateStore(): VoiceControlStateStore {
+  const states = new Map<string, VoiceControlSessionState>();
+  return {
+    get(key) {
+      return states.get(key);
+    },
+    set(key, state) {
+      states.set(key, { ...state });
+    },
+  };
 }
 
 /**
@@ -72,11 +102,14 @@ export interface VoiceTurnCoordinatorOptions {
 export class VoiceTurnCoordinator {
   readonly #options: VoiceTurnCoordinatorOptions;
   readonly #settleMs: number;
+  readonly #stateKey: string;
+  readonly #stateReady: Promise<void>;
   readonly #processedItemIds = new Set<string>();
+  readonly #processedTextFingerprints = new Map<string, number>();
 
   #seq = 0;
   #disposed = false;
-  #continuationToken = `voice:${crypto.randomUUID()}`;
+  #continuationToken: string;
   #lastSessionId: string | undefined;
   #streamIndex = 0;
 
@@ -90,11 +123,17 @@ export class VoiceTurnCoordinator {
   constructor(options: VoiceTurnCoordinatorOptions) {
     this.#options = options;
     this.#settleMs = options.settleMs ?? DEFAULT_SETTLE_MS;
+    this.#stateKey = createStateKey(options.auth, options.voiceSessionId);
+    this.#continuationToken = createStableContinuationToken(options.auth, options.voiceSessionId);
+    this.#stateReady = this.#hydrateState();
   }
 
   /** Signals readiness so Gateway clears its ready timeout. */
   start(): void {
-    this.#emit({ type: "session.ready" });
+    void this.#stateReady.then(
+      () => this.#emit({ type: "session.ready" }),
+      () => this.#fail("state_load_failed"),
+    );
   }
 
   /** Routes one inbound Gateway→Eve control event. */
@@ -145,6 +184,7 @@ export class VoiceTurnCoordinator {
       }
     }
     if (isBackchannel(text)) return;
+    if (itemId === undefined && this.#isDuplicateText(text)) return;
 
     this.#pendingText = this.#pendingText.length > 0 ? `${this.#pendingText} ${text}` : text;
     this.#clearSettle();
@@ -161,13 +201,13 @@ export class VoiceTurnCoordinator {
 
   #bargeIn(): void {
     this.#clearSettle();
+    this.#pendingText = "";
     const hadResponse = this.#responseInFlight || this.#activeTurn !== undefined;
     this.#activeTurn?.abort.abort();
-    this.#activeTurn?.cancelStream();
-    this.#activeTurn = undefined;
     if (hadResponse) {
       // Skip the cancel frame when the engine can't act on it; the local relay
-      // is already aborted above either way.
+      // is already aborted above either way. The durable stream is still drained
+      // to its boundary so the next turn cannot race the same continuation.
       if (this.#capabilities["output.cancel"]) this.#emit({ type: "response.cancel" });
       this.#responseInFlight = false;
     }
@@ -175,15 +215,19 @@ export class VoiceTurnCoordinator {
 
   async #runTurn(message: string): Promise<void> {
     if (this.#disposed) return;
+    await this.#stateReady;
     const abort = new AbortController();
     const turn = { abort, cancelStream: () => undefined as void };
     this.#activeTurn = turn;
+    let session: Session | undefined;
+    let consumed = 0;
+    let failed = false;
 
     try {
       this.#emit({ type: "turn.started" });
       const payload: { message: string; context?: readonly string[] } = { message };
       if (this.#options.context !== undefined) payload.context = this.#options.context;
-      const session = await this.#options.send(payload, {
+      session = await this.#options.send(payload, {
         auth: this.#options.auth,
         continuationToken: this.#continuationToken,
         mode: "conversation",
@@ -196,14 +240,17 @@ export class VoiceTurnCoordinator {
         void reader.cancel().catch(() => undefined);
       };
 
-      let consumed = 0;
       const partials = new Map<number, string>();
       try {
-        while (!abort.signal.aborted) {
+        while (!this.#disposed) {
           const { done, value } = await reader.read();
           if (done) break;
           consumed += 1;
           const event = value;
+          if (isTurnFailureEvent(event)) {
+            failed = true;
+            break;
+          }
           if (event.type === "message.appended") {
             partials.set(
               event.data.stepIndex,
@@ -234,21 +281,68 @@ export class VoiceTurnCoordinator {
         }
       }
 
-      this.#lastSessionId = session.id;
-      if (session.continuationToken.length > 0) this.#continuationToken = session.continuationToken;
-      this.#streamIndex = startIndex + consumed;
+      await this.#persistState(session, startIndex + consumed);
 
-      if (!abort.signal.aborted && this.#capabilities["output.audio"]) {
+      if (failed) {
+        this.#responseInFlight = false;
+        if (!abort.signal.aborted && !this.#disposed) {
+          this.#emit({ type: "error", data: { message: "turn_failed" } });
+        }
+        return;
+      }
+
+      if (!abort.signal.aborted && !this.#disposed) {
         this.#emit({ type: "response.done" });
         this.#responseInFlight = false;
       }
     } catch {
+      this.#responseInFlight = false;
       if (!abort.signal.aborted && !this.#disposed) {
         this.#emit({ type: "error", data: { message: "turn_failed" } });
       }
     } finally {
       if (this.#activeTurn === turn) this.#activeTurn = undefined;
     }
+  }
+
+  async #hydrateState(): Promise<void> {
+    const state = await this.#options.stateStore?.get(this.#stateKey);
+    if (state === undefined) return;
+    if (state.continuationToken.length > 0) this.#continuationToken = state.continuationToken;
+    this.#lastSessionId = state.sessionId;
+    this.#streamIndex = Math.max(0, Math.floor(state.streamIndex));
+  }
+
+  async #persistState(session: Session, streamIndex: number): Promise<void> {
+    this.#lastSessionId = session.id;
+    this.#streamIndex = streamIndex;
+    await this.#options.stateStore?.set(this.#stateKey, {
+      continuationToken: this.#continuationToken,
+      sessionId: this.#lastSessionId,
+      streamIndex: this.#streamIndex,
+    });
+  }
+
+  #isDuplicateText(text: string): boolean {
+    const now = Date.now();
+    for (const [fingerprint, seenAt] of this.#processedTextFingerprints) {
+      if (now - seenAt > TEXT_DEDUPE_MS) this.#processedTextFingerprints.delete(fingerprint);
+    }
+    const fingerprint = textFingerprint(text);
+    if (fingerprint.length === 0) return false;
+    if (this.#processedTextFingerprints.has(fingerprint)) return true;
+    this.#processedTextFingerprints.set(fingerprint, now);
+    if (this.#processedTextFingerprints.size > MAX_TRACKED_ITEMS) {
+      const oldest = this.#processedTextFingerprints.keys().next().value;
+      if (oldest !== undefined) this.#processedTextFingerprints.delete(oldest);
+    }
+    return false;
+  }
+
+  #fail(message: string): void {
+    if (!this.#disposed) this.#emit({ type: "error", data: { message } });
+    this.#options.closeSocket(1011, message);
+    this.dispose();
   }
 
   #emit(event: EveToGatewayEvent): void {
@@ -271,4 +365,22 @@ function isBackchannel(text: string): boolean {
     .replace(/[.!?,]+$/u, "")
     .trim();
   return BACKCHANNELS.has(normalized);
+}
+
+function createStateKey(auth: SessionAuthContext, voiceSessionId: string): string {
+  return ["voice-control", auth.authenticator, auth.principalType, auth.principalId, voiceSessionId]
+    .map(encodeStateKeyPart)
+    .join(":");
+}
+
+function createStableContinuationToken(auth: SessionAuthContext, voiceSessionId: string): string {
+  return createStateKey(auth, voiceSessionId);
+}
+
+function encodeStateKeyPart(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function textFingerprint(text: string): string {
+  return text.toLowerCase().replace(/\s+/gu, " ").trim();
 }

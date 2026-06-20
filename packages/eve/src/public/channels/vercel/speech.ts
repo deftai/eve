@@ -1,4 +1,4 @@
-import { gateway, type Experimental_RealtimeFactoryGetTokenResult } from "ai";
+import { gateway } from "ai";
 
 import type { AuthFn } from "#public/channels/auth.js";
 import { routeAuth } from "#public/channels/auth.js";
@@ -22,7 +22,9 @@ import {
   parseControlPacket,
 } from "#public/channels/vercel/voice-control-protocol.js";
 import {
+  createInMemoryVoiceControlStateStore,
   VoiceTurnCoordinator,
+  type VoiceControlStateStore,
   type VoiceTurnCoordinatorOptions,
 } from "#public/channels/vercel/voice-turn-coordinator.js";
 
@@ -36,9 +38,11 @@ const DEFAULT_CONTROL_TOKEN_TTL_SECONDS = 600;
  * channel serves the `WS()` control route AI Gateway dials back. Pass `true`
  * for defaults.
  */
-export interface RealtimeSpeechControlInput {
-  /** HMAC secret for control tokens. Defaults to env-derived (see `resolveControlSecret`). */
+export interface VercelSpeechControlInput {
+  /** HMAC secret for control tokens. Defaults to `EVE_REALTIME_CONTROL_SECRET`. */
   readonly secret?: string;
+  /** Allow deriving the control-token signing secret from `AI_GATEWAY_API_KEY`. Local/preview only. */
+  readonly allowGatewayKeyFallback?: boolean;
   /** Full `wss://` control URL override. Defaults to `EVE_REALTIME_CONTROL_URL` / deployment host. */
   readonly controlUrl?: string;
   /** Vercel deploy-protection bypass secret override (for protected previews). */
@@ -47,8 +51,21 @@ export interface RealtimeSpeechControlInput {
   readonly tokenTtlSeconds?: number;
   /** Durable context strings contributed on each control-driven turn. */
   readonly context?: readonly string[];
+  /** Durable state for continuation/cursor recovery across control WS reconnects. */
+  readonly stateStore?: VoiceControlStateStore;
   /** Turn settle/debounce window (ms). */
   readonly settleMs?: number;
+}
+
+/**
+ * Eve-owned mirror of the AI Gateway realtime client-secret result (`token`,
+ * `url`, `expiresAt`). Declared locally so eve's public channel surface does not
+ * re-export the AI SDK's experimental realtime types, which can change freely.
+ */
+export interface VercelRealtimeClientSecret {
+  readonly token: string;
+  readonly url: string;
+  readonly expiresAt?: number;
 }
 
 /**
@@ -56,19 +73,19 @@ export interface RealtimeSpeechControlInput {
  * mirrors `@ai-sdk/gateway`'s `GatewayRealtimeControlConfig`; defined locally so
  * eve does not depend on the gateway type re-export.
  */
-export interface RealtimeControlConfig {
+export interface VercelRealtimeControlConfig {
   readonly mode: "eve";
   readonly token: string;
   readonly url: string;
 }
 
-export interface RealtimeSpeechGetTokenInput {
+export interface VercelSpeechGetTokenInput {
   readonly expiresAfterSeconds?: number;
   readonly model: string;
-  readonly control?: RealtimeControlConfig;
+  readonly control?: VercelRealtimeControlConfig;
 }
 
-export interface RealtimeSpeechChannelInput {
+export interface VercelSpeechChannelInput {
   /** Route auth used by the setup route. */
   readonly auth: AuthFn<Request> | readonly AuthFn<Request>[];
   /** AI Gateway realtime model id. */
@@ -81,16 +98,16 @@ export interface RealtimeSpeechChannelInput {
    * Enable the Gateway-owned control plane (A-lite). When set, `/setup` mints a
    * token with control config and the `{basePath}/ws` control route is served.
    */
-  readonly control?: RealtimeSpeechControlInput | boolean;
+  readonly control?: VercelSpeechControlInput | boolean;
   /** Test/advanced injection point for token minting. Defaults to AI Gateway. */
-  readonly getToken?: (
-    input: RealtimeSpeechGetTokenInput,
-  ) => Promise<Experimental_RealtimeFactoryGetTokenResult>;
+  readonly getToken?: (input: VercelSpeechGetTokenInput) => Promise<VercelRealtimeClientSecret>;
   /** Test/advanced injection point for creating long-lived voice session ids. */
   readonly createVoiceSessionId?: () => string;
 }
 
-export interface RealtimeSpeechSetupResponse extends Experimental_RealtimeFactoryGetTokenResult {
+export interface VercelSpeechSetupResponse extends VercelRealtimeClientSecret {
+  /** Whether this token carries Gateway-owned Eve control config. */
+  readonly control: boolean;
   /** No model-visible tools are exposed to the realtime speech adapter. */
   readonly tools: readonly [];
   readonly voiceSessionId: string;
@@ -110,12 +127,12 @@ export interface RealtimeSpeechSetupResponse extends Experimental_RealtimeFactor
  * for Gateway to inject into provider TTS. Either way the realtime model is only
  * the ears and mouth and Eve stays the durable assistant of record.
  */
-export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channel {
+export function vercelSpeechChannel(input: VercelSpeechChannelInput): Channel {
   const basePath = normalizeBasePath(input.basePath ?? DEFAULT_BASE_PATH);
   const model = input.model ?? DEFAULT_MODEL;
   const getToken =
     input.getToken ??
-    ((options: RealtimeSpeechGetTokenInput) => gateway.experimental_realtime.getToken(options));
+    ((options: VercelSpeechGetTokenInput) => gateway.experimental_realtime.getToken(options));
   const createVoiceSessionId = input.createVoiceSessionId ?? (() => crypto.randomUUID());
   const controlOptions = normalizeControlInput(input.control);
   const wsPath = `${basePath}/ws`;
@@ -129,9 +146,11 @@ export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channe
       const voiceSessionId =
         readOptionalString(url.searchParams.get("voiceSessionId")) ?? createVoiceSessionId();
 
-      let control: RealtimeControlConfig | undefined;
+      let control: VercelRealtimeControlConfig | undefined;
       if (controlOptions !== undefined) {
-        const secret = resolveControlSecret(controlOptions.secret);
+        const secret = resolveControlSecret(controlOptions.secret, {
+          allowGatewayKeyFallback: controlOptions.allowGatewayKeyFallback,
+        });
         const token = await createControlToken({
           auth: authResult,
           voiceSessionId,
@@ -140,10 +159,9 @@ export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channe
         });
         const controlUrlInput: {
           wsPath: string;
-          request: Request;
           explicitUrl?: string;
           bypassSecret?: string;
-        } = { wsPath, request: req };
+        } = { wsPath };
         if (controlOptions.controlUrl !== undefined) {
           controlUrlInput.explicitUrl = controlOptions.controlUrl;
         }
@@ -156,7 +174,7 @@ export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channe
       const getTokenInput: {
         model: string;
         expiresAfterSeconds?: number;
-        control?: RealtimeControlConfig;
+        control?: VercelRealtimeControlConfig;
       } = { model };
       if (input.expiresAfterSeconds !== undefined) {
         getTokenInput.expiresAfterSeconds = input.expiresAfterSeconds;
@@ -166,9 +184,10 @@ export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channe
 
       return jsonNoStore({
         ...token,
+        control: control !== undefined,
         tools: [],
         voiceSessionId,
-      } satisfies RealtimeSpeechSetupResponse);
+      } satisfies VercelSpeechSetupResponse);
     }),
 
     GET(`${basePath}/health`, async () =>
@@ -193,20 +212,23 @@ export function realtimeSpeechChannel(input: RealtimeSpeechChannelInput): Channe
 
 function createControlRoute(input: {
   readonly wsPath: string;
-  readonly controlOptions: RealtimeSpeechControlInput;
+  readonly controlOptions: VercelSpeechControlInput;
 }): RouteDefinition {
   // Per-connection coordinators, keyed by peer id. eve invokes the WS route
   // handler per hook (upgrade/open/message run in separate closures), so
   // connection state cannot live in the handler closure — it is keyed here on
   // the stable `peer.id`, and the principal is recovered from `peer.request`.
   const connections = new Map<string, VoiceTurnCoordinator>();
+  const stateStore = input.controlOptions.stateStore ?? createInMemoryVoiceControlStateStore();
 
   async function verifyPeer(
     request: Request,
   ): Promise<{ auth: SessionAuthContext; voiceSessionId: string } | undefined> {
     let secret: string;
     try {
-      secret = resolveControlSecret(input.controlOptions.secret);
+      secret = resolveControlSecret(input.controlOptions.secret, {
+        allowGatewayKeyFallback: input.controlOptions.allowGatewayKeyFallback,
+      });
     } catch {
       return undefined;
     }
@@ -236,6 +258,7 @@ function createControlRoute(input: {
         voiceSessionId: verified.voiceSessionId,
         send: args.send,
         sendRaw: (packet) => peer.send(packet),
+        stateStore,
         closeSocket: (code, reason) => peer.close(code, reason),
       };
       if (input.controlOptions.context !== undefined) {
@@ -264,8 +287,8 @@ function createControlRoute(input: {
 }
 
 function normalizeControlInput(
-  control: RealtimeSpeechChannelInput["control"],
-): RealtimeSpeechControlInput | undefined {
+  control: VercelSpeechChannelInput["control"],
+): VercelSpeechControlInput | undefined {
   if (control === undefined || control === false) return undefined;
   if (control === true) return {};
   return control;
@@ -286,7 +309,7 @@ function readOptionalString(value: unknown): string | undefined {
 function normalizeBasePath(path: string): string {
   const trimmed = path.trim().replace(/\/+$/u, "");
   if (!trimmed.startsWith("/") || trimmed.length === 0) {
-    throw new Error("realtimeSpeechChannel basePath must start with `/`.");
+    throw new Error("vercelSpeechChannel basePath must start with `/`.");
   }
   return trimmed;
 }

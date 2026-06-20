@@ -7,19 +7,17 @@
  *     (or `ws://localhost`) URL, used for tunneled local dev (ngrok/preview).
  *  2. The deployment host from `VERCEL_BRANCH_URL` / `VERCEL_URL` /
  *     `VERCEL_PROJECT_PRODUCTION_URL`.
- *  3. The inbound request's forwarded host.
  *
  * AI Gateway dials this URL with only an `Authorization` header and does not
  * follow redirects, so a Vercel Deployment Protection bypass cannot ride a
  * header — it is appended to the URL as the `x-vercel-protection-bypass` query
- * param (read from `VERCEL_AUTOMATION_BYPASS_SECRET`, falling back to
- * `VERCEL_DPBP`). This is a temporary measure for protected preview testing.
+ * param for Vercel deployment hosts only (read from
+ * `VERCEL_AUTOMATION_BYPASS_SECRET`, falling back to `VERCEL_DPBP`). This is a
+ * temporary measure for protected preview testing.
  */
 export interface ResolveControlUrlInput {
   /** The `/ws` route path, e.g. `/eve/v1/realtime-speech/ws`. */
   readonly wsPath: string;
-  /** The inbound `/setup` request, used to recover the public host as a fallback. */
-  readonly request: Request;
   /** Explicit full WS URL override (defaults to `EVE_REALTIME_CONTROL_URL`). */
   readonly explicitUrl?: string;
   /** Explicit deploy-protection bypass secret override. */
@@ -29,7 +27,7 @@ export interface ResolveControlUrlInput {
 export function resolveControlUrl(input: ResolveControlUrlInput): string {
   const base = resolveBaseUrl(input);
   const bypass = readNonEmpty(input.bypassSecret) ?? readDeployBypassSecret();
-  if (bypass !== undefined) {
+  if (bypass !== undefined && isVercelHost(base.hostname)) {
     base.searchParams.set("x-vercel-protection-bypass", bypass);
   }
   return base.toString();
@@ -40,34 +38,27 @@ function resolveBaseUrl(input: ResolveControlUrlInput): URL {
     readNonEmpty(input.explicitUrl) ?? readNonEmpty(process.env.EVE_REALTIME_CONTROL_URL);
   if (explicit !== undefined) {
     // The override carries the full URL including path; honor it verbatim.
-    return new URL(explicit);
+    return validateControlUrl(new URL(explicit));
   }
 
-  const host = resolveDeploymentHost(input.request);
+  const host = resolveDeploymentHost();
   if (host === undefined) {
     throw new Error(
       "Eve realtime voice control could not resolve a public host. Set EVE_REALTIME_CONTROL_URL.",
     );
   }
   const scheme = isLocalHost(host) ? "ws" : "wss";
-  return new URL(`${scheme}://${host}${input.wsPath}`);
+  return validateControlUrl(new URL(`${scheme}://${host}${input.wsPath}`));
 }
 
-function resolveDeploymentHost(request: Request): string | undefined {
+function resolveDeploymentHost(): string | undefined {
   const fromEnv =
     readNonEmpty(process.env.VERCEL_BRANCH_URL) ??
     readNonEmpty(process.env.VERCEL_URL) ??
     readNonEmpty(process.env.VERCEL_PROJECT_PRODUCTION_URL);
   if (fromEnv !== undefined) return stripScheme(fromEnv);
 
-  const forwardedHost = readNonEmpty(request.headers.get("x-forwarded-host"));
-  if (forwardedHost !== undefined) return forwardedHost;
-
-  try {
-    return new URL(request.url).host || undefined;
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }
 
 function readDeployBypassSecret(): string | undefined {
@@ -80,6 +71,18 @@ function readDeployBypassSecret(): string | undefined {
 function isLocalHost(host: string): boolean {
   const hostname = host.split(":")[0] ?? host;
   return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1";
+}
+
+function isVercelHost(hostname: string): boolean {
+  return hostname.endsWith(".vercel.app") || hostname.endsWith(".vercel.sh");
+}
+
+function validateControlUrl(url: URL): URL {
+  if (url.protocol === "wss:") return url;
+  if (url.protocol === "ws:" && isLocalHost(url.host)) return url;
+  throw new Error(
+    "Eve realtime voice control URL must use wss://, or ws://localhost for local dev.",
+  );
 }
 
 function stripScheme(value: string): string {

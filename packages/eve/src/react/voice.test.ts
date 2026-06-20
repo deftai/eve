@@ -368,6 +368,35 @@ describe("useEveVoice", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("caps the live voice transcript and keeps the most recent messages", async () => {
+    const { useEveVoice } = await import("#react/voice.js");
+
+    let latest: ReturnType<typeof useEveVoice> | undefined;
+    function TestComponent() {
+      latest = useEveVoice({ voiceSessionId: "voice-1", controlMode: true });
+      return null;
+    }
+
+    act(() => {
+      create(createElement(TestComponent));
+    });
+
+    act(() => {
+      for (let i = 0; i < 300; i++) {
+        realtimeOptions[0].onEvent({
+          raw: {},
+          responseId: `response-${i}`,
+          transcript: `reply ${i}`,
+          type: "audio-transcript-done",
+        });
+      }
+    });
+
+    expect(latest?.messages).toHaveLength(256);
+    expect(latest?.messages.at(-1)?.text).toBe("reply 299");
+    expect(latest?.messages[0]?.text).toBe("reply 44");
+  });
+
   it("ignores empty transcription completions", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

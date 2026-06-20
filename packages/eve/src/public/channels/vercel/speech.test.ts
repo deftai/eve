@@ -4,7 +4,7 @@ import { isHttpRouteDefinition, isWebSocketRouteDefinition } from "#channel/rout
 import type { Channel } from "#public/definitions/defineChannel.js";
 import { none } from "#public/channels/auth.js";
 import { createControlToken, verifyControlToken } from "#public/channels/vercel/control-token.js";
-import { realtimeSpeechChannel } from "#public/channels/vercel/speech.js";
+import { vercelSpeechChannel } from "#public/channels/vercel/speech.js";
 
 async function callRoute(
   channel: Channel,
@@ -28,14 +28,14 @@ async function callRoute(
   });
 }
 
-describe("realtimeSpeechChannel", () => {
+describe("vercelSpeechChannel", () => {
   it("mints a Gateway realtime token and returns the voice session id", async () => {
     const getToken = vi.fn(async () => ({
       expiresAt: 1_700_000_060,
       token: "vcst_test",
       url: "wss://gateway.example/realtime-model?ai-model-id=openai%2Fgpt-realtime-2",
     }));
-    const channel = realtimeSpeechChannel({
+    const channel = vercelSpeechChannel({
       auth: none(),
       basePath: "/voice",
       createVoiceSessionId: () => "voice-session-1",
@@ -67,7 +67,7 @@ describe("realtimeSpeechChannel", () => {
   });
 
   it("reuses a client-supplied voice session id", async () => {
-    const channel = realtimeSpeechChannel({
+    const channel = vercelSpeechChannel({
       auth: none(),
       basePath: "/voice",
       getToken: async () => ({ token: "vcst_unused", url: "wss://gateway.example" }),
@@ -85,7 +85,7 @@ describe("realtimeSpeechChannel", () => {
   });
 
   it("exposes only setup and health routes (no blocking /turn route)", () => {
-    const channel = realtimeSpeechChannel({
+    const channel = vercelSpeechChannel({
       auth: none(),
       basePath: "/voice",
       getToken: async () => ({ token: "vcst_unused", url: "wss://gateway.example" }),
@@ -99,7 +99,7 @@ describe("realtimeSpeechChannel", () => {
   });
 
   it("serves a health route", async () => {
-    const channel = realtimeSpeechChannel({
+    const channel = vercelSpeechChannel({
       auth: none(),
       basePath: "/voice",
       model: "openai/gpt-realtime-2",
@@ -134,7 +134,7 @@ describe("realtimeSpeechChannel", () => {
         captured.push(options);
         return { token: "vcst_x", url: "wss://gateway.example" };
       });
-      const channel = realtimeSpeechChannel({
+      const channel = vercelSpeechChannel({
         auth: () => ({
           attributes: {},
           authenticator: "test",
@@ -167,7 +167,7 @@ describe("realtimeSpeechChannel", () => {
   it("rejects an unauthenticated control upgrade and accepts a valid token", async () => {
     process.env.EVE_REALTIME_CONTROL_SECRET = "ws-test-secret";
     try {
-      const channel = realtimeSpeechChannel({
+      const channel = vercelSpeechChannel({
         auth: none(),
         basePath: "/voice",
         control: true,

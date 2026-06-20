@@ -85,9 +85,14 @@ describe("control token", () => {
 
   it("derives a fallback secret from AI_GATEWAY_API_KEY", () => {
     process.env.AI_GATEWAY_API_KEY = "gw-key-123";
-    const resolved = resolveControlSecret();
+    const resolved = resolveControlSecret(undefined, { allowGatewayKeyFallback: true });
     expect(resolved).toBe("eve-realtime-control:gw-key-123");
     expect(resolved).not.toBe("gw-key-123");
+  });
+
+  it("does not derive from AI_GATEWAY_API_KEY unless explicitly allowed", () => {
+    process.env.AI_GATEWAY_API_KEY = "gw-key-123";
+    expect(() => resolveControlSecret()).toThrow(/signing secret/);
   });
 
   it("prefers EVE_REALTIME_CONTROL_SECRET over the gateway key", () => {
