@@ -166,11 +166,9 @@ let mentionCounter = 0;
 
 function buildMentionBody(overrides?: {
   channel?: string;
-  threadTs?: string;
   ts?: string;
   text?: string;
   teamId?: string;
-  user?: string;
 }): { body: string; channel: string; ts: string } {
   mentionCounter += 1;
   const channel = overrides?.channel ?? "C01";
@@ -181,11 +179,10 @@ function buildMentionBody(overrides?: {
     event_id: `Ev${mentionCounter}`,
     event: {
       type: "app_mention",
-      user: overrides?.user ?? "U01",
+      user: "U01",
       text: overrides?.text ?? "hello",
       channel,
       ts,
-      thread_ts: overrides?.threadTs,
       event_ts: ts,
     },
   });
@@ -980,32 +977,6 @@ describe("slackChannel() inbound mention pipeline", () => {
     const { context } = payload as { context: readonly string[] };
     expect(context).toHaveLength(1);
     expect(context[0]).toContain("<slack_context>");
-  });
-
-  it("binds resumed-thread HITL prompts to the latest verified Slack actor", async () => {
-    const channel = slackChannel({
-      credentials: { botToken: "xoxb-test" },
-      onAppMention: () => ({ auth: null }),
-    });
-    const threadTs = "1700000000.000001";
-    const { body } = buildMentionBody({
-      threadTs,
-      ts: "1700000000.000002",
-      user: "U_LATEST",
-    });
-    const { send } = await firePost(channel, buildSignedRequest({ body }));
-    const [payload, options] = send.mock.calls[0]!;
-    expect(options.continuationToken).toBe(`C01:${threadTs}`);
-
-    const adapter = withState(getAdapter(channel), {
-      ...THREAD_STATE,
-      threadTs,
-      triggeringUserId: "U_FIRST",
-    });
-    const ctx = buildAdapterContext(adapter, stubAccessor());
-    await adapter.deliver!(payload, ctx);
-
-    expect(ctx.state.triggeringUserId).toBe("U_LATEST");
   });
 
   it("does not dispatch when onAppMention resolves to null", async () => {

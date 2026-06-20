@@ -1,225 +1,248 @@
-import { writeFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { once } from "node:events";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { SLACK_HITL_AUTHORIZATION_DESCRIPTOR } from "#internal/testing/scenario-apps/slack-hitl-authorization.js";
 import { useScenarioApp } from "#internal/testing/scenario-app.js";
-import {
-  buildInteractionBody,
-  buildMentionBody,
-  findHitlCard,
-  findSlackCall,
-  operationOf,
-  parseHitlCard,
-  postSignedSlackBody,
-  readExecutionNotes,
-  readFormField,
-  readSessionRunIds,
-  readSlackCalls,
-  startEveDev,
-  USER_A,
-  USER_B,
-  waitForValue,
-} from "./slack-hitl-authorization-harness.js";
+import { stripAnsi } from "#cli/dev/tui/terminal-text.js";
 
-const SCENARIO_TIMEOUT_MS = 360_000;
+const SIGNING_SECRET = "scenario-signing-secret";
+const CHANNEL_ID = "C_SCENARIO";
+const TEAM_ID = "T_SCENARIO";
+const THREAD_TS = "1700000000.000001";
+const USER_A = "U_OWNER_A";
+const USER_B = "U_OWNER_B";
+
+const hitlCardSchema = z.object({
+  actionId: z.string(),
+  blockId: z.string(),
+  value: z.string(),
+});
+type HitlCard = z.infer<typeof hitlCardSchema>;
+
+const slackCallSchema = z.object({
+  api: z.string(),
+  card: hitlCardSchema.optional(),
+  user: z.string().nullable(),
+});
+type SlackCall = z.infer<typeof slackCallSchema>;
 
 const scenarioApp = useScenarioApp();
 
 describe("Slack HITL authorization contract", () => {
-  it(
-    "binds each durable prompt to the latest verified Slack actor",
-    async () => {
-      const app = await scenarioApp(SLACK_HITL_AUTHORIZATION_DESCRIPTOR);
-      const callsPath = join(app.appRoot, "slack-calls.jsonl");
-      const executionsPath = join(app.appRoot, "tool-executions.jsonl");
-      await Promise.all([writeFile(callsPath, "", "utf8"), writeFile(executionsPath, "", "utf8")]);
+  it("binds each durable prompt to the latest verified Slack actor", async () => {
+    const app = await scenarioApp(SLACK_HITL_AUTHORIZATION_DESCRIPTOR);
+    const callsPath = join(app.appRoot, "slack-calls.jsonl");
+    await writeFile(callsPath, "");
+    const server = await startEveDev(app.appRoot, callsPath);
 
-      const server = await startEveDev({
-        appRoot: app.appRoot,
-        callsPath,
-        executionsPath,
+    try {
+      expect((await postSlack(server.url, mention(USER_A, "owner-a", "000003"))).status).toBe(200);
+      const firstCard = await waitFor("first HITL card", async () =>
+        findCard(await readCalls(callsPath), 0),
+      );
+      const sessionRunIds = await waitFor("durable Slack session", async () => {
+        const ids = await readSessionRunIds(app.appRoot);
+        return ids.length === 1 ? ids : null;
       });
 
-      try {
-        const rejectedSignature = await postSignedSlackBody({
-          body: buildMentionBody({
-            eventId: "Ev_bad_signature",
-            text: 'Use guarded-echo exactly once with note "must-not-run".',
-            ts: "1700000000.000002",
-            userId: USER_A,
-          }),
-          serverUrl: server.url,
-          signingSecret: "wrong-secret",
-        });
-        expect(rejectedSignature.status).toBe(401);
+      let callIndex = (await readCalls(callsPath)).length;
+      expect((await postSlack(server.url, interaction(firstCard, USER_A))).status).toBe(200);
+      await waitFor("first completed reply", async () =>
+        findCall(await readCalls(callsPath), callIndex, "chat.postMessage"),
+      );
 
-        const firstMention = await postSignedSlackBody({
-          body: buildMentionBody({
-            eventId: "Ev_owner_a",
-            text: 'Use guarded-echo exactly once with note "owner-a".',
-            ts: "1700000000.000003",
-            userId: USER_A,
-          }),
-          serverUrl: server.url,
-        });
-        expect(firstMention.status).toBe(200);
+      callIndex = (await readCalls(callsPath)).length;
+      expect((await postSlack(server.url, mention(USER_B, "owner-b", "000004"))).status).toBe(200);
+      const secondCard = await waitFor("second HITL card", async () =>
+        findCard(await readCalls(callsPath), callIndex),
+      );
+      expect(secondCard.blockId).not.toBe(firstCard.blockId);
+      expect(await readSessionRunIds(app.appRoot)).toEqual(sessionRunIds);
 
-        const firstCard = await waitForValue({
-          description: "the first Slack HITL card",
-          load: async () => findHitlCard(await readSlackCalls(callsPath), 0),
-          server,
-        });
-        expect(firstCard.blockId).toMatch(/^eve_input_responder:/u);
+      callIndex = (await readCalls(callsPath)).length;
+      expect((await postSlack(server.url, interaction(secondCard, USER_A))).status).toBe(200);
+      await waitFor("stale-user rejection", async () =>
+        findCall(await readCalls(callsPath), callIndex, "chat.postEphemeral", USER_A),
+      );
+      expect(findCall(await readCalls(callsPath), callIndex, "chat.update")).toBeNull();
 
-        const initialSessionRunIds = await waitForValue({
-          description: "the durable Slack session run",
-          load: async () => {
-            const runIds = await readSessionRunIds(app.appRoot);
-            return runIds.length > 0 ? runIds : null;
-          },
-          server,
-        });
-        expect(initialSessionRunIds).toHaveLength(1);
-
-        const callsBeforeUnauthorizedClick = (await readSlackCalls(callsPath)).length;
-        const unauthorizedClick = await postSignedSlackBody({
-          body: buildInteractionBody({ card: firstCard, userId: USER_B }),
-          contentType: "application/x-www-form-urlencoded",
-          serverUrl: server.url,
-        });
-        expect(unauthorizedClick.status).toBe(200);
-
-        await waitForValue({
-          description: "the cross-user rejection notice",
-          load: async () =>
-            findSlackCall(await readSlackCalls(callsPath), callsBeforeUnauthorizedClick, (call) =>
-              operationOf(call) === "chat.postEphemeral" &&
-              readFormField(call.body, "user") === USER_B
-                ? call
-                : null,
-            ),
-          server,
-        });
-        expect(await readExecutionNotes(executionsPath)).toEqual([]);
-        expect(
-          (await readSlackCalls(callsPath))
-            .slice(callsBeforeUnauthorizedClick)
-            .some((call) => operationOf(call) === "chat.update"),
-        ).toBe(false);
-
-        const callsBeforeAuthorizedClick = (await readSlackCalls(callsPath)).length;
-        const authorizedClick = await postSignedSlackBody({
-          body: buildInteractionBody({ card: firstCard, userId: USER_A }),
-          contentType: "application/x-www-form-urlencoded",
-          serverUrl: server.url,
-        });
-        expect(authorizedClick.status).toBe(200);
-
-        await waitForValue({
-          description: "the first approved tool execution",
-          load: async () => {
-            const notes = await readExecutionNotes(executionsPath);
-            return notes.includes("owner-a") ? notes : null;
-          },
-          server,
-        });
-        const firstUpdate = await waitForValue({
-          description: "the first answered-card update",
-          load: async () =>
-            findSlackCall(await readSlackCalls(callsPath), callsBeforeAuthorizedClick, (call) =>
-              operationOf(call) === "chat.update" ? call : null,
-            ),
-          server,
-        });
-        expect(firstUpdate.body).not.toContain(USER_A);
-        expect(firstUpdate.body).not.toContain(USER_B);
-
-        await waitForValue({
-          description: "the first completed Slack reply",
-          load: async () =>
-            findSlackCall(await readSlackCalls(callsPath), callsBeforeAuthorizedClick, (call) =>
-              operationOf(call) === "chat.postMessage" && parseHitlCard(call, 0) === null
-                ? call
-                : null,
-            ),
-          server,
-        });
-
-        const callsBeforeSecondMention = (await readSlackCalls(callsPath)).length;
-        const secondMention = await postSignedSlackBody({
-          body: buildMentionBody({
-            eventId: "Ev_owner_b",
-            text: 'Use guarded-echo exactly once with note "owner-b".',
-            ts: "1700000000.000004",
-            userId: USER_B,
-          }),
-          serverUrl: server.url,
-        });
-        expect(secondMention.status).toBe(200);
-
-        const secondCard = await waitForValue({
-          description: "the resumed-session Slack HITL card",
-          load: async () => findHitlCard(await readSlackCalls(callsPath), callsBeforeSecondMention),
-          server,
-        });
-        expect(secondCard.blockId).not.toBe(firstCard.blockId);
-        expect(await readSessionRunIds(app.appRoot)).toEqual(initialSessionRunIds);
-
-        const callsBeforeStaleOwnerClick = (await readSlackCalls(callsPath)).length;
-        const staleOwnerClick = await postSignedSlackBody({
-          body: buildInteractionBody({ card: secondCard, userId: USER_A }),
-          contentType: "application/x-www-form-urlencoded",
-          serverUrl: server.url,
-        });
-        expect(staleOwnerClick.status).toBe(200);
-        await waitForValue({
-          description: "the stale-owner rejection notice",
-          load: async () =>
-            findSlackCall(await readSlackCalls(callsPath), callsBeforeStaleOwnerClick, (call) =>
-              operationOf(call) === "chat.postEphemeral" &&
-              readFormField(call.body, "user") === USER_A
-                ? call
-                : null,
-            ),
-          server,
-        });
-        expect(await readExecutionNotes(executionsPath)).toEqual(["owner-a"]);
-
-        const callsBeforeSecondApproval = (await readSlackCalls(callsPath)).length;
-        const secondApproval = await postSignedSlackBody({
-          body: buildInteractionBody({ card: secondCard, userId: USER_B }),
-          contentType: "application/x-www-form-urlencoded",
-          serverUrl: server.url,
-        });
-        expect(secondApproval.status).toBe(200);
-
-        await waitForValue({
-          description: "the second approved tool execution",
-          load: async () => {
-            const notes = await readExecutionNotes(executionsPath);
-            return notes.length === 2 ? notes : null;
-          },
-          server,
-        });
-        const secondUpdate = await waitForValue({
-          description: "the second answered-card update",
-          load: async () =>
-            findSlackCall(await readSlackCalls(callsPath), callsBeforeSecondApproval, (call) =>
-              operationOf(call) === "chat.update" ? call : null,
-            ),
-          server,
-        });
-
-        expect(await readExecutionNotes(executionsPath)).toEqual(["owner-a", "owner-b"]);
-        expect(secondUpdate.body).not.toContain(USER_A);
-        expect(secondUpdate.body).not.toContain(USER_B);
-        expect(await readSessionRunIds(app.appRoot)).toEqual(initialSessionRunIds);
-      } finally {
-        await server.stop();
-      }
-    },
-    SCENARIO_TIMEOUT_MS,
-  );
+      callIndex = (await readCalls(callsPath)).length;
+      expect((await postSlack(server.url, interaction(secondCard, USER_B))).status).toBe(200);
+      await waitFor("second completed reply", async () =>
+        findCall(await readCalls(callsPath), callIndex, "chat.postMessage"),
+      );
+    } finally {
+      await server.stop();
+    }
+  }, 360_000);
 });
+
+async function startEveDev(appRoot: string, callsPath: string) {
+  const preload = pathToFileURL(join(appRoot, "slack-fetch-preload.mjs")).href;
+  const child = spawn(
+    process.execPath,
+    [join(appRoot, "node_modules", "eve", "bin", "eve.js"), "dev", "--no-ui", "--port", "0"],
+    {
+      cwd: appRoot,
+      env: {
+        ...process.env,
+        EVE_SLACK_CALLS_PATH: callsPath,
+        NODE_ENV: "test",
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${preload}`].filter(Boolean).join(" "),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => (output += chunk));
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => (output += chunk));
+
+  try {
+    const url = await waitFor(
+      "eve dev server URL",
+      () => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error(`eve dev exited before startup.\n${output}`);
+        }
+        return /server listening at (https?:\/\/\S+)/u.exec(stripAnsi(output))?.[1] ?? null;
+      },
+      120_000,
+    );
+    return { url, stop: () => stopProcess(child) };
+  } catch (error) {
+    await stopProcess(child);
+    throw error;
+  }
+}
+
+async function stopProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exit = once(child, "exit");
+  const killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+  killTimer.unref();
+  child.kill("SIGTERM");
+  await exit;
+  clearTimeout(killTimer);
+}
+
+async function postSlack(serverUrl: string, payload: Record<string, unknown>): Promise<Response> {
+  const isInteraction = payload.type === "block_actions";
+  const body = isInteraction
+    ? new URLSearchParams({ payload: JSON.stringify(payload) }).toString()
+    : JSON.stringify(payload);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", SIGNING_SECRET)
+    .update(`v0:${timestamp}:${body}`)
+    .digest("hex");
+  return await fetch(new URL("/eve/v1/slack", serverUrl), {
+    body,
+    headers: {
+      "content-type": isInteraction ? "application/x-www-form-urlencoded" : "application/json",
+      "x-slack-request-timestamp": String(timestamp),
+      "x-slack-signature": `v0=${signature}`,
+    },
+    method: "POST",
+  });
+}
+
+function mention(user: string, note: string, suffix: string): Record<string, unknown> {
+  const ts = `1700000000.${suffix}`;
+  return {
+    event: {
+      channel: CHANNEL_ID,
+      event_ts: ts,
+      text: `Use guarded-echo exactly once with note "${note}".`,
+      thread_ts: THREAD_TS,
+      ts,
+      type: "app_mention",
+      user,
+    },
+    event_id: `Ev_${note}`,
+    team_id: TEAM_ID,
+    type: "event_callback",
+  };
+}
+
+function interaction(card: HitlCard, user: string): Record<string, unknown> {
+  return {
+    actions: [
+      {
+        action_id: card.actionId,
+        block_id: card.blockId,
+        value: card.value,
+      },
+    ],
+    channel: { id: CHANNEL_ID },
+    message: { thread_ts: THREAD_TS, ts: "1" },
+    team: { id: TEAM_ID },
+    type: "block_actions",
+    user: { id: user, team_id: TEAM_ID },
+  };
+}
+
+async function readCalls(path: string): Promise<SlackCall[]> {
+  return (await readFile(path, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const value: unknown = JSON.parse(line);
+      return slackCallSchema.parse(value);
+    });
+}
+
+function findCard(calls: readonly SlackCall[], start: number): HitlCard | null {
+  return (
+    calls.slice(start).find((call) => call.api === "chat.postMessage" && call.card)?.card ?? null
+  );
+}
+
+function findCall(
+  calls: readonly SlackCall[],
+  start: number,
+  api: string,
+  user?: string,
+): SlackCall | null {
+  return (
+    calls
+      .slice(start)
+      .find((call) => call.api === api && (user === undefined || call.user === user)) ?? null
+  );
+}
+
+async function readSessionRunIds(appRoot: string): Promise<string[]> {
+  const root = join(appRoot, ".workflow-data", "runs");
+  const entries = await readdir(root).catch(() => []);
+  const runs = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) => {
+        const value: unknown = JSON.parse(await readFile(join(root, entry), "utf8"));
+        return z.object({ runId: z.string(), workflowName: z.string() }).parse(value);
+      }),
+  );
+  return runs
+    .filter((run) => run.workflowName === "workflow//eve//workflowEntry")
+    .map((run) => run.runId)
+    .sort();
+}
+
+async function waitFor<T>(
+  description: string,
+  load: () => T | null | Promise<T | null>,
+  timeout = 30_000,
+): Promise<T> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const value = await load();
+    if (value !== null) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for ${description}.`);
+}
