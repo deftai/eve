@@ -11,9 +11,14 @@ export type NitroBuildSurface = "all" | "app" | "flow";
 
 /**
  * Handle returned after starting one Nitro development server.
+ *
+ * `reconnected` is `true` when the handle borrows a server already serving this
+ * app root rather than one this process started; its `close` is then a no-op,
+ * since the borrower does not own the server's lifecycle.
  */
 export interface DevelopmentServerHandle {
   close(): Promise<void>;
+  reconnected: boolean;
   url: string;
 }
 

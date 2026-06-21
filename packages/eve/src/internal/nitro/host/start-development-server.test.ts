@@ -55,6 +55,17 @@ const mocks = vi.hoisted(() => {
 
       return value;
     }),
+    rename: vi.fn(async (from: string, to: string) => {
+      const value = files.get(from);
+
+      if (value === undefined) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+
+      files.set(to, value);
+      files.delete(from);
+    }),
+    resolveDiscoveryProject: vi.fn(async () => ({ appRoot: "/tmp/eve-test" })),
     rm: vi.fn(async (path: string) => {
       files.delete(path);
     }),
@@ -82,9 +93,14 @@ const mocks = vi.hoisted(() => {
 vi.mock("node:fs/promises", () => ({
   mkdir: mocks.mkdir,
   readFile: mocks.readFile,
+  rename: mocks.rename,
   rm: mocks.rm,
   stat: mocks.stat,
   writeFile: mocks.writeFile,
+}));
+
+vi.mock("#discover/project.js", () => ({
+  resolveDiscoveryProject: mocks.resolveDiscoveryProject,
 }));
 
 vi.mock("nitro/builder", () => ({
@@ -158,8 +174,7 @@ function createSocket(): Socket {
   return socket;
 }
 
-const developmentProcessIdPath = join("/tmp/eve-test", ".eve", "dev-process.pid");
-const developmentServerMetadataPath = join("/tmp/eve-test", ".eve", "dev-server.json");
+const developmentServerRecordPath = join("/tmp/eve-test", ".eve", "dev-server.json");
 
 async function startServer(): Promise<{
   close(): Promise<void>;
@@ -222,6 +237,7 @@ describe("startDevelopmentServer", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     delete process.env.WORKFLOW_LOCAL_BASE_URL;
     delete process.env.PORT;
     delete process.env.EVE_DEVELOPMENT_SANDBOX_RUN_ID;
@@ -328,74 +344,83 @@ describe("startDevelopmentServer", () => {
     await server.close();
   });
 
-  it("writes the active dev process id and removes it on close", async () => {
+  it("records the dev server and clears the record on close", async () => {
     const { startDevelopmentServer } = await import("./start-development-server.js");
 
     const server = await startDevelopmentServer("/tmp/eve-test");
 
-    expect(mocks.files.get(developmentProcessIdPath)).toBe(`${process.pid}\n`);
-    expect(JSON.parse(mocks.files.get(developmentServerMetadataPath) ?? "{}")).toMatchObject({
+    expect(server.reconnected).toBe(false);
+    expect(JSON.parse(mocks.files.get(developmentServerRecordPath) ?? "{}")).toEqual({
       pid: process.pid,
       url: "http://localhost:2000/",
     });
 
     await server.close();
 
-    expect(mocks.files.has(developmentProcessIdPath)).toBe(false);
-    expect(mocks.files.has(developmentServerMetadataPath)).toBe(false);
+    expect(mocks.files.has(developmentServerRecordPath)).toBe(false);
   });
 
-  it("refuses to start when the agent already has a running dev process", async () => {
+  it("reconnects to a healthy server already recorded for this root", async () => {
     const { startDevelopmentServer } = await import("./start-development-server.js");
-    mocks.files.set(developmentProcessIdPath, `${process.pid}\n`);
-
-    await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(
-      [
-        `A dev server is already running for this eve agent (pid ${process.pid}).`,
-        "To connect to the existing instance, run: pnpm exec eve dev http://localhost:PORT",
-        `To stop it, run: ${
-          process.platform === "win32" ? "taskkill /PID" : "kill"
-        } ${process.pid}`,
-      ].join("\n"),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
     );
-    expect(mocks.createApplicationNitro).not.toHaveBeenCalled();
-  });
-
-  it("prints a copyable connect command with the detected package manager and server URL", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
     mocks.files.set(
-      join("/tmp/eve-test", "package.json"),
-      JSON.stringify({ packageManager: "npm@10.0.0" }),
+      developmentServerRecordPath,
+      `${JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:2000/" })}\n`,
     );
-    mocks.files.set(developmentProcessIdPath, `${process.pid}\n`);
-    mocks.files.set(
-      developmentServerMetadataPath,
-      JSON.stringify({
-        pid: process.pid,
-        updatedAt: "2026-06-17T00:00:00.000Z",
-        url: "http://127.0.0.1:4321/",
-      }),
-    );
-
-    await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(
-      [
-        `A dev server is already running for this eve agent (pid ${process.pid}).`,
-        "To connect to the existing instance, run: npm exec -- eve dev http://127.0.0.1:4321/",
-        `To stop it, run: ${
-          process.platform === "win32" ? "taskkill /PID" : "kill"
-        } ${process.pid}`,
-      ].join("\n"),
-    );
-    expect(mocks.createApplicationNitro).not.toHaveBeenCalled();
-  });
-
-  it("overwrites a stale dev process id", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
-    mocks.files.set(developmentProcessIdPath, "999999999\n");
 
     const server = await startDevelopmentServer("/tmp/eve-test");
 
-    expect(mocks.files.get(developmentProcessIdPath)).toBe(`${process.pid}\n`);
+    expect(server.reconnected).toBe(true);
+    expect(server.url).toBe("http://127.0.0.1:2000/");
+    expect(mocks.createApplicationNitro).not.toHaveBeenCalled();
+
+    await server.close();
+
+    // A borrowed server keeps running, so its record survives the close.
+    expect(mocks.files.has(developmentServerRecordPath)).toBe(true);
+  });
+
+  it("starts a fresh server when the recorded one is unhealthy", async () => {
+    const { startDevelopmentServer } = await import("./start-development-server.js");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 503 })),
+    );
+    mocks.files.set(
+      developmentServerRecordPath,
+      `${JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:2000/" })}\n`,
+    );
+
+    const server = await startDevelopmentServer("/tmp/eve-test");
+
+    expect(server.reconnected).toBe(false);
+    expect(mocks.createApplicationNitro).toHaveBeenCalledOnce();
+    expect(JSON.parse(mocks.files.get(developmentServerRecordPath) ?? "{}")).toEqual({
+      pid: process.pid,
+      url: "http://localhost:2000/",
+    });
+
+    await server.close();
+  });
+
+  it("binds an explicit port without reading or writing the reconnect record", async () => {
+    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.files.set(
+      developmentServerRecordPath,
+      `${JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:2000/" })}\n`,
+    );
+
+    const server = await startDevelopmentServer("/tmp/eve-test", { port: 2000 });
+
+    expect(server.reconnected).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.createApplicationNitro).toHaveBeenCalledOnce();
+    expect(mocks.devServer.listen).toHaveBeenCalledWith(expect.objectContaining({ port: 2000 }));
 
     await server.close();
   });

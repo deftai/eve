@@ -111,7 +111,7 @@ describe("TerminalRenderer (inline scrollback)", () => {
     renderer.shutdown();
 
     const snapshot = screen.snapshot();
-    expect(snapshot).toContain("eve Weather Agent");
+    expect(snapshot).toContain("eve · Weather Agent · localhost:3000");
     expect(snapshot).toContain("Use /channels to add more ways to reach your agent.");
     // The model lives on the status line, not the header; the old config
     // rows and key hints are gone.

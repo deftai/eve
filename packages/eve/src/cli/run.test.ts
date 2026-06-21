@@ -113,7 +113,7 @@ describe("eve dev boot progress", () => {
       hostReporter = options?.onBootProgress;
       hostReporter?.({ phase: "compiling agent", type: "phase-started" });
       hostReporter?.({ elapsedMs: 1, phase: "compiling agent", type: "phase-finished" });
-      return { close, url: "http://127.0.0.1:2000" };
+      return { close, reconnected: false, url: "http://127.0.0.1:2000" };
     });
     const runDevelopmentTui = vi.fn(async (input: RunDevelopmentTuiInput) => {
       tuiReporter = input.onBootProgress;
@@ -138,6 +138,50 @@ describe("eve dev boot progress", () => {
     expect(tuiReporter).toBe(hostReporter);
     expect(writes.at(-1)).toBe("\r\u001B[K");
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("eve dev reconnect", () => {
+  it("headless reports an existing server and exits without starting one", async () => {
+    const logs: string[] = [];
+    const startHost = vi.fn(async () => ({
+      close: vi.fn(async () => {}),
+      reconnected: true,
+      url: "http://127.0.0.1:2000/",
+    }));
+    const runDevelopmentTui = vi.fn(async () => {});
+
+    await runCli(
+      ["dev", "--no-ui"],
+      { error: () => {}, log: (message) => logs.push(message) },
+      { runDevelopmentTui, startHost },
+    );
+
+    expect(startHost).toHaveBeenCalledOnce();
+    expect(runDevelopmentTui).not.toHaveBeenCalled();
+    expect(logs.join("\n")).toContain("connected to existing server at http://127.0.0.1:2000/");
+  });
+
+  it("attaches the interactive UI to an existing server", async () => {
+    const startHost = vi.fn(async () => ({
+      close: vi.fn(async () => {}),
+      reconnected: true,
+      url: "http://127.0.0.1:2000/",
+    }));
+    const runDevelopmentTui = vi.fn(async (_input: RunDevelopmentTuiInput) => {});
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      await withInteractiveTerminal(() =>
+        runCli(["dev"], { error: () => {}, log: () => {} }, { runDevelopmentTui, startHost }),
+      );
+    } finally {
+      stdoutWrite.mockRestore();
+    }
+
+    expect(runDevelopmentTui).toHaveBeenCalledWith(
+      expect.objectContaining({ serverUrl: "http://127.0.0.1:2000/" }),
+    );
   });
 });
 

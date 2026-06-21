@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { AgentInfoResult, AgentInfoToolEntry } from "#client/index.js";
@@ -114,25 +117,68 @@ describe("buildAgentHeader", () => {
   const theme = createTheme({ color: false, unicode: false });
   const previewLine = ` eve is currently in preview: ${EVE_BETA_TERMS_URL}`;
 
-  it("renders the brand line with the agent name and preview label", () => {
-    const lines = buildAgentHeader({ name: "agent-subagents", info: INFO, theme, width: 120 });
+  it("renders the brand line with the agent name, directory, and port", () => {
+    const lines = buildAgentHeader({
+      name: "Weather Agent",
+      serverUrl: "http://127.0.0.1:2000/",
+      appRoot: "/tmp/weather-agent",
+      info: INFO,
+      theme,
+      width: 120,
+    });
 
-    expect(lines).toEqual([" eve agent-subagents", previewLine]);
+    expect(lines).toEqual([" eve - Weather Agent - /tmp/weather-agent - :2000", previewLine]);
   });
 
-  it("renders the same brand and preview lines when info is unavailable", () => {
-    expect(buildAgentHeader({ name: "weather-agent", theme, width: 120 })).toEqual([
-      " eve weather-agent",
-      previewLine,
-    ]);
+  it("abbreviates a home-directory prefix to ~", () => {
+    const lines = buildAgentHeader({
+      name: "Inbound",
+      serverUrl: "http://127.0.0.1:2000/",
+      appRoot: join(homedir(), "wrk/eves/inbound"),
+      theme,
+      width: 120,
+    });
+
+    expect(lines).toEqual([" eve - Inbound - ~/wrk/eves/inbound - :2000", previewLine]);
+  });
+
+  it("shows the bare host for a remote session without a local directory", () => {
+    // A remote `--url` session has no local dir, and resolveTuiTitle names it
+    // after the host, so the host appears once rather than `<host> - <host>`.
+    expect(
+      buildAgentHeader({
+        name: "example.com:8080",
+        serverUrl: "https://example.com:8080/",
+        theme,
+        width: 120,
+      }),
+    ).toEqual([" eve - example.com:8080", previewLine]);
   });
 
   it("renders the tip line for local sessions only", () => {
     const tip = AGENT_HEADER_TIPS[0]!;
-    const local = buildAgentHeader({ name: "weather-agent", info: INFO, theme, width: 120, tip });
-    expect(local).toEqual([" eve weather-agent", previewLine, ` ${tip}`]);
+    const local = buildAgentHeader({
+      name: "Weather Agent",
+      serverUrl: "http://127.0.0.1:2000/",
+      appRoot: "/tmp/weather-agent",
+      info: INFO,
+      theme,
+      width: 120,
+      tip,
+    });
+    expect(local).toEqual([
+      " eve - Weather Agent - /tmp/weather-agent - :2000",
+      previewLine,
+      ` ${tip}`,
+    ]);
 
-    const remote = buildAgentHeader({ name: "weather-agent", info: INFO, theme, width: 120 });
+    const remote = buildAgentHeader({
+      name: "Weather Agent",
+      serverUrl: "https://example.com/",
+      info: INFO,
+      theme,
+      width: 120,
+    });
     expect(remote.join("\n")).not.toContain("/channels");
   });
 
@@ -140,6 +186,8 @@ describe("buildAgentHeader", () => {
     const colorTheme = createTheme({ color: true, unicode: false });
     const lines = buildAgentHeader({
       name: "weather-agent",
+      serverUrl: "http://127.0.0.1:2000/",
+      appRoot: "/tmp/weather-agent",
       info: INFO,
       theme: colorTheme,
       width: 120,
@@ -158,7 +206,14 @@ describe("buildAgentHeader", () => {
       ...INFO,
       diagnostics: { discoveryErrors: 1, discoveryWarnings: 2 },
     };
-    const lines = buildAgentHeader({ name: "weather-agent", info, theme, width: 120 });
+    const lines = buildAgentHeader({
+      name: "weather-agent",
+      serverUrl: "http://127.0.0.1:2000/",
+      appRoot: "/tmp/weather-agent",
+      info,
+      theme,
+      width: 120,
+    });
 
     expect(lines.some((line) => line.includes("1 error"))).toBe(true);
     expect(lines.some((line) => line.includes("2 warnings"))).toBe(true);

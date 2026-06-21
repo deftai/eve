@@ -9,12 +9,14 @@ description: "Drive an eve agent locally in an interactive terminal UI. Chat, st
 eve dev
 ```
 
-On startup the TUI prints a brand line with your agent's name, plus a rotating tip (local sessions only).
+On startup the TUI prints a brand line identifying the session — its display name, resolved app directory, and server port — plus a rotating tip for local sessions.
 
 ```text
- eve weather-agent
+ eve · Weather Agent · ~/wrk/weather-agent · :2000
  Use /channels to add more ways to reach your agent.
 ```
+
+`--name` overrides the display name. When you connect with `--url`, the server host replaces the directory and port.
 
 If agent discovery reported problems, an error and warning count renders between the two lines. Instructions, tools, skills, and subagents are one `eve info` away, and `/help` lists every command. The TUI also runs a startup check. A missing model-provider setup surfaces as an attention line (`⚠ 1 setup issue: model provider not linked · /model`) so the fix is visible before the first message fails, with each command's outcome hanging under it on a `⎿` connector.
 

@@ -1,7 +1,5 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
-import { join } from "node:path";
 
 import { EVE_DEV_ENV_FLAG } from "#internal/application/optional-package-install.js";
 
@@ -34,28 +32,15 @@ import {
   DEFAULT_DEVELOPMENT_SERVER_PORT,
   MAX_DEVELOPMENT_SERVER_PORT_ATTEMPTS,
 } from "#internal/nitro/host/ports.js";
-import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
-import { eveDevArguments } from "#setup/primitives/index.js";
 import { devBootPhase } from "#internal/dev-boot-progress.js";
+import { resolveDiscoveryProject } from "#discover/project.js";
+import { devServerState } from "#internal/nitro/host/dev-server-state.js";
 
 const MAX_ALLOWED_DEVELOPMENT_SERVER_PORT = 65_535;
 const WORKFLOW_LOCAL_BASE_URL_ENV = "WORKFLOW_LOCAL_BASE_URL";
 const PORT_ENV = "PORT";
-const DEVELOPMENT_PROCESS_ID_FILE = "dev-process.pid";
-const DEVELOPMENT_SERVER_METADATA_FILE = "dev-server.json";
 const DEFAULT_DEVELOPMENT_SERVER_HOST = "127.0.0.1";
 const IPV6_LOOPBACK_HOSTNAME = "[::1]";
-const DEVELOPMENT_SERVER_URL_PLACEHOLDER = "http://localhost:PORT";
-
-interface DevelopmentServerMetadata {
-  readonly processId: number;
-  readonly url: string;
-}
-
-interface ActiveDevelopmentProcess {
-  readonly processId: number;
-  readonly url?: string;
-}
 
 /**
  * Hostnames Nitro/srvx surface when listening on an IPv6 wildcard interface.
@@ -123,194 +108,6 @@ function readEnvironmentPort(): number | undefined {
   }
 
   return parsed;
-}
-
-function resolveDevelopmentProcessIdPath(appRoot: string): string {
-  return join(appRoot, ".eve", DEVELOPMENT_PROCESS_ID_FILE);
-}
-
-function resolveDevelopmentServerMetadataPath(appRoot: string): string {
-  return join(appRoot, ".eve", DEVELOPMENT_SERVER_METADATA_FILE);
-}
-
-function parseProcessId(value: string): number | undefined {
-  const trimmed = value.trim();
-
-  if (!/^\d+$/.test(trimmed)) {
-    return undefined;
-  }
-
-  const processId = Number(trimmed);
-  return Number.isSafeInteger(processId) && processId > 0 ? processId : undefined;
-}
-
-function isProcessRunning(processId: number): boolean {
-  try {
-    process.kill(processId, 0);
-    return true;
-  } catch (error) {
-    return (
-      error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "EPERM"
-    );
-  }
-}
-
-function formatKillCommand(processId: number): string {
-  if (process.platform === "win32") {
-    return `taskkill /PID ${processId}`;
-  }
-
-  return `kill ${processId}`;
-}
-
-function parseDevelopmentServerMetadata(value: string): DevelopmentServerMetadata | undefined {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("pid" in parsed) ||
-    typeof parsed.pid !== "number" ||
-    !Number.isSafeInteger(parsed.pid) ||
-    parsed.pid <= 0 ||
-    !("url" in parsed) ||
-    typeof parsed.url !== "string"
-  ) {
-    return undefined;
-  }
-
-  const url = normalizeDevelopmentServerClientUrl(parsed.url);
-
-  try {
-    const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return undefined;
-    }
-  } catch {
-    return undefined;
-  }
-
-  return {
-    processId: parsed.pid,
-    url,
-  };
-}
-
-async function readDevelopmentServerMetadata(
-  appRoot: string,
-): Promise<DevelopmentServerMetadata | undefined> {
-  try {
-    return parseDevelopmentServerMetadata(
-      await readFile(resolveDevelopmentServerMetadataPath(appRoot), "utf8"),
-    );
-  } catch {
-    return undefined;
-  }
-}
-
-async function readActiveDevelopmentProcess(
-  appRoot: string,
-): Promise<ActiveDevelopmentProcess | undefined> {
-  let processId: number | undefined;
-
-  try {
-    processId = parseProcessId(await readFile(resolveDevelopmentProcessIdPath(appRoot), "utf8"));
-  } catch {
-    return undefined;
-  }
-
-  if (processId === undefined || !isProcessRunning(processId)) {
-    return undefined;
-  }
-
-  const metadata = await readDevelopmentServerMetadata(appRoot);
-
-  return {
-    processId,
-    url: metadata?.processId === processId ? metadata.url : undefined,
-  };
-}
-
-async function detectDevelopmentCommandPackageManager(
-  appRoot: string,
-): Promise<PackageManagerKind> {
-  try {
-    return (await detectPackageManager(appRoot)).kind;
-  } catch {
-    return "pnpm";
-  }
-}
-
-async function formatDevelopmentServerConnectCommand(
-  appRoot: string,
-  serverUrl: string,
-): Promise<string> {
-  const packageManager = await detectDevelopmentCommandPackageManager(appRoot);
-  return [packageManager, ...eveDevArguments(packageManager), serverUrl].join(" ");
-}
-
-async function writeDevelopmentServerMetadata(appRoot: string, serverUrl: string): Promise<void> {
-  await writeFile(
-    resolveDevelopmentServerMetadataPath(appRoot),
-    `${JSON.stringify(
-      {
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-        url: normalizeDevelopmentServerClientUrl(serverUrl),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-async function writeDevelopmentProcessId(appRoot: string): Promise<() => Promise<void>> {
-  const processIdPath = resolveDevelopmentProcessIdPath(appRoot);
-  const metadataPath = resolveDevelopmentServerMetadataPath(appRoot);
-  const activeProcess = await readActiveDevelopmentProcess(appRoot);
-
-  if (activeProcess !== undefined) {
-    const connectUrl = activeProcess.url ?? DEVELOPMENT_SERVER_URL_PLACEHOLDER;
-    const connectCommand = await formatDevelopmentServerConnectCommand(appRoot, connectUrl);
-    throw new Error(
-      [
-        `A dev server is already running for this eve agent (pid ${activeProcess.processId}).`,
-        `To connect to the existing instance, run: ${connectCommand}`,
-        `To stop it, run: ${formatKillCommand(activeProcess.processId)}`,
-      ].join("\n"),
-    );
-  }
-
-  await mkdir(join(appRoot, ".eve"), { recursive: true });
-  await writeFile(processIdPath, `${process.pid}\n`, "utf8");
-
-  return async () => {
-    let currentProcessId: number | undefined;
-
-    try {
-      currentProcessId = parseProcessId(await readFile(processIdPath, "utf8"));
-    } catch {
-      return;
-    }
-
-    if (currentProcessId === process.pid) {
-      await rm(processIdPath, { force: true });
-      await rm(metadataPath, { force: true });
-      return;
-    }
-
-    const metadata = await readDevelopmentServerMetadata(appRoot);
-    if (metadata?.processId === process.pid) {
-      await rm(metadataPath, { force: true });
-    }
-  };
 }
 
 function resolveDevelopmentServerPorts(input: {
@@ -460,6 +257,13 @@ async function listenForDevelopmentServer(input: {
 /**
  * Starts the development Nitro server for an eve application.
  *
+ * A bare `eve dev` is "managed": it reconnects to a healthy server already
+ * serving this app root (returning a borrowed handle with `reconnected: true`),
+ * and otherwise starts one, recording its address under `.eve/dev-server.json`
+ * so a later launch can reconnect. An explicit `--host`/`--port`/`PORT` opts out
+ * — it always binds the requested endpoint and neither reads nor writes the
+ * record (a busy port surfaces as a plain `EADDRINUSE`).
+ *
  * Authored schedules are never registered with Nitro's cron scheduler in
  * dev mode. To fire one authored schedule on demand, `POST` the dev-only
  * `/eve/v1/dev/schedules/:scheduleId` route — the handler returns
@@ -475,6 +279,27 @@ export async function startDevelopmentServer(
   // optional sandbox engine packages) can gate on it.
   process.env[EVE_DEV_ENV_FLAG] ??= "1";
   loadDevelopmentEnvironmentFiles(rootDir);
+
+  // An explicit endpoint is a deliberate manual bind: it never reconnects to,
+  // nor records, the per-root reconnect hint. A bare `eve dev` is managed.
+  const requestedPort = options.port ?? readEnvironmentPort();
+  const managesReconnectRecord = requestedPort === undefined && options.host === undefined;
+
+  // Resolve the canonical app root so the record is keyed identically whether
+  // launched from `<app>` or `<app>/agent`.
+  const { appRoot } = await resolveDiscoveryProject(rootDir);
+
+  if (managesReconnectRecord) {
+    const existing = await devServerState.read(appRoot);
+    if (existing !== null) {
+      return {
+        close: async () => undefined,
+        reconnected: true,
+        url: existing.url,
+      };
+    }
+  }
+
   const previousDevelopmentSandboxRunId = process.env[EVE_DEVELOPMENT_SANDBOX_RUN_ID_ENV];
   const developmentSandboxRunId = createDevelopmentSandboxRunId();
   process.env[EVE_DEVELOPMENT_SANDBOX_RUN_ID_ENV] = developmentSandboxRunId;
@@ -482,7 +307,8 @@ export async function startDevelopmentServer(
   let devServer: NitroDevelopmentServer | undefined;
   let restoreWorkflowLocalQueueEnvironment: (() => void) | undefined;
   let authoredSourceWatcher: AuthoredSourceWatcherHandle | undefined;
-  let removeDevelopmentProcessId: (() => Promise<void>) | undefined;
+  const releaseReconnectRecord = (): Promise<void> =>
+    managesReconnectRecord ? devServerState.clear(appRoot, process.pid) : Promise.resolve();
 
   try {
     const preparedHost = await devBootPhase(
@@ -490,7 +316,6 @@ export async function startDevelopmentServer(
       () => prepareApplicationHost(rootDir, { dev: true }),
       options.onBootProgress,
     );
-    removeDevelopmentProcessId = await writeDevelopmentProcessId(preparedHost.appRoot);
     pruneDevelopmentRuntimeArtifactsSnapshotsInBackground(preparedHost.appRoot);
     const compiledArtifactsSource = resolveNitroCompiledArtifactsSource(
       createNitroArtifactsConfig({
@@ -514,7 +339,6 @@ export async function startDevelopmentServer(
     guardDevelopmentServerWebSocketUpgrades(activeNitro, devServer);
     const hostname =
       options.host ?? activeNitro.options.devServer.hostname ?? DEFAULT_DEVELOPMENT_SERVER_HOST;
-    const requestedPort = options.port ?? readEnvironmentPort();
     const retryOnAddressInUse = requestedPort === undefined;
     const server = await devBootPhase(
       "binding port",
@@ -533,7 +357,9 @@ export async function startDevelopmentServer(
     }
 
     const serverUrl = normalizeDevelopmentServerClientUrl(server.url);
-    await writeDevelopmentServerMetadata(preparedHost.appRoot, serverUrl);
+    if (managesReconnectRecord) {
+      await devServerState.write(appRoot, { pid: process.pid, url: serverUrl });
+    }
     restoreWorkflowLocalQueueEnvironment = installWorkflowLocalQueueEnvironment(serverUrl);
     await devBootPhase(
       "building dev bundle",
@@ -574,11 +400,12 @@ export async function startDevelopmentServer(
           });
         } finally {
           clearInitializedDevelopmentSandboxBackendNames(developmentSandboxRunId);
-          await removeDevelopmentProcessId?.();
+          await releaseReconnectRecord();
           restoreWorkflowLocalQueueEnvironmentOnClose();
           restoreDevelopmentSandboxRunId(previousDevelopmentSandboxRunId);
         }
       },
+      reconnected: false,
       url: serverUrl,
     };
   } catch (error) {
@@ -592,7 +419,7 @@ export async function startDevelopmentServer(
       log: (message) => console.warn(`[eve:dev] ${message}`),
     }).catch(() => {});
     clearInitializedDevelopmentSandboxBackendNames(developmentSandboxRunId);
-    await removeDevelopmentProcessId?.().catch(() => {});
+    await releaseReconnectRecord().catch(() => {});
     restoreDevelopmentSandboxRunId(previousDevelopmentSandboxRunId);
     throw error;
   }

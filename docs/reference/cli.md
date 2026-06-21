@@ -109,7 +109,7 @@ Pass a bare URL as the only argument and the UI connects to that server instead 
 | `--context-size <tokens>`           | number | none               | Model context window size, shown as a usage percentage                                    |
 | `--logs <mode>`                     | enum   | `stderr`           | Server/agent logs to show: `all` \| `stderr` \| `sandbox` \| `none`                       |
 
-Local dev writes the active server process ID to `.eve/dev-process.pid`. If another `eve dev` starts for the same agent while that process is still running, eve exits with a message that includes the command to stop the existing server.
+Without an explicit endpoint, local dev records its server's URL and process ID in `.eve/dev-server.json` under the resolved app root. A later `eve dev` for that same root reconnects to the recorded server when its process is alive and its health route responds — the interactive UI attaches to it, and `--no-ui` prints its URL and exits — instead of starting a duplicate. A stale or unhealthy record is replaced, and a different directory just starts its own server on the next free port. An explicit `--host`, `--port`, or `PORT` opts out: it binds exactly that endpoint and reports `EADDRINUSE` if the port is taken.
 
 Local dev keeps immutable runtime source snapshots under `.eve/dev-runtime/snapshots/` so in-flight sessions hold a consistent code revision while new prompts pick up rebuilds. On startup, `eve dev` prunes stale runtime snapshots and old local sandbox templates in the background. For manual cleanup, stop `eve dev` and delete `.eve/dev-runtime/snapshots/` or `.eve/sandbox-cache/local/templates/`.
 

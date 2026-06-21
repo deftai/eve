@@ -165,6 +165,8 @@ export type AgentTUIInputQuestionResponse = {
 export type AgentTUIAgentHeader = {
   name: string;
   serverUrl: string;
+  /** Local project root, or undefined when attached to a remote `--url`. */
+  appRoot?: string;
   info?: AgentInfoResult;
   /** Message-of-the-day line shown under the brand line (local sessions only). */
   tip?: string;
@@ -510,7 +512,10 @@ export class EveTUIRunner {
       serverUrl,
     };
     if (info !== undefined) header.info = info;
-    if (this.#appRoot !== undefined) header.tip = this.#headerTip;
+    if (this.#appRoot !== undefined) {
+      header.appRoot = this.#appRoot;
+      header.tip = this.#headerTip;
+    }
     this.#reportBeforeFirstPaint();
     this.#renderer.renderAgentHeader?.(header);
     await this.#renderSetupIssues(info);
@@ -1050,7 +1055,10 @@ export class EveTUIRunner {
           name: this.#name,
           serverUrl: this.#serverUrl,
         };
-        if (this.#appRoot !== undefined) header.tip = this.#headerTip;
+        if (this.#appRoot !== undefined) {
+          header.appRoot = this.#appRoot;
+          header.tip = this.#headerTip;
+        }
         this.#renderer.renderAgentHeader?.(header);
       }
     }

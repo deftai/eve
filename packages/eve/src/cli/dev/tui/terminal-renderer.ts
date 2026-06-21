@@ -191,6 +191,8 @@ export type TerminalRendererOptions = {
 export type AgentHeaderOptions = {
   name: string;
   serverUrl: string;
+  /** Local project root, or undefined when attached to a remote `--url`. */
+  appRoot?: string;
   info?: AgentInfoResult;
   /** Message-of-the-day line under the brand line (local sessions only). */
   tip?: string;
@@ -305,7 +307,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
   #typeahead?: CommandTypeaheadState;
   #working = false;
   #status: string = STATUS.processing;
-  #title = "eve";
   #isInteractive = false;
   #interrupted = false;
   #caretVisible = true;
@@ -404,7 +405,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
    * Committed scrollback is never cleared or replayed.
    */
   renderAgentHeader(options: AgentHeaderOptions): void {
-    this.#title = options.name;
     this.#agentHeader = options;
     this.#start();
     const body = this.#renderAgentHeaderRows().join("\n");
@@ -1687,7 +1687,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
   // ---------------------------------------------------------------------------
 
   #start(options?: AgentTUISessionOptions) {
-    this.#title = options?.title ?? this.#title;
     this.#contextSize = options?.contextSize ?? this.#defaultContextSize;
 
     if (this.#isInteractive) return;
@@ -2343,9 +2342,11 @@ export class TerminalRenderer implements AgentTUIRenderer {
     if (header === undefined) return [];
     const input: Parameters<typeof buildAgentHeader>[0] = {
       name: header.name,
+      serverUrl: header.serverUrl,
       theme: this.#theme,
       width: this.#width(),
     };
+    if (header.appRoot !== undefined) input.appRoot = header.appRoot;
     if (header.info !== undefined) input.info = header.info;
     if (header.tip !== undefined) input.tip = header.tip;
     return buildAgentHeader(input);

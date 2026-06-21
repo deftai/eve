@@ -597,23 +597,24 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
           port: options.port,
         });
 
-        // The terminal UI's header already shows the server URL, and startup
-        // no longer clears the screen, so the line would linger as noise.
-        // Headless consumers (scripts, scenario tests) still parse it.
-        if (mode !== "tui") {
+        if (mode === "headless") {
+          // The TUI header shows the URL, so only headless prints it (scripts
+          // parse this line). A reconnected server already runs on its own —
+          // report it and exit; a started one we keep alive until a signal.
           logger.log(
             renderCliTaggedLine(theme, {
-              message: `server listening at ${server.url}`,
+              message: server.reconnected
+                ? `connected to existing server at ${server.url}`
+                : `server listening at ${server.url}`,
               tag: "dev",
               tone: "success",
             }),
           );
-        }
-
-        if (mode === "headless") {
-          // An explicit `--no-ui` is intentional and silent; a non-TTY
-          // terminal that did not ask for headless gets a hint so the
-          // missing UI is not mistaken for a hang.
+          if (server.reconnected) {
+            return;
+          }
+          // An explicit `--no-ui` is silent; a non-TTY terminal that did not ask
+          // for headless gets a hint so the missing UI is not mistaken for a hang.
           if (options.ui !== false && !interactive) {
             logger.log(
               renderCliTaggedLine(theme, {
@@ -623,10 +624,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
               }),
             );
           }
-
-          return await waitForShutdownSignal({
-            close: closeServer,
-          });
+          return await waitForShutdownSignal({ close: closeServer });
         }
 
         await runInteractiveUi(server.url, onBootProgress);
