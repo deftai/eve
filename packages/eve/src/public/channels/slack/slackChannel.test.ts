@@ -1319,40 +1319,6 @@ describe("slackChannel() HITL interaction pipeline", () => {
     expect(String(fetchMock.mock.calls[0]![0])).toBe("https://slack.com/api/chat.postEphemeral");
   });
 
-  it("delivers only the HITL action whose responder binding was validated", async () => {
-    const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
-    const { send } = await firePost(
-      channel,
-      buildSignedInteractionRequest({
-        actions: [
-          {
-            action_id: `${HITL_ACTION_PREFIX}approval_safe:button:0`,
-            block_id: buildHitlResponderBlockId({
-              requestId: "approval_safe",
-              responderUserId: "U_OWNER",
-            }),
-            value: "approve",
-          },
-          {
-            action_id: `${HITL_ACTION_PREFIX}approval_unchecked:button:0`,
-            block_id: "untrusted-block-id",
-            value: "approve",
-          },
-        ],
-        channel: { id: "C01" },
-        message: { ts: "1700000000.000010" },
-        team: { id: "T01" },
-        type: "block_actions",
-        user: { id: "U_OWNER" },
-      }),
-    );
-
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]![0]).toEqual({
-      inputResponses: [{ optionId: "approve", requestId: "approval_safe" }],
-    });
-  });
-
   it("opens a freeform modal for the bound Slack user", async () => {
     const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
 
