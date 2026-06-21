@@ -12,6 +12,9 @@ export default defineTool({
   }),
   async execute(input) {
     const city = input.city;
+    if (city.toLowerCase() === "munich") {
+      throw new Error(`Weather lookup failed for ${city}`);
+    }
 
     await sleep(300);
 

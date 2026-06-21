@@ -1,0 +1,36 @@
+{
+  "name": "@vercel/eve-devtools-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Experimental MCP server for inspecting a local Eve DevTools runtime.",
+  "license": "Apache-2.0",
+  "bin": {
+    "eve-devtools-mcp": "./dist/src/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "start": "node dist/src/index.js",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

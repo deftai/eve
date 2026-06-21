@@ -9,6 +9,17 @@ DevTools writes discovery metadata under the app root:
 .eve/devtools/current.json
 ```
 
+Eve also registers each active DevTools host under the current user's home directory:
+
+```text
+~/.eve/devtools/instances/<devtools-instance-id>.json
+```
+
+This per-user registry lets local tools discover every running `eve dev` process without depending
+on their working directory. Each supervisor owns one file, updates it alongside the app-local
+record, and removes it during shutdown. Consumers should verify `/api/v1/health` and ignore stale
+records left by an ungraceful process exit.
+
 The file is owner-readable (`0600`) and is removed when the DevTools host shuts down cleanly. It is the stable entry point for coding agents, browser launchers, and local scripts.
 
 ## Discovery File
@@ -19,17 +30,22 @@ The file has schema version `1`:
 {
   "appRoot": "/path/to/agent",
   "browserCapability": "64-character-token",
+  "devtoolsInstanceId": "devtools-host-id",
   "devtoolsUrl": "http://127.0.0.1:58456/#token=64-character-token",
   "inspectorUrl": "ws://127.0.0.1:58457/session",
   "runtimeInstanceId": "runtime-id",
   "runtimePid": 12345,
   "runtimeUrl": "http://127.0.0.1:58459/",
   "schemaVersion": 1,
+  "supervisorPid": 12340,
   "updatedAt": "2026-06-20T00:00:00.000Z"
 }
 ```
 
-`inspectorUrl`, `runtimePid`, and `runtimeUrl` are present only after the runtime reports them. Use the DevTools API rather than reading the raw inspector URL unless you specifically need compatibility with another CDP client.
+`devtoolsInstanceId` identifies the stable DevTools host while its runtime child restarts.
+`inspectorUrl`, `runtimePid`, and `runtimeUrl` are present only after the runtime reports them. Use
+the DevTools API rather than reading the raw inspector URL unless you specifically need
+compatibility with another CDP client.
 
 ## Base URL and Token
 

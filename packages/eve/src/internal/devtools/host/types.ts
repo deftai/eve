@@ -29,6 +29,7 @@ export interface DevToolsLogInput {
 export interface DevToolsHostHandle {
   readonly browserUrl: string;
   readonly browserCapability: string;
+  readonly devtoolsInstanceId: string;
   readonly url: string;
   appendLog(input: DevToolsLogInput): void;
   appendObservation(input: DevToolsObservationRecord): void;

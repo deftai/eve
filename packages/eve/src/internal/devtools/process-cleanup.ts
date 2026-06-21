@@ -5,10 +5,10 @@ export interface DevToolsProcessCleanupHandle {
 }
 
 export function registerDevToolsDiscoveryCleanup(
-  discoveryPath: string,
+  discoveryPaths: readonly string[],
 ): DevToolsProcessCleanupHandle {
   const removeDiscovery = () => {
-    rmSync(discoveryPath, { force: true });
+    for (const discoveryPath of discoveryPaths) rmSync(discoveryPath, { force: true });
   };
 
   process.once("exit", removeDiscovery);

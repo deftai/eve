@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -23,7 +24,11 @@ import { registerDevToolsRoutes } from "./host/routes.js";
 import { createDevToolsRouter, sendDevToolsJson } from "./host/router.js";
 import { startDevToolsServer } from "./host/server.js";
 import type { DevToolsHostHandle, DevToolsRuntimeState } from "./host/types.js";
-import { resolveDevToolsDiscoveryPath, writeDevToolsDiscovery } from "./discovery.js";
+import {
+  resolveDevToolsDiscoveryPath,
+  resolveDevToolsRegistryPath,
+  writeDevToolsDiscovery,
+} from "./discovery.js";
 import { registerDevToolsDiscoveryCleanup } from "./process-cleanup.js";
 
 const SSE_REPLAY_LIMIT = 1_000;
@@ -42,6 +47,7 @@ export async function startDevToolsHost(input: {
   readonly updateRuntimeState?: (patch: Partial<DevToolsRuntimeState>) => void;
 }): Promise<DevToolsHostHandle> {
   const browserCapability = input.browserCapability ?? createDevToolsCapability();
+  const devtoolsInstanceId = randomUUID();
   const eventHub = createDevToolsEventHub({ replayLimit: SSE_REPLAY_LIMIT });
   const runtime = createDevToolsRuntimeDomain({
     eventHub,
@@ -62,6 +68,7 @@ export async function startDevToolsHost(input: {
   const assets = createDevToolsAssetServer(join(resolvePackageRoot(), "dist", "devtools-ui"));
   const router = createDevToolsRouter();
   const discoveryPath = resolveDevToolsDiscoveryPath(input.appRoot);
+  const registryPath = resolveDevToolsRegistryPath(devtoolsInstanceId);
   const routeStreams = registerDevToolsRoutes({
     assets,
     debuggerDomain,
@@ -85,7 +92,7 @@ export async function startDevToolsHost(input: {
     },
   });
   const url = server.url;
-  const discoveryCleanup = registerDevToolsDiscoveryCleanup(discoveryPath);
+  const discoveryCleanup = registerDevToolsDiscoveryCleanup([discoveryPath, registryPath]);
   const revisionRefresh = setInterval(() => {
     debuggerDomain.syncInspector();
     void runtime.refreshRevision().catch(() => {});
@@ -102,6 +109,7 @@ export async function startDevToolsHost(input: {
     },
     browserCapability,
     browserUrl: `${url}#token=${browserCapability}`,
+    devtoolsInstanceId,
     async close() {
       clearInterval(revisionRefresh);
       discoveryCleanup.close();
@@ -110,7 +118,7 @@ export async function startDevToolsHost(input: {
       logs.close();
       eventHub.close();
       await server.close();
-      await rm(discoveryPath, { force: true });
+      await Promise.all([rm(discoveryPath, { force: true }), rm(registryPath, { force: true })]);
     },
     async syncRuntimeState() {
       debuggerDomain.syncInspector();
@@ -122,6 +130,7 @@ export async function startDevToolsHost(input: {
       await writeDevToolsDiscovery({
         appRoot: input.appRoot,
         browserCapability,
+        devtoolsInstanceId,
         devtoolsUrl: `${url}#token=${browserCapability}`,
         runtimeState: runtime.getInternalState(),
       });
