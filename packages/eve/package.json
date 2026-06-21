@@ -303,6 +303,7 @@
   },
   "devDependencies": {
     "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/gateway": "catalog:",
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/mcp": "catalog:",
     "@ai-sdk/openai": "catalog:",
@@ -352,6 +353,7 @@
     "zod-validation-error": "5.0.0"
   },
   "peerDependencies": {
+    "@ai-sdk/gateway": "catalog:",
     "@ai-sdk/react": "catalog:",
     "@opentelemetry/api": "^1.0.0",
     "@sveltejs/kit": "^2.0.0",
@@ -367,6 +369,9 @@
     "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
+    "@ai-sdk/gateway": {
+      "optional": true
+    },
     "@ai-sdk/react": {
       "optional": true
     },
