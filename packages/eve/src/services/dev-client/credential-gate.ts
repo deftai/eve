@@ -1,9 +1,7 @@
+import type { CustomHeaders } from "#client/types.js";
 import type { VerifiedVercelTarget } from "#setup/vercel-deployment.js";
 
-import {
-  VERCEL_PROTECTION_BYPASS_HEADER,
-  VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER,
-} from "./request-headers.js";
+import { VERCEL_PROTECTION_BYPASS_HEADER } from "./request-headers.js";
 
 export interface DevelopmentCredentialGrant {
   readonly target: VerifiedVercelTarget;
@@ -19,8 +17,10 @@ export interface DevelopmentCredentialGate {
    * Returns a rollback that restores the prior grant if this grant is still current.
    */
   authorize(grant: DevelopmentCredentialGrant): () => void;
-  /** Resolves headers for one request without exposing stored credential material. */
-  resolveHeaders(): Promise<Readonly<Record<string, string>>>;
+  /** The verified target's OIDC token for one request, or "" when anonymous. */
+  resolveToken(): Promise<string>;
+  /** Non-credential Vercel headers (protection bypass), or {} when anonymous. */
+  resolveBypassHeaders(): Promise<CustomHeaders>;
 }
 
 type DevelopmentCredentialGateState =
@@ -52,20 +52,17 @@ export function createDevelopmentCredentialGate(serverUrl: string): DevelopmentC
     };
   };
 
-  const resolveHeaders = async (): Promise<Readonly<Record<string, string>>> => {
+  const resolveToken = async (): Promise<string> => {
     const authorized = state;
-    if (authorized.kind === "anonymous") return {};
-
-    const headers: Record<string, string> = {};
-    const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
-    if (bypassSecret) headers[VERCEL_PROTECTION_BYPASS_HEADER] = bypassSecret;
-    const token = (await authorized.resolveToken()).trim();
-    if (token.length > 0) {
-      headers.authorization = `Bearer ${token}`;
-      headers[VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER] = token;
-    }
-    return headers;
+    if (authorized.kind === "anonymous") return "";
+    return (await authorized.resolveToken()).trim();
   };
 
-  return { authorize, resolveHeaders, serverOrigin };
+  const resolveBypassHeaders = async (): Promise<CustomHeaders> => {
+    if (state.kind === "anonymous") return {};
+    const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
+    return bypassSecret ? { [VERCEL_PROTECTION_BYPASS_HEADER]: bypassSecret } : {};
+  };
+
+  return { authorize, resolveToken, resolveBypassHeaders, serverOrigin };
 }

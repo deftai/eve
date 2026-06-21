@@ -14,6 +14,7 @@ import type {
   SessionState,
   TokenValue,
 } from "#client/types.js";
+import { VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER } from "#client/types.js";
 
 /**
  * HTTP client for talking to a deployed eve agent.
@@ -152,36 +153,45 @@ export class Client {
       }
     }
 
-    const authorization = await this.#resolveAuthorizationHeader();
-    if (authorization) {
-      headers.set("authorization", authorization);
-    }
+    await this.#applyAuth(headers);
 
     return headers;
   }
 
-  async #resolveAuthorizationHeader(): Promise<string | undefined> {
+  async #applyAuth(headers: Headers): Promise<void> {
     const auth = this.#auth;
-    if (!auth) return undefined;
+    if (!auth) return;
+
+    if ("vercelOidc" in auth) {
+      // One credential, two headers: the bearer the route reads and the
+      // trusted-OIDC header Vercel Deployment Protection accepts. Resolved
+      // once; the client-side mirror of the server `vercelOidc()` channel.
+      const token = (await resolveTokenValue(auth.vercelOidc.token)).trim();
+      if (token.length === 0) return;
+      headers.set("authorization", `Bearer ${token}`);
+      headers.set(VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER, token);
+      return;
+    }
 
     if ("bearer" in auth) {
+      // Skip the header entirely on an empty token rather than emitting a
+      // malformed `Bearer ` value the server has to reject. The dev client's
+      // OIDC resolver returns "" when no token is available locally; the
+      // request then goes out unauthenticated and the framework's
+      // `vercelOidc()` channel handler returns a clean 401.
       const token = (await resolveTokenValue(auth.bearer)).trim();
-      // Skip the header entirely on an empty token rather than emitting
-      // a malformed `Bearer ` value the server has to reject. The dev
-      // client's OIDC resolver returns an empty string when no Vercel
-      // OIDC token is available locally; in that case the request goes
-      // out unauthenticated and the framework's `vercelOidc()` channel
-      // handler returns a clean 401.
-      if (token.length === 0) return undefined;
-      return `Bearer ${token}`;
+      if (token.length === 0) return;
+      headers.set("authorization", `Bearer ${token}`);
+      return;
     }
 
     if ("basic" in auth) {
       const password = await resolveTokenValue(auth.basic.password);
-      return `Basic ${encodeBasicCredentials(auth.basic.username, password)}`;
+      headers.set(
+        "authorization",
+        `Basic ${encodeBasicCredentials(auth.basic.username, password)}`,
+      );
     }
-
-    return undefined;
   }
 }
 

@@ -67,6 +67,22 @@ describe("Client request policy", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(signal);
   });
 
+  it("expands vercelOidc auth into the bearer and trusted-oidc headers", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(AGENT_INFO));
+    const client = new Client({
+      host: "https://eve.test",
+      auth: { vercelOidc: { token: () => Promise.resolve("oidc-tok") } },
+    });
+
+    await client.info();
+
+    const sent = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(sent.get("authorization")).toBe("Bearer oidc-tok");
+    expect(sent.get("x-vercel-trusted-oidc-idp-token")).toBe("oidc-tok");
+  });
+
   it("rejects a non-Eve response from the agent info route", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({ kind: "eve-agent-info", version: 1 }),

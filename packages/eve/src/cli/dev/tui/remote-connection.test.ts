@@ -230,9 +230,7 @@ describe("createRemoteConnectionController", () => {
       resolveDeployment,
       resolveOidcToken,
       info: async (credentials) => {
-        await expect(credentials.resolveHeaders()).resolves.toMatchObject({
-          authorization: "Bearer ambient-token",
-        });
+        await expect(credentials.resolveToken()).resolves.toBe("ambient-token");
         return INFO;
       },
     });
@@ -253,9 +251,7 @@ describe("createRemoteConnectionController", () => {
     const info = vi.fn(async (credentials: DevelopmentCredentialGate) => {
       request += 1;
       if (request === 1) throw eveUnauthorized();
-      await expect(credentials.resolveHeaders()).resolves.toMatchObject({
-        authorization: "Bearer first-token",
-      });
+      await expect(credentials.resolveToken()).resolves.toBe("first-token");
       return INFO;
     });
     const resolveToken = vi
@@ -275,9 +271,7 @@ describe("createRemoteConnectionController", () => {
     ).resolves.toEqual({ kind: "authenticated" });
 
     expect(resolveToken).toHaveBeenCalledOnce();
-    await expect(harness.credentials.resolveHeaders()).resolves.toMatchObject({
-      authorization: "Bearer second-token",
-    });
+    await expect(harness.credentials.resolveToken()).resolves.toBe("second-token");
     expect(harness.controller.current().connection).toEqual({ state: "ready", info: INFO });
   });
 
@@ -314,7 +308,7 @@ describe("createRemoteConnectionController", () => {
     });
     expect(attempt).toHaveBeenCalledOnce();
     expect(info).toHaveBeenCalledTimes(2);
-    await expect(harness.credentials.resolveHeaders()).resolves.toEqual({});
+    await expect(harness.credentials.resolveToken()).resolves.toBe("");
   });
 
   it("restores prior connection authority when verification is cancelled", async () => {
@@ -325,7 +319,7 @@ describe("createRemoteConnectionController", () => {
       info: async (credentials) => {
         request += 1;
         if (request === 1) throw eveUnauthorized();
-        await credentials.resolveHeaders();
+        await credentials.resolveToken();
         verificationStarted.resolve(undefined);
         return await verification.promise;
       },
@@ -353,18 +347,16 @@ describe("createRemoteConnectionController", () => {
     await expect(authentication).resolves.toEqual({ kind: "cancelled", completedMutations: [] });
     expect(harness.controller.current().connection).toEqual(previous);
     expect(harness.controller.current().deployment).toBeUndefined();
-    await expect(harness.credentials.resolveHeaders()).resolves.toMatchObject({
-      authorization: "Bearer previous-token",
-    });
+    await expect(harness.credentials.resolveToken()).resolves.toBe("previous-token");
   });
 
   it("clears an authenticated credential before starting a new check", async () => {
-    const headers: Array<Record<string, string>> = [];
+    const tokens: string[] = [];
     let request = 0;
     const harness = createHarness({
       info: async (credentials) => {
         request += 1;
-        headers.push(await credentials.resolveHeaders());
+        tokens.push(await credentials.resolveToken());
         if (request === 1) throw eveUnauthorized();
         return INFO;
       },
@@ -381,13 +373,13 @@ describe("createRemoteConnectionController", () => {
     ).resolves.toEqual({ kind: "authenticated" });
     await expect(harness.controller.check()).resolves.toEqual({ state: "ready", info: INFO });
 
-    expect(headers[0]).toEqual({});
-    expect(headers[1]).toMatchObject({ authorization: "Bearer authenticated-token" });
-    expect(headers[2]).toEqual({});
+    expect(tokens[0]).toBe("");
+    expect(tokens[1]).toBe("authenticated-token");
+    expect(tokens[2]).toBe("");
   });
 
   it("clears ambient credentials before a later unverified check", async () => {
-    const headers: Array<Record<string, string>> = [];
+    const tokens: string[] = [];
     const resolveDeployment = vi
       .fn<(signal: AbortSignal) => Promise<VercelDeploymentResolution>>()
       .mockResolvedValueOnce(RESOLVED_DEPLOYMENT)
@@ -396,7 +388,7 @@ describe("createRemoteConnectionController", () => {
       resolveDeployment,
       resolveOidcToken: async () => "ambient-token",
       info: async (credentials) => {
-        headers.push(await credentials.resolveHeaders());
+        tokens.push(await credentials.resolveToken());
         return INFO;
       },
     });
@@ -404,8 +396,8 @@ describe("createRemoteConnectionController", () => {
     await expect(harness.controller.check()).resolves.toEqual({ state: "ready", info: INFO });
     await expect(harness.controller.check()).resolves.toEqual({ state: "ready", info: INFO });
 
-    expect(headers[0]).toMatchObject({ authorization: "Bearer ambient-token" });
-    expect(headers[1]).toEqual({});
+    expect(tokens[0]).toBe("ambient-token");
+    expect(tokens[1]).toBe("");
     expect(harness.controller.current().deployment).toBeUndefined();
   });
 
@@ -432,11 +424,9 @@ describe("createRemoteConnectionController", () => {
     older.resolve(RESOLVED_DEPLOYMENT);
     await first;
     expect(harness.controller.current().deployment).toEqual(NEWER_VERIFIED_TARGET.deployment);
-    await expect(harness.credentials.resolveHeaders()).resolves.toMatchObject({
-      authorization: "Bearer ambient-token",
-    });
+    await expect(harness.credentials.resolveToken()).resolves.toBe("ambient-token");
 
     harness.controller.dispose();
-    await expect(harness.credentials.resolveHeaders()).resolves.toEqual({});
+    await expect(harness.credentials.resolveToken()).resolves.toBe("");
   });
 });

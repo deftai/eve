@@ -13,22 +13,40 @@ import type { ModelEndpointStatus } from "#shared/model-endpoint-status.js";
 export type TokenValue = string | (() => string | Promise<string>);
 
 /**
+ * Custom headers map that cannot carry `authorization`. The credential is owned
+ * by {@link ClientAuth}; forbidding it here makes "who sets Authorization"
+ * unambiguous at the type level instead of a silent last-writer-wins.
+ */
+export type CustomHeaders = { readonly [header: string]: string } & {
+  readonly authorization?: never;
+};
+
+/**
  * Static custom-headers map or per-request resolver.
  *
  * When a function is provided, it is invoked before every HTTP call so
  * callers can return short-lived values (e.g. refreshed bypass tokens)
  * without rebuilding the client.
  */
-export type HeadersValue =
-  | Readonly<Record<string, string>>
-  | (() => Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>);
+export type HeadersValue = CustomHeaders | (() => CustomHeaders | Promise<CustomHeaders>);
 
 /**
  * Authentication configuration for the client.
  */
 export type ClientAuth =
   | { readonly basic: { readonly username: string; readonly password: TokenValue } }
-  | { readonly bearer: TokenValue };
+  | { readonly bearer: TokenValue }
+  // The client-side mirror of the framework's server `vercelOidc()` channel
+  // auth: one token the client expands into both Vercel deployment-protection
+  // headers (Authorization and {@link VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER}).
+  | { readonly vercelOidc: { readonly token: TokenValue } };
+
+/**
+ * Vercel header that presents a trusted OIDC token as proof the caller is
+ * authorized for a protected deployment. The client emits it alongside
+ * `Authorization` for the {@link ClientAuth} `vercelOidc` variant.
+ */
+export const VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER = "x-vercel-trusted-oidc-idp-token";
 
 /** Redirect modes supported by the configured fetch implementation. */
 export type ClientRedirectPolicy = NonNullable<RequestInit["redirect"]>;
