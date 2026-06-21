@@ -645,12 +645,7 @@ function readInitialState(): { readonly panel: PanelId; readonly theme: Theme } 
       requestedPanel === "runs"
         ? requestedPanel
         : "runs",
-    theme:
-      requestedTheme === "dark" || requestedTheme === "light"
-        ? requestedTheme
-        : window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light",
+    theme: requestedTheme === "dark" || requestedTheme === "light" ? requestedTheme : "light",
   };
 }
 

@@ -278,11 +278,6 @@ function readInitialState(): {
       requestedScenario !== null && scenarioIds.has(requestedScenario)
         ? requestedScenario
         : "running",
-    theme:
-      requestedTheme === "dark" || requestedTheme === "light"
-        ? requestedTheme
-        : window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light",
+    theme: requestedTheme === "dark" || requestedTheme === "light" ? requestedTheme : "light",
   };
 }
