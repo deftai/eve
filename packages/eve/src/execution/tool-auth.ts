@@ -284,14 +284,14 @@ function buildInlineScopedAuthorization(input: {
     authorization,
     connection: input.options?.connection ?? { url: "" },
     scope:
-      input.options?.scope === undefined
+      input.options?.authKey === undefined
         ? deriveInlineScope({
             authorization,
             inlineAuthState: input.inlineAuthState,
             provider: input.provider,
             toolScope: input.toolScope,
           })
-        : validateInlineScope(input.options.scope),
+        : validateInlineAuthKey(input.options.authKey),
   };
 }
 
@@ -324,22 +324,22 @@ function deriveInlineScope(input: {
     input.inlineAuthState.anonymousProvider = input.provider;
   } else if (input.inlineAuthState.anonymousProvider !== input.provider) {
     throw new Error(
-      `ctx.getToken: Multiple inline auth providers without provider metadata need explicit scopes. ` +
-        `Pass options.scope (an Eve scope key) for each provider, for example ` +
-        `ctx.getToken(auth, { scope: "github" }).`,
+      `ctx.getToken: Multiple inline auth providers without provider metadata need explicit auth keys. ` +
+        `Pass options.authKey for each provider, for example ` +
+        `ctx.getToken(auth, { authKey: "github" }).`,
     );
   }
 
   return `${input.toolScope}__inline_auth`;
 }
 
-function validateInlineScope(scope: string): string {
-  if (!/^[A-Za-z0-9_.:-]+$/u.test(scope)) {
+function validateInlineAuthKey(authKey: string): string {
+  if (!/^[A-Za-z0-9_.:-]+$/u.test(authKey)) {
     throw new Error(
-      `ctx.getToken: The "options.scope" field must contain only letters, digits, "_", "-", ".", or ":".`,
+      `ctx.getToken: The "options.authKey" field must contain only letters, digits, "_", "-", ".", or ":".`,
     );
   }
-  return scope;
+  return authKey;
 }
 
 function sanitizeScopeSegment(value: string): string {

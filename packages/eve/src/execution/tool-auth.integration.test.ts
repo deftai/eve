@@ -135,7 +135,7 @@ describe("tool-hosted authorization", () => {
     expect(calls).toBe(1);
   });
 
-  it("keeps explicit scopes separate for anonymous inline providers", async () => {
+  it("keeps explicit auth keys separate for anonymous inline providers", async () => {
     const githubAuth: AuthorizationDefinition = {
       principalType: "app",
       async getToken(): Promise<TokenResult> {
@@ -151,8 +151,8 @@ describe("tool-hosted authorization", () => {
     const tool = authoredTool({
       name: "sync_ticket",
       async execute(_input, ctx) {
-        const github = await ctx.getToken(githubAuth, { scope: "github" });
-        const linear = await ctx.getToken(linearAuth, { scope: "linear" });
+        const github = await ctx.getToken(githubAuth, { authKey: "github" });
+        const linear = await ctx.getToken(linearAuth, { authKey: "linear" });
         return { github: github.token, linear: linear.token };
       },
     });
@@ -163,7 +163,7 @@ describe("tool-hosted authorization", () => {
     expect(result).toEqual({ github: "github-token", linear: "linear-token" });
   });
 
-  it("rejects multiple anonymous inline providers without explicit scopes", async () => {
+  it("rejects multiple anonymous inline providers without explicit auth keys", async () => {
     const githubAuth: AuthorizationDefinition = {
       principalType: "app",
       async getToken(): Promise<TokenResult> {
@@ -187,7 +187,7 @@ describe("tool-hosted authorization", () => {
 
     await expect(
       runtime.runAsSession(undefined, async () => runtime.executeTool(tool, {})),
-    ).rejects.toThrow(/explicit scopes/);
+    ).rejects.toThrow(/explicit auth keys/);
   });
 
   it("keeps no-arg ctx.getToken() guarded on tools without top-level auth", async () => {

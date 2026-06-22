@@ -320,7 +320,7 @@ Throw `ConnectionAuthorizationRequiredError` from an inline provider's `getToken
 
 Vercel Connect providers usually supply their own display name in the authorization challenge. Set `displayName` in the inline options only when you need to override what users see, for example `ctx.getToken(customAuth, { displayName: "Salesforce" })`. It is presentation-only.
 
-Inline providers derive a stable tool-qualified Eve scope from Vercel Connect metadata when available. If you pass multiple custom providers that do not carry provider metadata, give each one an explicit Eve scope, for example `ctx.getToken(auth, { scope: "github" })`. This `scope` controls Eve's cache and callback keys; it is not an OAuth scope.
+Inline providers derive a stable tool-qualified auth key from Vercel Connect metadata when available. If you pass multiple custom providers that do not carry provider metadata, give each one an explicit auth key, for example `ctx.getToken(auth, { authKey: "github" })`. This `authKey` controls Eve's cache and callback keys; it is not an OAuth scope.
 
 Older tools may still declare a top-level `auth` field and call `ctx.getToken()` or `ctx.requireAuth()` without arguments. That compatibility path is deprecated; prefer inline providers for new tools.
 

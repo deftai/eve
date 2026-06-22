@@ -69,13 +69,13 @@ export interface ToolAuthOptions {
    */
   readonly displayName?: string;
   /**
-   * Optional Eve scope override for token caches, callback URLs, pending
+   * Optional Eve auth-flow key for token caches, callback URLs, pending
    * authorization state, and authorization completion. This is not an OAuth
    * scope. For Vercel Connect OAuth targeting such as `scopes`, `resources`,
    * or `authorizationDetails`, configure the provider with
    * `connect({ connector, tokenParams })`.
    */
-  readonly scope?: string;
+  readonly authKey?: string;
 }
 
 /**

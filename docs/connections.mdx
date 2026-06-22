@@ -183,7 +183,7 @@ export default defineMcpClientConnection({
 
 Drop `resume` when the provider keeps flow state server-side, so nothing has to cross the step boundary.
 
-`displayName` is presentation-only. The connection's path-derived name still keys the authorization scope, token cache, and callback URL. You can also set `displayName` on the `auth` definition itself (e.g. `auth: { ...connect("salesforce/myagent"), displayName: "Salesforce" }`); that definition-level value wins over one the strategy stamps on the challenge, and channels fall back to title-casing the connection name when neither is set.
+`displayName` is presentation-only. The connection's path-derived name still keys the authorization flow, token cache, and callback URL. You can also set `displayName` on the `auth` definition itself (e.g. `auth: { ...connect("salesforce/myagent"), displayName: "Salesforce" }`); that definition-level value wins over one the strategy stamps on the challenge, and channels fall back to title-casing the connection name when neither is set.
 
 ### Signaling authorization state
 
