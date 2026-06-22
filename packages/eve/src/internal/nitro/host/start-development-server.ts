@@ -24,20 +24,38 @@ import {
   EVE_DEVELOPMENT_SANDBOX_RUN_ID_ENV,
   getInitializedDevelopmentSandboxBackendNames,
 } from "#execution/sandbox/development-run.js";
-import type { DevelopmentServerHandle } from "#internal/nitro/host/types.js";
+import type {
+  DevelopmentServerHandle,
+  DevelopmentServerOptions,
+} from "#internal/nitro/host/types.js";
 import { loadDevelopmentEnvironmentFiles } from "#cli/dev/environment.js";
 import { pruneDevelopmentRuntimeArtifactsSnapshotsInBackground } from "#internal/nitro/dev-runtime-artifacts.js";
 import {
   DEFAULT_DEVELOPMENT_SERVER_PORT,
   MAX_DEVELOPMENT_SERVER_PORT_ATTEMPTS,
 } from "#internal/nitro/host/ports.js";
+import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
+import { eveDevArguments } from "#setup/primitives/index.js";
+import { devBootPhase } from "#internal/dev-boot-progress.js";
 
 const MAX_ALLOWED_DEVELOPMENT_SERVER_PORT = 65_535;
 const WORKFLOW_LOCAL_BASE_URL_ENV = "WORKFLOW_LOCAL_BASE_URL";
 const PORT_ENV = "PORT";
 const DEVELOPMENT_PROCESS_ID_FILE = "dev-process.pid";
+const DEVELOPMENT_SERVER_METADATA_FILE = "dev-server.json";
 const DEFAULT_DEVELOPMENT_SERVER_HOST = "127.0.0.1";
 const IPV6_LOOPBACK_HOSTNAME = "[::1]";
+const DEVELOPMENT_SERVER_URL_PLACEHOLDER = "http://localhost:PORT";
+
+interface DevelopmentServerMetadata {
+  readonly processId: number;
+  readonly url: string;
+}
+
+interface ActiveDevelopmentProcess {
+  readonly processId: number;
+  readonly url?: string;
+}
 
 /**
  * Hostnames Nitro/srvx surface when listening on an IPv6 wildcard interface.
@@ -111,6 +129,10 @@ function resolveDevelopmentProcessIdPath(appRoot: string): string {
   return join(appRoot, ".eve", DEVELOPMENT_PROCESS_ID_FILE);
 }
 
+function resolveDevelopmentServerMetadataPath(appRoot: string): string {
+  return join(appRoot, ".eve", DEVELOPMENT_SERVER_METADATA_FILE);
+}
+
 function parseProcessId(value: string): number | undefined {
   const trimmed = value.trim();
 
@@ -141,7 +163,60 @@ function formatKillCommand(processId: number): string {
   return `kill ${processId}`;
 }
 
-async function readActiveDevelopmentProcessId(appRoot: string): Promise<number | undefined> {
+function parseDevelopmentServerMetadata(value: string): DevelopmentServerMetadata | undefined {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("pid" in parsed) ||
+    typeof parsed.pid !== "number" ||
+    !Number.isSafeInteger(parsed.pid) ||
+    parsed.pid <= 0 ||
+    !("url" in parsed) ||
+    typeof parsed.url !== "string"
+  ) {
+    return undefined;
+  }
+
+  const url = normalizeDevelopmentServerClientUrl(parsed.url);
+
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return {
+    processId: parsed.pid,
+    url,
+  };
+}
+
+async function readDevelopmentServerMetadata(
+  appRoot: string,
+): Promise<DevelopmentServerMetadata | undefined> {
+  try {
+    return parseDevelopmentServerMetadata(
+      await readFile(resolveDevelopmentServerMetadataPath(appRoot), "utf8"),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+async function readActiveDevelopmentProcess(
+  appRoot: string,
+): Promise<ActiveDevelopmentProcess | undefined> {
   let processId: number | undefined;
 
   try {
@@ -154,18 +229,61 @@ async function readActiveDevelopmentProcessId(appRoot: string): Promise<number |
     return undefined;
   }
 
-  return processId;
+  const metadata = await readDevelopmentServerMetadata(appRoot);
+
+  return {
+    processId,
+    url: metadata?.processId === processId ? metadata.url : undefined,
+  };
+}
+
+async function detectDevelopmentCommandPackageManager(
+  appRoot: string,
+): Promise<PackageManagerKind> {
+  try {
+    return (await detectPackageManager(appRoot)).kind;
+  } catch {
+    return "pnpm";
+  }
+}
+
+async function formatDevelopmentServerConnectCommand(
+  appRoot: string,
+  serverUrl: string,
+): Promise<string> {
+  const packageManager = await detectDevelopmentCommandPackageManager(appRoot);
+  return [packageManager, ...eveDevArguments(packageManager), serverUrl].join(" ");
+}
+
+async function writeDevelopmentServerMetadata(appRoot: string, serverUrl: string): Promise<void> {
+  await writeFile(
+    resolveDevelopmentServerMetadataPath(appRoot),
+    `${JSON.stringify(
+      {
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+        url: normalizeDevelopmentServerClientUrl(serverUrl),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 async function writeDevelopmentProcessId(appRoot: string): Promise<() => Promise<void>> {
   const processIdPath = resolveDevelopmentProcessIdPath(appRoot);
-  const activeProcessId = await readActiveDevelopmentProcessId(appRoot);
+  const metadataPath = resolveDevelopmentServerMetadataPath(appRoot);
+  const activeProcess = await readActiveDevelopmentProcess(appRoot);
 
-  if (activeProcessId !== undefined) {
+  if (activeProcess !== undefined) {
+    const connectUrl = activeProcess.url ?? DEVELOPMENT_SERVER_URL_PLACEHOLDER;
+    const connectCommand = await formatDevelopmentServerConnectCommand(appRoot, connectUrl);
     throw new Error(
       [
-        `A dev server is already running for this eve agent (pid ${activeProcessId}).`,
-        `To stop it, run: ${formatKillCommand(activeProcessId)}`,
+        `A dev server is already running for this eve agent (pid ${activeProcess.processId}).`,
+        `To connect to the existing instance, run: ${connectCommand}`,
+        `To stop it, run: ${formatKillCommand(activeProcess.processId)}`,
       ].join("\n"),
     );
   }
@@ -184,6 +302,13 @@ async function writeDevelopmentProcessId(appRoot: string): Promise<() => Promise
 
     if (currentProcessId === process.pid) {
       await rm(processIdPath, { force: true });
+      await rm(metadataPath, { force: true });
+      return;
+    }
+
+    const metadata = await readDevelopmentServerMetadata(appRoot);
+    if (metadata?.processId === process.pid) {
+      await rm(metadataPath, { force: true });
     }
   };
 }
@@ -343,10 +468,7 @@ async function listenForDevelopmentServer(input: {
  */
 export async function startDevelopmentServer(
   rootDir: string,
-  options: {
-    host?: string;
-    port?: number;
-  } = {},
+  options: DevelopmentServerOptions = {},
 ): Promise<DevelopmentServerHandle> {
   // Marks this process tree as an `eve dev` session so runtime features
   // that must never run in production (for example auto-installing
@@ -363,7 +485,11 @@ export async function startDevelopmentServer(
   let removeDevelopmentProcessId: (() => Promise<void>) | undefined;
 
   try {
-    const preparedHost = await prepareApplicationHost(rootDir, { dev: true });
+    const preparedHost = await devBootPhase(
+      "compiling agent",
+      () => prepareApplicationHost(rootDir, { dev: true }),
+      options.onBootProgress,
+    );
     removeDevelopmentProcessId = await writeDevelopmentProcessId(preparedHost.appRoot);
     pruneDevelopmentRuntimeArtifactsSnapshotsInBackground(preparedHost.appRoot);
     const compiledArtifactsSource = resolveNitroCompiledArtifactsSource(
@@ -377,34 +503,56 @@ export async function startDevelopmentServer(
       compiledArtifactsSource,
     });
     pruneLocalSandboxTemplatesInBackground(preparedHost.appRoot);
-    nitro = await createApplicationNitro(preparedHost, true);
-    devServer = createDevServer(nitro);
-    guardDevelopmentServerWebSocketUpgrades(nitro, devServer);
+    const activeNitro = await devBootPhase(
+      "creating dev server",
+      () => createApplicationNitro(preparedHost, true),
+      options.onBootProgress,
+    );
+    nitro = activeNitro;
+    devServer = createDevServer(activeNitro);
+    const activeDevServer = devServer;
+    guardDevelopmentServerWebSocketUpgrades(activeNitro, devServer);
     const hostname =
-      options.host ?? nitro.options.devServer.hostname ?? DEFAULT_DEVELOPMENT_SERVER_HOST;
+      options.host ?? activeNitro.options.devServer.hostname ?? DEFAULT_DEVELOPMENT_SERVER_HOST;
     const requestedPort = options.port ?? readEnvironmentPort();
     const retryOnAddressInUse = requestedPort === undefined;
-    const server = await listenForDevelopmentServer({
-      devServer,
-      host: hostname,
-      port: requestedPort,
-      retryOnAddressInUse,
-    });
+    const server = await devBootPhase(
+      "binding port",
+      () =>
+        listenForDevelopmentServer({
+          devServer: activeDevServer,
+          host: hostname,
+          port: requestedPort,
+          retryOnAddressInUse,
+        }),
+      options.onBootProgress,
+    );
 
     if (!server.url) {
       throw new Error("Nitro dev server did not expose a URL.");
     }
 
-    restoreWorkflowLocalQueueEnvironment = installWorkflowLocalQueueEnvironment(server.url);
-    await prepare(nitro);
-    await buildNitro(nitro);
+    const serverUrl = normalizeDevelopmentServerClientUrl(server.url);
+    await writeDevelopmentServerMetadata(preparedHost.appRoot, serverUrl);
+    restoreWorkflowLocalQueueEnvironment = installWorkflowLocalQueueEnvironment(serverUrl);
+    await devBootPhase(
+      "building dev bundle",
+      async () => {
+        await prepare(activeNitro);
+        await buildNitro(activeNitro);
+      },
+      options.onBootProgress,
+    );
 
-    const { startAuthoredSourceWatcher } =
-      await import("#internal/nitro/host/dev-authored-source-watcher.js");
-    authoredSourceWatcher = await startAuthoredSourceWatcher({
-      nitro,
-      preparedHost,
-    });
+    authoredSourceWatcher = await devBootPhase(
+      "starting file watcher",
+      async () => {
+        const { startAuthoredSourceWatcher } =
+          await import("#internal/nitro/host/dev-authored-source-watcher.js");
+        return startAuthoredSourceWatcher({ nitro: activeNitro, preparedHost });
+      },
+      options.onBootProgress,
+    );
     const restoreWorkflowLocalQueueEnvironmentOnClose = restoreWorkflowLocalQueueEnvironment;
     if (restoreWorkflowLocalQueueEnvironmentOnClose === undefined) {
       throw new Error("Workflow local queue environment was not initialized.");
@@ -412,7 +560,7 @@ export async function startDevelopmentServer(
 
     const authoredSourceWatcherOnClose = authoredSourceWatcher;
     const devServerOnClose = devServer;
-    const nitroOnClose = nitro;
+    const nitroOnClose = activeNitro;
     return {
       async close() {
         try {
@@ -431,7 +579,7 @@ export async function startDevelopmentServer(
           restoreDevelopmentSandboxRunId(previousDevelopmentSandboxRunId);
         }
       },
-      url: normalizeDevelopmentServerClientUrl(server.url),
+      url: serverUrl,
     };
   } catch (error) {
     await authoredSourceWatcher?.close().catch(() => {});

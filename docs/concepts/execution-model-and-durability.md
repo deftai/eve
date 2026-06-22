@@ -15,6 +15,27 @@ Work nests in three levels:
 
 Every turn runs as a durable workflow, built on the open-source [Workflow SDK](https://workflow-sdk.dev/) (Vercel Workflow when you deploy on Vercel). eve checkpoints progress and serializes durable state at each step boundary. Your code runs inside a managed step, so tools, the sandbox, and subagents feel synchronous even though the session underneath them is durable.
 
+The Workflow SDK is not inherently tied to Vercel. In local development and in a self-deployed `eve start` process, eve uses the SDK's local world by default; that world persists workflow runs on disk, normally under `.workflow-data`, and dispatches through the same Nitro-hosted workflow routes. On Vercel, the same workflow code runs against Vercel Workflow instead, which adds platform features such as latest production deployment routing and dashboard run metadata.
+
+Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the workflow state store or the sandbox runtime. Those are separate adapters: Workflow uses the active world implementation, and Sandbox uses the backend from `agent/sandbox` or `defaultBackend()`.
+
+For advanced self-hosted deployments, the root `agent.ts` can select the installed Workflow world package to use with `experimental.workflow.world`:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "eve";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-4.8",
+  experimental: {
+    workflow: {
+      world: "@workflow/world-postgres",
+    },
+  },
+});
+```
+
+The world package backs workflow state, queues, hooks, and streams. Keep secrets and deployment-specific options in runtime environment variables read by that package, not in `agent.ts`. See [agent.ts](../agent-config#workflow-world) and [Workflow Worlds](https://workflow-sdk.dev/worlds).
+
 ## Resuming after a crash
 
 Crash the process, hit a timeout, or redeploy mid-turn, and the run picks up from the last completed step rather than replaying the whole turn. Completed steps never re-run; eve replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval.
