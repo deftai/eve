@@ -205,7 +205,7 @@ To narrow a caught error, use `isConnectionAuthorizationRequiredError(err)` and 
 
 ### Handling a revoked token mid-call
 
-`getToken` only runs _before_ a tool call, so a grant revoked while a tool is mid-flight first surfaces as a downstream `401` inside your `execute`. A plain throw there is only a tool error, so the model sees a failure and the cached bearer sticks around. Instead, map a provider `401` to `ctx.requireAuth()` for a tool's declared `auth`, or `ctx.requireAuth(provider)` for an inline provider. eve then evicts the rejected token from its per-step cache and re-runs the consent flow with a fresh one, exactly as it does for a connection whose server rejects the bearer.
+`getToken` only runs _before_ a tool call, so a grant revoked while a tool is mid-flight first surfaces as a downstream `401` inside your `execute`. A plain throw there is only a tool error, so the model sees a failure and the cached bearer sticks around. Instead, map a provider `401` to `ctx.requireAuth(provider)`. eve then evicts the rejected token from its per-step cache and re-runs the consent flow with a fresh one, exactly as it does for a connection whose server rejects the bearer.
 
 ```ts title="agent/tools/list_issues.ts"
 import { connect } from "@vercel/connect/eve";

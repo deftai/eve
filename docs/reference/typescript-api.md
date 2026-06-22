@@ -61,10 +61,10 @@ A few non-`define*` helpers round out the set: `disableTool` and `ExperimentalWo
 | `ctx.session`               | Current session, turn, auth, and optional parent lineage (read-only)          |
 | `ctx.getSandbox()`          | Live sandbox handle for the current agent                                     |
 | `ctx.getSkill(identifier)`  | Handle for a named skill visible to the current agent                         |
-| `ctx.getToken()`            | Resolve the bearer token for a tool's declared `auth` (throws without `auth`) |
 | `ctx.getToken(provider)`    | Resolve a bearer token for an inline auth provider such as `connect("...")`   |
-| `ctx.requireAuth()`         | Force the tool's declared authorization flow before proceeding                |
 | `ctx.requireAuth(provider)` | Re-challenge an inline provider, commonly after a downstream `401`            |
+| `ctx.getToken()`            | Deprecated shortcut for a tool's top-level `auth`                             |
+| `ctx.requireAuth()`         | Deprecated shortcut for a tool's top-level `auth`                             |
 
 ## Imports at a glance
 

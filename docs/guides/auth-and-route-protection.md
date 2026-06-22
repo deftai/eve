@@ -218,7 +218,7 @@ Route auth does not enforce session ownership. If multiple users or tenants can 
 
 ## Tool and connection auth
 
-Tool and connection auth is how your agent reaches an external service that wants an interactive sign-in, like an OAuth MCP server. Both a connection and an individual tool can declare an `auth` strategy; eve drives the sign-in, caches the token per step, and re-runs the call once the caller authorizes.
+Tool and connection auth is how your agent reaches an external service that wants an interactive sign-in, like an OAuth MCP server. Connections declare `auth` on the connection definition. Tools should resolve providers inline with `ctx.getToken(provider)` and call `ctx.requireAuth(provider)` only when a downstream service rejects a token; eve drives the sign-in, caches the token per step, and re-runs the call once the caller authorizes.
 
 ### On a connection
 
@@ -241,19 +241,20 @@ The first call that needs the connection kicks off an OAuth sign-in, surfaced as
 
 ### On a single tool
 
-When one tool calls a service behind OAuth, it can declare its own `auth` and skip the separate connection. `auth` takes the same shapes: `connect("...")` for Vercel Connect-backed OAuth, a custom interactive definition, or a plain `{ getToken }` for static credentials.
+When one tool calls a service behind OAuth, keep the auth provider at the call site and skip the separate connection. Providers take the same shapes as connection `auth`: `connect("...")` for Vercel Connect-backed OAuth, a custom interactive definition, or a plain `{ getToken }` for static credentials.
 
 ```ts title="agent/tools/list_okta_groups.ts"
 import { defineTool } from "eve/tools";
 import { connect } from "@vercel/connect/eve";
 import { z } from "zod";
 
+const oktaAuth = connect("okta");
+
 export default defineTool({
   description: "List the caller's Okta groups.",
   inputSchema: z.object({}),
-  auth: connect("okta"),
   async execute(_input, ctx) {
-    const { token } = await ctx.getToken();
+    const { token } = await ctx.getToken(oktaAuth, { displayName: "Okta" });
     const res = await fetch("https://api.okta-proxy.internal/groups", {
       headers: { authorization: `Bearer ${token}` },
     });
@@ -262,7 +263,7 @@ export default defineTool({
 });
 ```
 
-Tools that need more than one credential can keep auth at the call site instead of declaring one top-level `auth`:
+This same inline shape naturally handles tools that need more than one credential:
 
 ```ts title="agent/tools/sync_ticket.ts"
 import { connect } from "@vercel/connect/eve";
@@ -293,18 +294,18 @@ export default defineTool({
 });
 ```
 
-The tool's `ctx` exposes two auth accessors:
+The tool's `ctx` exposes provider-scoped auth accessors:
 
-- `ctx.getToken()` resolves the bearer for the declared strategy, checking the per-step token cache first. With an interactive strategy, a cache miss suspends the turn on a framework-owned callback URL, shows a "Sign in" affordance, and re-runs the tool once the OAuth callback completes.
-- `ctx.getToken(provider, options?)` resolves an inline provider such as `connect("github")`. It uses the same cache, callback, and sign-in machinery, but scopes the flow to that provider instead of the tool's top-level `auth`.
-- `ctx.requireAuth()` throws `ConnectionAuthorizationRequiredError` to gate the tool on authorization before any token resolves. The runtime turns that into the same consent prompt.
+- `ctx.getToken(provider, options?)` resolves an inline provider such as `connect("github")`. It uses the same cache, callback, and sign-in machinery, but scopes the flow to that provider instead of the tool's legacy top-level `auth`.
 - `ctx.requireAuth(provider, options?)` does the same for an inline provider. Use it after a downstream `401` rejects a token returned by `ctx.getToken(provider)`.
 
-Throw `ConnectionAuthorizationRequiredError` anywhere in `execute` (directly, via `requireAuth()`, or implicitly from `getToken()`) and you trigger the consent flow, keyed by the tool's name. Calling a no-arg accessor on a tool that does not declare `auth` throws; pass a provider to use inline auth from a plain tool.
+Throw `ConnectionAuthorizationRequiredError` from an inline provider's `getToken` to trigger the consent flow for that provider. If a downstream request later rejects an already-resolved token, call `ctx.requireAuth(provider)` to evict and re-authorize it.
 
-By default the sign-in affordance title-cases the tool's path-derived name, so a tool file named `sfdc_lookup.ts` renders "Sign in with Sfdc_lookup". Set `displayName` on the `auth` definition to control what users see instead, for example `auth: { ...connect("sfdc"), displayName: "Salesforce" }`. It is presentation-only. The tool's name still keys the authorization scope, token cache, and callback URL, and a definition-level `displayName` wins over one the strategy stamps on the challenge.
+By default the sign-in affordance title-cases the provider scope. Set `displayName` in the inline options to control what users see instead, for example `ctx.getToken(connect("sfdc"), { displayName: "Salesforce" })`. It is presentation-only.
 
 Inline providers derive a stable tool-qualified scope from Vercel Connect metadata when available. If you pass multiple custom providers that do not carry provider metadata, give each one an explicit `scope`, for example `ctx.getToken(auth, { scope: "github" })`.
+
+Older tools may still declare a top-level `auth` field and call `ctx.getToken()` or `ctx.requireAuth()` without arguments. That shortcut is deprecated; prefer inline providers for new tools.
 
 ## What to read next
 
