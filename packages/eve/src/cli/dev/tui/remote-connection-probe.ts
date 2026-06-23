@@ -1,19 +1,14 @@
-import { ClientError } from "#client/index.js";
+import { ClientError, type Client } from "#client/index.js";
 import { isVercelAuthChallenge } from "#services/dev-client/vercel-auth-error.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { isObject } from "#shared/guards.js";
 
-import type {
-  RemoteConnectionControllerOptions,
-  RemoteConnectionState,
-} from "./remote-connection-types.js";
+import type { RemoteConnectionState } from "./remote-connection-types.js";
 
 export type RemoteProbeResult = Extract<
   RemoteConnectionState,
   { state: "ready" | "auth-required" | "unavailable" }
 >;
-
-const REMOTE_PROBE_TIMEOUT_MS = 10_000;
 
 function isEveOidcChallenge(error: unknown): boolean {
   if (!(error instanceof ClientError) || error.status !== 401) return false;
@@ -54,16 +49,10 @@ export function classifyRemoteError(error: unknown): RemoteProbeResult {
 }
 
 export async function probeRemoteInfo(input: {
-  readonly client: RemoteConnectionControllerOptions["client"];
-  readonly signal: AbortSignal;
-  readonly timeoutMs?: number;
+  readonly client: Client;
 }): Promise<RemoteProbeResult> {
-  const signal = AbortSignal.any([
-    input.signal,
-    AbortSignal.timeout(input.timeoutMs ?? REMOTE_PROBE_TIMEOUT_MS),
-  ]);
   try {
-    return { state: "ready", info: await input.client.info({ signal }) };
+    return { state: "ready", info: await input.client.info() };
   } catch (error) {
     return classifyRemoteError(error);
   }

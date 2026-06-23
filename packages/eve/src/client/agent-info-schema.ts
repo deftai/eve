@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import type { AgentInfoResult } from "./types.js";
-
 const source = z.object({
   exportName: z.string().optional(),
   logicalPath: z.string(),
@@ -121,7 +119,7 @@ const sandbox = source.extend({
 });
 
 /** Runtime contract for the complete `/eve/v1/info` response. */
-export const AgentInfoResultSchema: z.ZodType<AgentInfoResult> = z.object({
+export const AgentInfoResultSchema = z.object({
   agent: z.object({
     agentRoot: z.string(),
     appRoot: z.string(),
@@ -185,3 +183,28 @@ export const AgentInfoResultSchema: z.ZodType<AgentInfoResult> = z.object({
     rootEntries: z.array(z.string()),
   }),
 });
+
+type ReadonlyDeep<T> = T extends readonly (infer Item)[]
+  ? readonly ReadonlyDeep<Item>[]
+  : T extends object
+    ? { readonly [Key in keyof T]: ReadonlyDeep<T[Key]> }
+    : T;
+
+export type AgentInfoSource = ReadonlyDeep<z.output<typeof source>>;
+export type AgentInfoEntry = ReadonlyDeep<z.output<typeof entry>>;
+export type AgentInfoToolEntry = ReadonlyDeep<z.output<typeof tool>>;
+export type AgentInfoFrameworkToolEntry = ReadonlyDeep<z.output<typeof frameworkTool>>;
+export type AgentInfoDynamicResolverEntry = ReadonlyDeep<z.output<typeof dynamicResolver>>;
+export type AgentInfoTools = AgentInfoResult["tools"];
+export type AgentInfoSkillEntry = ReadonlyDeep<z.output<typeof skill>>;
+export type AgentInfoInstructionsEntry = ReadonlyDeep<z.output<typeof instructions>>;
+export type AgentInfoInstructions = AgentInfoResult["instructions"];
+export type AgentInfoScheduleEntry = ReadonlyDeep<z.output<typeof schedule>>;
+export type AgentInfoSubagentEntry = ReadonlyDeep<z.output<typeof subagent>>;
+export type AgentInfoChannelEntry = ReadonlyDeep<z.output<typeof channel>>;
+export type AgentInfoFrameworkChannelEntry = ReadonlyDeep<z.output<typeof frameworkChannel>>;
+export type AgentInfoChannels = AgentInfoResult["channels"];
+export type AgentInfoConnectionEntry = ReadonlyDeep<z.output<typeof connection>>;
+export type AgentInfoHookEntry = ReadonlyDeep<z.output<typeof hook>>;
+export type AgentInfoSandboxEntry = ReadonlyDeep<z.output<typeof sandbox>>;
+export type AgentInfoResult = ReadonlyDeep<z.output<typeof AgentInfoResultSchema>>;

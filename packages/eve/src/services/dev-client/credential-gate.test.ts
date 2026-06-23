@@ -21,6 +21,20 @@ function resolvedToken(token: string): DevelopmentOidcTokenResolution {
   return { kind: "resolved", token };
 }
 
+function deferred<T>() {
+  let settle: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    promise,
+    resolve(value: T): void {
+      if (settle === undefined) throw new Error("Deferred promise was not initialized.");
+      settle(value);
+    },
+  };
+}
+
 describe("createDevelopmentCredentialGate", () => {
   it("stays anonymous until an authoritative target is installed", async () => {
     vi.stubEnv("VERCEL_AUTOMATION_BYPASS_SECRET", "ambient-bypass");
@@ -103,5 +117,22 @@ describe("createDevelopmentCredentialGate", () => {
     expect(gate.lastTokenFailure()).toEqual(failure);
     await expect(gate.resolveToken()).resolves.toBe("fresh-token");
     expect(gate.lastTokenFailure()).toBeUndefined();
+  });
+
+  it("keeps a restored grant's failure when a retired request completes", async () => {
+    const failure = { kind: "resolution-failed", message: "previous grant failed" } as const;
+    const gate = createDevelopmentCredentialGate("https://verified.example.com");
+    const target = await verifiedTarget("verified.example.com");
+    gate.authorize({ target, resolveToken: async () => failure });
+    await expect(gate.resolveToken()).resolves.toBe("");
+
+    const candidate = deferred<DevelopmentOidcTokenResolution>();
+    const restore = gate.authorize({ target, resolveToken: async () => await candidate.promise });
+    const inFlight = gate.resolveToken();
+    restore();
+    candidate.resolve(resolvedToken("candidate-token"));
+
+    await expect(inFlight).resolves.toBe("candidate-token");
+    expect(gate.lastTokenFailure()).toEqual(failure);
   });
 });

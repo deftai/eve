@@ -67,24 +67,22 @@ export class Client {
    *
    * @throws {ClientError} If the server returns a non-successful status.
    */
-  async info(options: { readonly signal?: AbortSignal } = {}): Promise<AgentInfoResult> {
-    const request: RequestInit = {};
-    if (options.signal !== undefined) request.signal = options.signal;
-    const response = await this.fetch(EVE_INFO_ROUTE_PATH, request);
+  async info(): Promise<AgentInfoResult> {
+    const response = await this.fetch(EVE_INFO_ROUTE_PATH);
 
     if (!response.ok) {
       const body = await response.text();
       throw new ClientError(response.status, body);
     }
 
-    const info: unknown = await response.json();
-    if (!isAgentInfoResult(info)) {
+    const result = AgentInfoResultSchema.safeParse(await response.json());
+    if (!result.success) {
       throw new SyntaxError(
         "The server returned an unrecognized response from the Eve agent info route.",
       );
     }
 
-    return info;
+    return result.data;
   }
 
   /**
@@ -96,10 +94,7 @@ export class Client {
    */
   async fetch(path: string, init: RequestInit = {}): Promise<Response> {
     const url = createClientUrl(this.#host, path);
-    const headers = await raceWithAbort(
-      this.#resolveHeaders(headersInitToRecord(init.headers)),
-      init.signal ?? undefined,
-    );
+    const headers = await this.#resolveHeaders(headersInitToRecord(init.headers));
     return await fetch(url, withRedirectPolicy({ ...init, headers }, this.#redirect));
   }
 
@@ -128,8 +123,7 @@ export class Client {
         maxReconnectAttempts: this.#maxReconnectAttempts,
         preserveCompletedSessions: this.#preserveCompletedSessions,
         redirect: this.#redirect,
-        resolveHeaders: (perRequest, signal) =>
-          raceWithAbort(this.#resolveHeaders(perRequest), signal),
+        resolveHeaders: (perRequest) => this.#resolveHeaders(perRequest),
       },
       resolved,
     );
@@ -141,7 +135,12 @@ export class Client {
 
   async #resolveHeaders(perRequest?: Readonly<Record<string, string>>): Promise<Headers> {
     const headers = new Headers();
-    const baseHeaders = await resolveHeadersValue(this.#headers);
+    // Start both dynamic providers together so shared credential state is
+    // captured once per request, before either provider can be replaced.
+    const [baseHeaders, authHeaders] = await Promise.all([
+      resolveHeadersValue(this.#headers),
+      this.#resolveAuthHeaders(),
+    ]);
 
     for (const [key, value] of Object.entries(baseHeaders)) {
       headers.set(key, value);
@@ -153,24 +152,27 @@ export class Client {
       }
     }
 
-    await this.#applyAuth(headers);
+    for (const [key, value] of Object.entries(authHeaders)) {
+      headers.set(key, value);
+    }
 
     return headers;
   }
 
-  async #applyAuth(headers: Headers): Promise<void> {
+  async #resolveAuthHeaders(): Promise<Readonly<Record<string, string>>> {
     const auth = this.#auth;
-    if (!auth) return;
+    if (!auth) return {};
 
     if ("vercelOidc" in auth) {
       // One credential, two headers: the bearer the route reads and the
       // trusted-OIDC header Vercel Deployment Protection accepts. Resolved
       // once; the client-side mirror of the server `vercelOidc()` channel.
       const token = (await resolveTokenValue(auth.vercelOidc.token)).trim();
-      if (token.length === 0) return;
-      headers.set("authorization", `Bearer ${token}`);
-      headers.set(VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER, token);
-      return;
+      if (token.length === 0) return {};
+      return {
+        authorization: `Bearer ${token}`,
+        [VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER]: token,
+      };
     }
 
     if ("bearer" in auth) {
@@ -180,50 +182,23 @@ export class Client {
       // request then goes out unauthenticated and the framework's
       // `vercelOidc()` channel handler returns a clean 401.
       const token = (await resolveTokenValue(auth.bearer)).trim();
-      if (token.length === 0) return;
-      headers.set("authorization", `Bearer ${token}`);
-      return;
+      return token.length === 0 ? {} : { authorization: `Bearer ${token}` };
     }
 
     if ("basic" in auth) {
       const password = await resolveTokenValue(auth.basic.password);
-      headers.set(
-        "authorization",
-        `Basic ${encodeBasicCredentials(auth.basic.username, password)}`,
-      );
+      return {
+        authorization: `Basic ${encodeBasicCredentials(auth.basic.username, password)}`,
+      };
     }
+
+    return {};
   }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function isAgentInfoResult(value: unknown): value is AgentInfoResult {
-  return AgentInfoResultSchema.safeParse(value).success;
-}
-
-async function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (signal === undefined) return await promise;
-  signal.throwIfAborted();
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => {
-      signal.removeEventListener("abort", onAbort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
-}
 
 async function resolveTokenValue(value: TokenValue): Promise<string> {
   return typeof value === "function" ? value() : value;

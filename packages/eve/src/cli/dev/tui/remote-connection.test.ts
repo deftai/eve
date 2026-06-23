@@ -89,21 +89,16 @@ function eveUnauthorized(error = "Authorization is required for this route."): C
 
 type HarnessOptions = Pick<
   RemoteConnectionControllerOptions,
-  "probeTimeoutMs" | "resolveDeployment" | "resolveOidcToken"
+  "resolveDeployment" | "resolveOidcToken"
 > & {
-  readonly info?: (
-    credentials: DevelopmentCredentialGate,
-    signal?: AbortSignal,
-  ) => Promise<AgentInfoResult>;
+  readonly info?: (credentials: DevelopmentCredentialGate) => Promise<AgentInfoResult>;
 };
 
 function createHarness(options: HarnessOptions = {}) {
   const { info = async () => INFO, ...controllerOptions } = options;
   const credentials = createDevelopmentCredentialGate(TARGET.serverUrl);
   const client = new Client({ host: TARGET.serverUrl });
-  const infoSpy = vi
-    .spyOn(client, "info")
-    .mockImplementation((input) => info(credentials, input?.signal));
+  const infoSpy = vi.spyOn(client, "info").mockImplementation(() => info(credentials));
   const controller = createRemoteConnectionController({
     ...controllerOptions,
     client,
@@ -179,26 +174,6 @@ describe("createRemoteConnectionController", () => {
     },
   ])("classifies $name", async ({ error, expected }) => {
     await expect(checkFailure(error)).resolves.toMatchObject(expected);
-  });
-
-  it("times out a connection probe while request headers are resolving", async () => {
-    const harness = createHarness({
-      probeTimeoutMs: 5,
-      info: async (_credentials, signal) =>
-        await new Promise<AgentInfoResult>((_resolve, reject) => {
-          if (signal === undefined) throw new Error("Expected a probe signal.");
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
-        }),
-    });
-
-    await expect(harness.controller.check()).resolves.toMatchObject({
-      state: "unavailable",
-      failure: {
-        message: expect.stringMatching(/timeout/iu),
-      },
-    });
   });
 
   it("resolves ambient credentials only after deployment authority is established", async () => {

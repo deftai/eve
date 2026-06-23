@@ -79,6 +79,5 @@ export interface RemoteConnectionControllerOptions {
     deployment: Pick<ResolvedVercelDeployment, "ownerId" | "projectId">,
   ) => Promise<DevelopmentOidcTokenResolution>;
   readonly resolveDeployment?: (signal: AbortSignal) => Promise<VercelDeploymentResolution>;
-  readonly probeTimeoutMs?: number;
   readonly onChange: (snapshot: RemoteConnectionSnapshot) => void;
 }

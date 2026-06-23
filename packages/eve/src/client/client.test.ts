@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Client } from "#client/client.js";
 import type { AgentInfoResult } from "#client/types.js";
+import { resolveTestVercelTarget } from "#internal/testing/verified-vercel-target.js";
+import { resolveRemoteDevelopmentClientOptions } from "#services/dev-client/client-options.js";
+import { createDevelopmentCredentialGate } from "#services/dev-client/credential-gate.js";
 
 const AGENT_INFO: AgentInfoResult = {
   agent: {
@@ -37,6 +40,7 @@ const AGENT_INFO: AgentInfoResult = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("Client request policy", () => {
@@ -53,9 +57,8 @@ describe("Client request policy", () => {
         new Response(`${JSON.stringify({ data: {}, type: "session.completed" })}\n`),
       );
     const client = new Client({ host: "https://eve.test", redirect: "manual" });
-    const signal = new AbortController().signal;
 
-    await client.info({ signal });
+    await client.info();
     await client.health();
     await client.fetch("/custom", { redirect: "follow" });
     await (await client.session().send("hello")).result();
@@ -64,7 +67,6 @@ describe("Client request policy", () => {
     for (const [, init] of fetchMock.mock.calls) {
       expect(init?.redirect).toBe("manual");
     }
-    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(signal);
   });
 
   it("expands vercelOidc auth into the bearer and trusted-oidc headers", async () => {
@@ -81,6 +83,30 @@ describe("Client request policy", () => {
     const sent = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(sent.get("authorization")).toBe("Bearer oidc-tok");
     expect(sent.get("x-vercel-trusted-oidc-idp-token")).toBe("oidc-tok");
+  });
+
+  it("keeps an in-flight remote request on one credential snapshot after rollback", async () => {
+    vi.stubEnv("VERCEL_AUTOMATION_BYPASS_SECRET", "bypass-secret");
+    const target = await resolveTestVercelTarget({ host: "eve.test", projectId: "prj_eve" });
+    const credentials = createDevelopmentCredentialGate("https://eve.test");
+    const rollback = credentials.authorize({
+      target,
+      resolveToken: async () => "candidate-token",
+    });
+    const client = new Client(
+      resolveRemoteDevelopmentClientOptions({ credentials, serverUrl: "https://eve.test" }),
+    );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null));
+
+    const request = client.fetch("/eve/v1/info");
+    rollback();
+    await request;
+
+    const sent = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(sent.get("authorization")).toBe("Bearer candidate-token");
+    expect(sent.get("x-vercel-protection-bypass")).toBe("bypass-secret");
+    expect(sent.get("x-vercel-trusted-oidc-idp-token")).toBe("candidate-token");
+    await expect(credentials.resolveToken()).resolves.toBe("");
   });
 
   it("accepts a tool whose undefined output schema was omitted during JSON serialization", async () => {
@@ -116,6 +142,17 @@ describe("Client request policy", () => {
       name: "web_search",
     });
     expect(info.tools.available[0]).not.toHaveProperty("outputSchema");
+  });
+
+  it("returns the parsed agent info payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ ...AGENT_INFO, ignoredByClient: true }),
+    );
+    const client = new Client({ host: "https://eve.test" });
+
+    const info = await client.info();
+
+    expect(info).not.toHaveProperty("ignoredByClient");
   });
 
   it("rejects a non-Eve response from the agent info route", async () => {
@@ -158,39 +195,4 @@ describe("Client request policy", () => {
       await expect(client.info()).rejects.toThrow(SyntaxError);
     },
   );
-
-  it("aborts while dynamic request headers are still resolving", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-    const client = new Client({
-      host: "https://eve.test",
-      headers: () => new Promise<Readonly<Record<string, string>>>(() => {}),
-    });
-    const abort = new AbortController();
-    const reason = new Error("cancelled");
-
-    const info = client.info({ signal: abort.signal });
-    abort.abort(reason);
-
-    await expect(info).rejects.toBe(reason);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("aborts a session send while dynamic request headers are still resolving", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-    const client = new Client({
-      host: "https://eve.test",
-      headers: () => new Promise<Readonly<Record<string, string>>>(() => {}),
-    });
-    const abort = new AbortController();
-    const reason = new Error("cancelled");
-
-    const send = client.session().send({
-      message: "hello",
-      signal: abort.signal,
-    });
-    abort.abort(reason);
-
-    await expect(send).rejects.toBe(reason);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });

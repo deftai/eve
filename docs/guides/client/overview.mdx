@@ -34,10 +34,10 @@ Non-2xx responses throw `ClientError`, which carries the HTTP `status` and respo
 
 ## Inspect an agent
 
-Use `info({ signal })` to inspect a development agent with cancellation. The client validates the complete response before returning it:
+Use `info()` to inspect a development agent. The client parses and validates the complete response before returning it:
 
 ```ts
-const info = await client.info({ signal: abortController.signal });
+const info = await client.info();
 console.log(info.agent.name, info.agent.model.id);
 ```
 

@@ -113,11 +113,7 @@ export function createRemoteConnectionController(
         return connection;
       }
       restoreActiveCredentials = restoreCredentials;
-      const probe = await probeRemoteInfo({
-        client: options.client,
-        signal: operation.signal,
-        timeoutMs: options.probeTimeoutMs,
-      });
+      const probe = await probeRemoteInfo({ client: options.client });
       if (!isCurrent(operation.generation)) return connection;
       return update(probe);
     },
@@ -173,11 +169,7 @@ export function createRemoteConnectionController(
         update({ state: "auth-failed", challenge });
         return { kind: "failed", message };
       }
-      const verified = await probeRemoteInfo({
-        client: options.client,
-        signal: operation.signal,
-        timeoutMs: options.probeTimeoutMs,
-      });
+      const verified = await probeRemoteInfo({ client: options.client });
       if (!isCurrent(operation.generation)) {
         restoreCandidateCredentials();
         return { kind: "cancelled", completedMutations: preparation.completedMutations };

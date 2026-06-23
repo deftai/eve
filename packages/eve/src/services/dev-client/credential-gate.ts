@@ -68,17 +68,19 @@ export function createDevelopmentCredentialGate(serverUrl: string): DevelopmentC
     if (authorized.kind === "anonymous") return "";
 
     const resolution = await authorized.resolveToken();
+    const failure =
+      typeof resolution === "string" || resolution.kind === "resolved" ? undefined : resolution;
+    if (state === authorized) tokenFailure = failure;
     if (typeof resolution === "string") {
-      tokenFailure = undefined;
       return resolution.trim();
     }
 
-    tokenFailure = resolution.kind === "resolved" ? undefined : resolution;
     return resolution.kind === "resolved" ? resolution.token.trim() : "";
   };
 
   const resolveBypassHeaders = async (): Promise<Readonly<Record<string, string>>> => {
-    if (state.kind === "anonymous") return {};
+    const authorized = state;
+    if (authorized.kind === "anonymous") return {};
     const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
     return bypassSecret ? { [VERCEL_PROTECTION_BYPASS_HEADER]: bypassSecret } : {};
   };
