@@ -34,15 +34,13 @@ export function createSendFn<TState = undefined>(
       outputSchema,
     } = normalizeSendInput(input);
     const message = serializeUrlFilePartsInMessage(rawMessage);
-    let payload: DeliverPayload = {
+    const payload: DeliverPayload = {
       inputResponses,
       message,
       context,
       outputSchema,
+      allowEmptyDelivery,
     };
-    if (allowEmptyDelivery === true) {
-      payload = { ...payload, allowEmptyDelivery: true };
-    }
 
     try {
       const { sessionId } = await runtime.deliver({
@@ -71,14 +69,12 @@ export function createSendFn<TState = undefined>(
     const sessionAdapter = state
       ? { ...adapter, state: { ...adapter.state, ...(state as Record<string, unknown>) } }
       : adapter;
-    let runInput: RunInput["input"] = {
+    const runInput: RunInput["input"] = {
       message: message ?? "",
       context,
       outputSchema,
+      allowEmptyDelivery,
     };
-    if (allowEmptyDelivery === true) {
-      runInput = { ...runInput, allowEmptyDelivery: true };
-    }
 
     const handle = await runtime.run({
       adapter: sessionAdapter,
