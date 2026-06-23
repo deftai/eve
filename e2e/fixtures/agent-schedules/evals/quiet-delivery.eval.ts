@@ -11,9 +11,7 @@ export default defineEval({
 
     const session = await t.target.attachSession(sessionId);
     const skipped = session.events.find((event) => event.type === "delivery.skipped");
-    if (skipped?.data.source !== "tool") {
-      throw new Error("quiet-check did not explicitly skip delivery");
-    }
+    if (skipped === undefined) throw new Error("quiet-check did not skip delivery");
     if (
       session.events.some(
         (event) => event.type === "message.completed" && event.data.finishReason !== "tool-calls",

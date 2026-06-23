@@ -9,7 +9,7 @@ export default defineSchedule({
       receive(sink, {
         allowEmptyDelivery: true,
         auth: appAuth,
-        message: "Call `skip_delivery` exactly once. Do not write any response text.",
+        message: "There is nothing to report. Finish without delivering a channel message.",
         target: { id: "quiet-check" },
       }),
     );

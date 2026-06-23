@@ -18,7 +18,6 @@ import {
   getAllFrameworkToolNames,
   getFrameworkToolDefinitions,
 } from "#runtime/framework-tools/index.js";
-import { SKIP_DELIVERY_TOOL_NAME } from "#runtime/framework-tools/skip-delivery.js";
 import { type ResolvedAgentGraphBundle, ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
 import { createRuntimeHookRegistry } from "#runtime/hooks/registry.js";
 import { resolveAgent } from "#runtime/resolve-agent.js";
@@ -173,7 +172,6 @@ async function resolveRuntimeAgentNode(
     {
       reservedToolNames: [
         CODE_MODE_TOOL_NAME,
-        SKIP_DELIVERY_TOOL_NAME,
         WORKFLOW_TOOL_NAME,
         ...(frameworkToolNames.has(LOAD_SKILL_TOOL_NAME) ||
         authoredToolNames.has(LOAD_SKILL_TOOL_NAME)
@@ -217,7 +215,6 @@ async function resolveRuntimeAgentNode(
   const subagentRegistry = createRuntimeSubagentRegistry({
     reservedToolNames: [
       LOAD_SKILL_TOOL_NAME,
-      SKIP_DELIVERY_TOOL_NAME,
       ...toolRegistry.preparedTools.map((tool) => tool.name),
     ],
     subagents: await resolveRuntimeSubagents({

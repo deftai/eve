@@ -16,8 +16,8 @@ import type { ResolvedChannelDefinition } from "#runtime/types.js";
  */
 export interface CrossChannelReceiveOptions<TTarget = Record<string, unknown>> {
   /**
-   * Lets the model finish this turn without a channel message by calling the
-   * framework `skip_delivery` tool. Scoped to this turn only.
+   * Lets the model finish this turn without a channel message. Scoped to this
+   * turn only.
    */
   readonly allowEmptyDelivery?: boolean;
   readonly message: string | UserContent;

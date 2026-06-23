@@ -314,7 +314,6 @@ export interface MessageCompletedStreamEvent {
 export interface DeliverySkippedStreamEvent {
   data: {
     sequence: number;
-    source: "empty-output" | "tool";
     stepIndex: number;
     turnId: string;
   };
@@ -932,7 +931,6 @@ export function createMessageCompletedEvent(input: {
 /** Creates the event emitted when a turn intentionally skips channel delivery. */
 export function createDeliverySkippedEvent(input: {
   readonly sequence: number;
-  readonly source: DeliverySkippedStreamEvent["data"]["source"];
   readonly stepIndex: number;
   readonly turnId: string;
 }): DeliverySkippedStreamEvent {

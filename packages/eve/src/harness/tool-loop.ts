@@ -36,6 +36,7 @@ import {
   createCompactionRequestedEvent,
   createDeliverySkippedEvent,
   createInputRequestedEvent,
+  createMessageCompletedEvent,
   createResultCompletedEvent,
 } from "#protocol/message.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
@@ -150,12 +151,9 @@ import {
 } from "#shared/code-mode.js";
 import {
   buildFinalOutputTool,
+  buildOptionalDeliveryOutputTool,
   FINAL_OUTPUT_TOOL_NAME,
 } from "#runtime/framework-tools/final-output.js";
-import {
-  SKIP_DELIVERY_TOOL,
-  SKIP_DELIVERY_TOOL_NAME,
-} from "#runtime/framework-tools/skip-delivery.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type {
   CompactionConfig,
@@ -668,11 +666,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         }
       }
 
-      if (session.outputSchema !== undefined) {
-        flatTools[FINAL_OUTPUT_TOOL_NAME] = buildFinalOutputTool(session.outputSchema);
-      }
       if (session.allowEmptyDelivery === true) {
-        flatTools[SKIP_DELIVERY_TOOL_NAME] = SKIP_DELIVERY_TOOL;
+        flatTools[FINAL_OUTPUT_TOOL_NAME] = buildOptionalDeliveryOutputTool();
+      } else if (session.outputSchema !== undefined) {
+        flatTools[FINAL_OUTPUT_TOOL_NAME] = buildFinalOutputTool(session.outputSchema);
       }
 
       const modelTools =
@@ -746,11 +743,20 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const executeModelCall = async (): Promise<HarnessStepResult> => {
         if (emit) {
           const streamResult = await agent.stream({ messages: callMessages });
+          const streamEmit: NonNullable<ToolLoopHarnessConfig["handleEvent"]> =
+            session.allowEmptyDelivery === true
+              ? async (event) => {
+                  if (event.type === "message.appended" || event.type === "message.completed") {
+                    return;
+                  }
+                  await emit(event);
+                }
+              : emit;
           const {
             handledInlineToolResultCallIds,
             inlineAuthorizationResults,
             inlineToolResultParts,
-          } = await emitStreamContent(emit, emissionState, streamResult.fullStream);
+          } = await emitStreamContent(streamEmit, emissionState, streamResult.fullStream);
           const stepResult = await hooks.stepResult;
           if (isEmptyModelResponse(stepResult)) {
             throw new EmptyModelResponseError();
@@ -760,7 +766,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               ASK_QUESTION_TOOL_NAME,
               CODE_MODE_TOOL_NAME,
               FINAL_OUTPUT_TOOL_NAME,
-              SKIP_DELIVERY_TOOL_NAME,
             ]),
             handledInlineToolResultCallIds,
             tools: config.tools,
@@ -1576,19 +1581,8 @@ async function handleStepResult(input: {
   // executing tools: continuing the loop would leave the no-execute call as a
   // dangling tool_use the next provider call rejects, and drop the result.
   const calledFinalOutput =
-    nextSession.outputSchema !== undefined && extractFinalOutput(result) !== undefined;
-  const skippedDelivery = resolveSkippedDeliverySource(nextSession, result, stepOutput);
-
-  if (skippedDelivery !== null) {
-    return finishSkippedDelivery({
-      emissionState,
-      emit,
-      history: promptMessages,
-      mode: config.mode,
-      session: nextSession,
-      source: skippedDelivery,
-    });
-  }
+    (nextSession.outputSchema !== undefined || nextSession.allowEmptyDelivery === true) &&
+    (result.toolCalls ?? []).some((call) => call.toolName === FINAL_OUTPUT_TOOL_NAME);
 
   const continueLoop =
     !calledFinalOutput &&
@@ -1600,6 +1594,17 @@ async function handleStepResult(input: {
     }
 
     return { next: runStep, session: nextSession };
+  }
+
+  if (nextSession.allowEmptyDelivery === true) {
+    return finishOptionalDeliveryTurn({
+      emissionState,
+      emit,
+      history: promptMessages,
+      mode: config.mode,
+      result,
+      session: nextSession,
+    });
   }
 
   // `mode` is the fundamental terminal split: a task run must finish (an unmet
@@ -1633,6 +1638,11 @@ const OUTPUT_SCHEMA_NOT_FULFILLED = {
   message: "The agent could not produce a result matching the requested schema.",
 } as const;
 
+const DELIVERY_DECISION_NOT_FULFILLED = {
+  code: "DELIVERY_DECISION_NOT_FULFILLED",
+  message: "The agent could not produce a valid channel delivery decision.",
+} as const;
+
 /**
  * The structured value the model delivered by calling the framework
  * `final_output` tool, or `undefined` when the terminal turn ended in prose.
@@ -1642,27 +1652,59 @@ function extractFinalOutput(result: HarnessStepResult): JsonValue | undefined {
     ?.input as JsonValue | undefined;
 }
 
-function resolveSkippedDeliverySource(
-  session: HarnessSession,
-  result: HarnessStepResult,
-  stepOutput: string | null,
-): "empty-output" | "tool" | null {
-  if (session.allowEmptyDelivery !== true) return null;
-  if (
-    (result.toolCalls ?? []).some(
-      (call) => call.toolName === SKIP_DELIVERY_TOOL_NAME && !isInvalidToolCall(call),
-    )
-  ) {
-    return "tool";
+function extractOptionalDeliveryMessage(result: HarnessStepResult): string | null | undefined {
+  const structured = extractFinalOutput(result);
+  if (structured === null || Array.isArray(structured) || typeof structured !== "object") {
+    return undefined;
   }
-  if (
-    stepOutput === null &&
-    result.toolCalls.length === 0 &&
-    (result.finishReason === "stop" || result.finishReason === "length")
-  ) {
-    return "empty-output";
+  const message = (structured as JsonObject)["message"];
+  return typeof message === "string" || message === null ? message : undefined;
+}
+
+async function finishOptionalDeliveryTurn(input: {
+  readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
+  readonly emit?: ToolLoopHarnessConfig["handleEvent"];
+  readonly history: readonly ModelMessage[];
+  readonly mode: RunMode;
+  readonly result: HarnessStepResult;
+  readonly session: HarnessSession;
+}): Promise<StepResult> {
+  const message = extractOptionalDeliveryMessage(input.result);
+  if (message === null || message?.trim().length === 0) {
+    return finishSkippedDelivery(input);
   }
-  return null;
+  if (message !== undefined) {
+    return finishDeliveredMessage({ ...input, message });
+  }
+
+  let emissionState = input.emissionState;
+  let session: HarnessSession = { ...input.session, history: [...input.history] };
+  if (input.emit) {
+    if (input.mode === "task") {
+      await emitFailedStep(input.emit, emissionState, {
+        ...DELIVERY_DECISION_NOT_FULFILLED,
+        sessionId: session.sessionId,
+      });
+    } else {
+      emissionState = await emitRecoverableFailedTurn(
+        input.emit,
+        emissionState,
+        DELIVERY_DECISION_NOT_FULFILLED,
+      );
+      session = setHarnessEmissionState(session, emissionState);
+    }
+  }
+
+  return input.mode === "task"
+    ? {
+        next: {
+          done: true,
+          isError: true,
+          output: DELIVERY_DECISION_NOT_FULFILLED.message,
+        },
+        session,
+      }
+    : { next: null, session };
 }
 
 async function finishSkippedDelivery(input: {
@@ -1671,7 +1713,6 @@ async function finishSkippedDelivery(input: {
   readonly history: readonly ModelMessage[];
   readonly mode: RunMode;
   readonly session: HarnessSession;
-  readonly source: "empty-output" | "tool";
 }): Promise<StepResult> {
   const { allowEmptyDelivery: _allowEmptyDelivery, ...rest } = input.session;
   let session: HarnessSession = {
@@ -1687,7 +1728,6 @@ async function finishSkippedDelivery(input: {
     await input.emit(
       createDeliverySkippedEvent({
         sequence: emissionState.sequence,
-        source: input.source,
         stepIndex: emissionState.stepIndex,
         turnId: emissionState.turnId,
       }),
@@ -1698,6 +1738,39 @@ async function finishSkippedDelivery(input: {
 
   return input.mode === "task"
     ? { next: { done: true, output: "" }, session }
+    : { next: null, session };
+}
+
+async function finishDeliveredMessage(input: {
+  readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
+  readonly emit?: ToolLoopHarnessConfig["handleEvent"];
+  readonly history: readonly ModelMessage[];
+  readonly message: string;
+  readonly mode: RunMode;
+  readonly session: HarnessSession;
+}): Promise<StepResult> {
+  let session: HarnessSession = {
+    ...clearAllowEmptyDelivery(input.session),
+    history: [...input.history, { content: input.message, role: "assistant" }],
+  };
+  let emissionState = input.emissionState;
+
+  if (input.emit) {
+    await input.emit(
+      createMessageCompletedEvent({
+        finishReason: "stop",
+        message: input.message,
+        sequence: emissionState.sequence,
+        stepIndex: emissionState.stepIndex,
+        turnId: emissionState.turnId,
+      }),
+    );
+    emissionState = await emitTurnEpilogue(input.emit, emissionState, input.mode);
+    session = setHarnessEmissionState(session, emissionState);
+  }
+
+  return input.mode === "task"
+    ? { next: { done: true, output: input.message }, session }
     : { next: null, session };
 }
 

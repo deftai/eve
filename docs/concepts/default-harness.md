@@ -38,7 +38,6 @@ These ship with every agent, no imports. The harness shows the model the tool de
 | `agent`             | Delegate a subtask to a copy of itself (shares the parent sandbox + tools, fresh history/state).                                                                                                                    | App runtime   |
 | `load_skill`        | Pull an on-demand [skill](../skills)'s instructions into the current turn. Present only when the agent declares skills.                                                                                             | App runtime   |
 | `connection_search` | Discover tools across declared [connections](../connections); matched tools become directly callable. Present only when the agent declares connections.                                                             | App runtime   |
-| `skip_delivery`     | Complete without a channel message. Present only for turns started with `allowEmptyDelivery: true`.                                                                                                                 | App runtime   |
 
 Notes:
 

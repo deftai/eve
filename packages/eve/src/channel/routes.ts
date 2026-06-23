@@ -63,8 +63,8 @@ export type SendFn<TState = undefined> = (
 
 type BaseSendOptions = {
   /**
-   * Lets the model finish this turn without a channel message by calling the
-   * framework `skip_delivery` tool. Scoped to this turn only.
+   * Lets the model finish this turn without a channel message. Scoped to this
+   * turn only.
    */
   allowEmptyDelivery?: boolean;
   auth: SessionAuthContext | null;

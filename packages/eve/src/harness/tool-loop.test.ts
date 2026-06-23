@@ -325,6 +325,22 @@ function finalOutputResult(text: string, structured: unknown): Record<string, un
   };
 }
 
+function optionalDeliveryResult(message: unknown): Record<string, unknown> {
+  const toolCall = {
+    input: { message },
+    toolCallId: "final-output-1",
+    toolName: "final_output",
+    type: "tool-call",
+  };
+  return {
+    finishReason: "tool-calls",
+    response: { messages: [{ content: [toolCall], role: "assistant" }] },
+    text: "",
+    toolCalls: [toolCall],
+    toolResults: [],
+  };
+}
+
 function createPendingBashApprovalSession(): HarnessSession {
   return setPendingInputBatch({
     requests: [
@@ -531,15 +547,8 @@ describe("createToolLoopHarness", () => {
     ]);
   });
 
-  it("emits delivery.skipped for an opted-in empty turn", async () => {
-    setupMockAgent({
-      finishReason: "stop",
-      fullStreamParts: [{ finishReason: "stop", type: "finish-step" }],
-      response: { messages: [{ content: "", role: "assistant" }] },
-      text: "",
-      toolCalls: [],
-      toolResults: [],
-    });
+  it("offers final_output as the optional-delivery envelope", async () => {
+    setupMockAgent(optionalDeliveryResult(null));
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
@@ -547,30 +556,29 @@ describe("createToolLoopHarness", () => {
       message: "Check",
     });
 
-    expect(events.find((event) => event.type === "delivery.skipped")?.data).toMatchObject({
-      source: "empty-output",
+    const finalOutput = vi.mocked(ToolLoopAgent).mock.calls[0]?.[0].tools?.["final_output"];
+    expect(finalOutput).toMatchObject({
+      description: expect.stringMatching(/null or an empty string.*Do not answer in prose/s),
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          message: {
+            anyOf: [{ type: "string" }, { type: "null" }],
+            description: expect.any(String),
+          },
+        },
+        required: ["message"],
+        type: "object",
+      },
     });
+    expect(events.some((event) => event.type === "delivery.skipped")).toBe(true);
     expect(events.some((event) => event.type === "message.completed")).toBe(false);
+    expect(events.some((event) => event.type === "result.completed")).toBe(false);
     expect(result.session.allowEmptyDelivery).toBeUndefined();
   });
 
-  it("treats skip_delivery as a terminal control signal", async () => {
-    setupMockAgent({
-      finishReason: "tool-calls",
-      response: {
-        messages: [
-          {
-            content: [
-              { input: {}, toolCallId: "skip-1", toolName: "skip_delivery", type: "tool-call" },
-            ],
-            role: "assistant",
-          },
-        ],
-      },
-      text: "",
-      toolCalls: [{ input: {}, toolCallId: "skip-1", toolName: "skip_delivery" }],
-      toolResults: [],
-    });
+  it.each(["", " \n "])("skips an empty optional-delivery message", async (message) => {
+    setupMockAgent(optionalDeliveryResult(message));
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
@@ -578,22 +586,71 @@ describe("createToolLoopHarness", () => {
       message: "Check",
     });
 
-    expect(vi.mocked(ToolLoopAgent).mock.calls[0]?.[0]).toMatchObject({
-      tools: expect.objectContaining({ skip_delivery: expect.anything() }),
-    });
-    expect(events.find((event) => event.type === "delivery.skipped")?.data).toMatchObject({
-      source: "tool",
-    });
-    expect(events.some((event) => event.type === "actions.requested")).toBe(false);
-    expect(
-      events.some(
-        (event) => event.type === "message.completed" && event.data.finishReason !== "tool-calls",
-      ),
-    ).toBe(false);
+    expect(events.some((event) => event.type === "delivery.skipped")).toBe(true);
+    expect(events.some((event) => event.type === "message.completed")).toBe(false);
+    expect(events.some((event) => event.type === "result.completed")).toBe(false);
     expect(result.session.history.at(-1)).toEqual({
       content: "No channel message was delivered for this turn.",
       role: "assistant",
     });
+  });
+
+  it("delivers a non-empty optional-delivery message as plain text", async () => {
+    setupMockAgent(optionalDeliveryResult("Incident detected."));
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(createTestConfig("task", emit));
+
+    const result = await runStep(createTestSession({ allowEmptyDelivery: true }), {
+      message: "Check",
+    });
+
+    expect(result.next).toEqual({ done: true, output: "Incident detected." });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({ finishReason: "stop", message: "Incident detected." }),
+        type: "message.completed",
+      }),
+    );
+    expect(events.some((event) => event.type === "message.appended")).toBe(false);
+    expect(events.some((event) => event.type === "result.completed")).toBe(false);
+    expect(events.some((event) => event.type === "delivery.skipped")).toBe(false);
+    expect(result.session.history.at(-1)).toEqual({
+      content: "Incident detected.",
+      role: "assistant",
+    });
+  });
+
+  it.each([
+    [
+      "missing",
+      {
+        finishReason: "stop",
+        response: { messages: [{ content: "Plain prose.", role: "assistant" }] },
+        text: "Plain prose.",
+        toolCalls: [],
+        toolResults: [],
+      },
+    ],
+    ["malformed", optionalDeliveryResult(42)],
+  ])("fails recoverably when an optional-delivery decision is %s", async (_case, step) => {
+    setupMockAgent(step);
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+
+    const result = await runStep(createTestSession({ allowEmptyDelivery: true }), {
+      message: "Check",
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "DELIVERY_DECISION_NOT_FULFILLED" }),
+        type: "step.failed",
+      }),
+    );
+    expect(events.some((event) => event.type === "message.appended")).toBe(false);
+    expect(events.some((event) => event.type === "message.completed")).toBe(false);
+    expect(events.some((event) => event.type === "delivery.skipped")).toBe(false);
+    expect(result.session.history).toEqual([{ content: "Check", role: "user" }]);
   });
 
   it("keeps executable tools direct when code mode is disabled", async () => {
@@ -2792,7 +2849,7 @@ describe("createToolLoopHarness", () => {
     });
 
     it("reissues an empty 'other' response once within the same step and recovers", async () => {
-      setupFirstThenAgent(emptyResult, successResult);
+      setupFirstThenAgent(emptyResult, optionalDeliveryResult("Here is your answer."));
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const { emit, events } = createEventCollector();
       const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
