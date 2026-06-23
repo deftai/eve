@@ -185,6 +185,12 @@ export interface SlackChannelState {
    * resolution outcome.
    */
   pendingAuthMessageTs?: Record<string, string>;
+  /**
+   * Delivery policy for a run with no deliverable, seeded by
+   * `receive(slack, { target: { onEmpty } })`. Absent for interactive
+   * (mention/DM) sessions, which always suppress an empty final message.
+   */
+  onEmpty?: SlackEmptyDeliveryPolicy;
 }
 
 /**
@@ -226,6 +232,20 @@ export interface SlackChannelCredentials {
   readonly webhookVerifier?: SlackWebhookVerifier;
 }
 
+/**
+ * What a proactive (`receive`-started) session does when its run produces
+ * no deliverable — an empty or whitespace-only final assistant message.
+ *
+ * - `"suppress"` (default): post nothing, the same as an empty interactive turn.
+ * - `"heartbeat"`: post a short built-in confirmation line so the caller can
+ *   tell the run executed.
+ * - `{ heartbeat }`: post the given line instead of the built-in one.
+ *
+ * Lets a scheduled "check" task stay quiet on a no-op run while still offering
+ * an opt-in liveness signal, without the agent hand-rolling a sentinel string.
+ */
+export type SlackEmptyDeliveryPolicy = "suppress" | "heartbeat" | { readonly heartbeat: string };
+
 /** Target accepted by `receive(slack, { target })` for proactive sessions. */
 export interface SlackReceiveTarget {
   readonly channelId: string;
@@ -237,6 +257,11 @@ export interface SlackReceiveTarget {
    * exclusive with {@link threadTs}.
    */
   readonly initialMessage?: SlackInitialMessage;
+  /**
+   * Delivery policy for a run that finishes with no deliverable. Defaults to
+   * `"suppress"`. See {@link SlackEmptyDeliveryPolicy}.
+   */
+  readonly onEmpty?: SlackEmptyDeliveryPolicy;
 }
 
 /**
@@ -584,15 +609,18 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
         threadTs = posted.id;
       }
 
+      const state: SlackChannelState = {
+        channelId,
+        threadTs: threadTs || null,
+        teamId: null,
+        triggeringUserId: null,
+      };
+      if (receiveTarget.onEmpty !== undefined) state.onEmpty = receiveTarget.onEmpty;
+
       return send(input.message, {
         auth: input.auth,
         continuationToken: slackContinuationToken(channelId, threadTs),
-        state: {
-          channelId,
-          threadTs: threadTs || null,
-          teamId: null,
-          triggeringUserId: null,
-        },
+        state,
       });
     },
 

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import { defaultEvents } from "#public/channels/slack/defaults.js";
-import type { SlackChannelState, SlackEventContext } from "#public/channels/slack/slackChannel.js";
+import type {
+  SlackChannelEvents,
+  SlackChannelState,
+  SlackEventContext,
+} from "#public/channels/slack/slackChannel.js";
 
 const sessionCtx = {} as SessionContext;
 
@@ -183,5 +187,80 @@ describe("defaultEvents authorization.completed", () => {
     expect(request).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
     expect(postEphemeral).not.toHaveBeenCalled();
+  });
+});
+
+type MessageCompletedData = Parameters<NonNullable<SlackChannelEvents["message.completed"]>>[0];
+
+function messageCompletedEvent(
+  overrides: { finishReason?: MessageCompletedData["finishReason"]; message?: string | null } = {},
+): MessageCompletedData {
+  return {
+    finishReason: overrides.finishReason ?? "stop",
+    message: overrides.message === undefined ? "Here is the result." : overrides.message,
+    sequence: 1,
+    stepIndex: 0,
+    turnId: "turn_0",
+  };
+}
+
+describe("defaultEvents message.completed", () => {
+  it("posts a non-empty final message", async () => {
+    const { channel, post } = buildChannelStub();
+    await defaultEvents["message.completed"]!(messageCompletedEvent(), channel, sessionCtx);
+    expect(post).toHaveBeenCalledWith("Here is the result.");
+  });
+
+  it("suppresses an empty or whitespace-only final message by default", async () => {
+    for (const message of ["", "   \n  "]) {
+      const { channel, post } = buildChannelStub();
+      await defaultEvents["message.completed"]!(
+        messageCompletedEvent({ message }),
+        channel,
+        sessionCtx,
+      );
+      expect(post).not.toHaveBeenCalled();
+    }
+  });
+
+  it("posts the built-in heartbeat on an empty run when onEmpty is 'heartbeat'", async () => {
+    const { channel, post } = buildChannelStub({ onEmpty: "heartbeat" });
+    await defaultEvents["message.completed"]!(
+      messageCompletedEvent({ message: "" }),
+      channel,
+      sessionCtx,
+    );
+    expect(post).toHaveBeenCalledWith("✓ Ran — nothing new to report.");
+  });
+
+  it("posts a custom heartbeat line when onEmpty supplies one", async () => {
+    const { channel, post } = buildChannelStub({ onEmpty: { heartbeat: "✓ digest ran, no news" } });
+    await defaultEvents["message.completed"]!(
+      messageCompletedEvent({ message: "  " }),
+      channel,
+      sessionCtx,
+    );
+    expect(post).toHaveBeenCalledWith("✓ digest ran, no news");
+  });
+
+  it("posts real content even when onEmpty heartbeat is set", async () => {
+    const { channel, post } = buildChannelStub({ onEmpty: "heartbeat" });
+    await defaultEvents["message.completed"]!(
+      messageCompletedEvent({ message: "Found 3 new issues." }),
+      channel,
+      sessionCtx,
+    );
+    expect(post).toHaveBeenCalledWith("Found 3 new issues.");
+  });
+
+  it("buffers tool-call narration without posting or heartbeating", async () => {
+    const { channel, post } = buildChannelStub({ onEmpty: "heartbeat" });
+    await defaultEvents["message.completed"]!(
+      messageCompletedEvent({ finishReason: "tool-calls", message: "Checking the dashboard..." }),
+      channel,
+      sessionCtx,
+    );
+    expect(post).not.toHaveBeenCalled();
+    expect(channel.state.pendingToolCallMessage).toBe("Checking the dashboard...");
   });
 });

@@ -1454,6 +1454,20 @@ describe("slackChannel().receive", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("threads target.onEmpty into the seeded session state", async () => {
+    const send = vi.fn().mockResolvedValue({ id: "s", continuationToken: "ct" });
+    await buildReceive()(
+      {
+        message: "run the check",
+        target: { channelId: "C123", onEmpty: { heartbeat: "✓ ran, no news" } },
+        auth: null,
+      },
+      { send },
+    );
+    const [, options] = send.mock.calls[0]!;
+    expect(options.state.onEmpty).toEqual({ heartbeat: "✓ ran, no news" });
+  });
+
   it("posts the initial card before send and threads under its ts", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: true, ts: "1800000000.000900" }), {

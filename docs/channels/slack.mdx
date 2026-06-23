@@ -121,6 +121,22 @@ events: {
 
 Start a session without an inbound message through `receive(slack, { message, target, auth })` from a schedule `run` handler, or `args.receive(slack, ...)` from another channel. The proactive target shape is `{ channelId }`.
 
+Use `target.onEmpty` to control what a proactive run does when it finishes with no deliverable — an empty or whitespace-only final assistant message. This is the same situation an interactive turn handles by posting nothing; `onEmpty` makes that an explicit, per-session choice for runs (typically scheduled "check" tasks) where silence is ambiguous:
+
+- `"suppress"` (default) — post nothing, exactly as today.
+- `"heartbeat"` — post a short built-in confirmation line so the caller can tell the run executed.
+- `{ heartbeat: "…" }` — post your own line instead of the built-in one.
+
+```ts
+await receive(slack, {
+  message: "Check for new incidents and report only if there are any.",
+  target: { channelId, onEmpty: "heartbeat" },
+  auth,
+});
+```
+
+The agent still decides when there is nothing to report — instruct it to end such a turn with an empty message, and the channel applies the policy. No sentinel string required.
+
 ### Attachments
 
 Inbound files behind authenticated Slack URLs are staged with `fetchFile`. See [File uploads](./custom#file-uploads) for the `fetchFile` contract.

@@ -16,12 +16,27 @@ import type {
   SlackChannelEvents,
   SlackChannelInternalEvents,
   SlackContext,
+  SlackEmptyDeliveryPolicy,
   SlackMentionResult,
 } from "#public/channels/slack/slackChannel.js";
 
 const log = createLogger("slack.defaults");
 const REASONING_TYPING_REFRESH_INTERVAL_MS = 5_000;
 const REASONING_TYPING_MIN_PROGRESS_CHARS = 4;
+const DEFAULT_EMPTY_HEARTBEAT = "✓ Ran — nothing new to report.";
+
+/**
+ * Resolves the heartbeat line for a run that produced no deliverable, or
+ * `null` to post nothing. `"suppress"` and an absent policy both suppress.
+ */
+function resolveEmptyHeartbeat(policy: SlackEmptyDeliveryPolicy | undefined): string | null {
+  if (policy === "heartbeat") return DEFAULT_EMPTY_HEARTBEAT;
+  if (typeof policy === "object") {
+    const text = policy.heartbeat.trim();
+    return text.length > 0 ? text : DEFAULT_EMPTY_HEARTBEAT;
+  }
+  return null;
+}
 
 /**
  * Workspace-scoped projection of the Slack actor that produced
@@ -162,7 +177,14 @@ export const defaultEvents: SlackChannelInternalEvents = {
       return;
     }
     channel.state.pendingToolCallMessage = null;
-    if (event.message) await channel.thread.post(event.message);
+    if (event.message && event.message.trim().length > 0) {
+      await channel.thread.post(event.message);
+      return;
+    }
+    // No deliverable: suppress by default, or post the opt-in heartbeat a
+    // proactive (receive-started) session asked for via target.onEmpty.
+    const heartbeat = resolveEmptyHeartbeat(channel.state.onEmpty);
+    if (heartbeat) await channel.thread.post(heartbeat);
   },
 
   async "turn.failed"(event, channel, _ctx) {

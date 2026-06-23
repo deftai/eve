@@ -18,6 +18,7 @@ export {
   type SlackChannelEvents,
   type SlackChannelState,
   type SlackContext,
+  type SlackEmptyDeliveryPolicy,
   type SlackEventContext,
   type SlackHandle,
   type SlackInboundResult,
