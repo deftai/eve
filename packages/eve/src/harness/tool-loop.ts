@@ -107,6 +107,7 @@ import {
 } from "#harness/authorization.js";
 import { readToolInterrupt } from "#harness/tool-interrupts.js";
 import { createAuthorizationRequiredEvent } from "#protocol/message.js";
+import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import {
   classifyModelCallError,
   EmptyModelResponseError,
@@ -1670,13 +1671,46 @@ async function finishOptionalDeliveryTurn(input: {
   readonly session: HarnessSession;
 }): Promise<StepResult> {
   const message = extractOptionalDeliveryMessage(input.result);
+
   if (message === null || message?.trim().length === 0) {
-    return finishSkippedDelivery(input);
-  }
-  if (message !== undefined) {
-    return finishDeliveredMessage({ ...input, message });
+    return finishBufferedDelivery({
+      emissionState: input.emissionState,
+      emit: input.emit,
+      event: createDeliverySkippedEvent({
+        sequence: input.emissionState.sequence,
+        stepIndex: input.emissionState.stepIndex,
+        turnId: input.emissionState.turnId,
+      }),
+      history: input.history,
+      historyContent: "No channel message was delivered for this turn.",
+      mode: input.mode,
+      output: "",
+      session: input.session,
+    });
   }
 
+  if (message !== undefined) {
+    return finishBufferedDelivery({
+      emissionState: input.emissionState,
+      emit: input.emit,
+      event: createMessageCompletedEvent({
+        finishReason: "stop",
+        message,
+        sequence: input.emissionState.sequence,
+        stepIndex: input.emissionState.stepIndex,
+        turnId: input.emissionState.turnId,
+      }),
+      history: input.history,
+      historyContent: message,
+      mode: input.mode,
+      output: message,
+      session: input.session,
+    });
+  }
+
+  // The model neither delivered a message nor cleanly declined. Keep
+  // `allowEmptyDelivery` set so a recoverable retry still owes a delivery
+  // decision, and drop the malformed response from history.
   let emissionState = input.emissionState;
   let session: HarnessSession = { ...input.session, history: [...input.history] };
   if (input.emit) {
@@ -1707,70 +1741,36 @@ async function finishOptionalDeliveryTurn(input: {
     : { next: null, session };
 }
 
-async function finishSkippedDelivery(input: {
+/**
+ * Closes an opted-in turn that reached a clean delivery decision: it appends
+ * `historyContent` as the assistant turn, emits the supplied terminal event
+ * (`delivery.skipped` or a synthetic `message.completed`), and clears the
+ * run-scoped opt-in so the decision stays scoped to this turn.
+ */
+async function finishBufferedDelivery(input: {
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
+  readonly event: HandleMessageStreamEvent;
   readonly history: readonly ModelMessage[];
+  readonly historyContent: string;
   readonly mode: RunMode;
-  readonly session: HarnessSession;
-}): Promise<StepResult> {
-  const { allowEmptyDelivery: _allowEmptyDelivery, ...rest } = input.session;
-  let session: HarnessSession = {
-    ...rest,
-    history: [
-      ...input.history,
-      { content: "No channel message was delivered for this turn.", role: "assistant" },
-    ],
-  };
-  let emissionState = input.emissionState;
-
-  if (input.emit) {
-    await input.emit(
-      createDeliverySkippedEvent({
-        sequence: emissionState.sequence,
-        stepIndex: emissionState.stepIndex,
-        turnId: emissionState.turnId,
-      }),
-    );
-    emissionState = await emitTurnEpilogue(input.emit, emissionState, input.mode);
-    session = setHarnessEmissionState(session, emissionState);
-  }
-
-  return input.mode === "task"
-    ? { next: { done: true, output: "" }, session }
-    : { next: null, session };
-}
-
-async function finishDeliveredMessage(input: {
-  readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
-  readonly emit?: ToolLoopHarnessConfig["handleEvent"];
-  readonly history: readonly ModelMessage[];
-  readonly message: string;
-  readonly mode: RunMode;
+  readonly output: string;
   readonly session: HarnessSession;
 }): Promise<StepResult> {
   let session: HarnessSession = {
     ...clearAllowEmptyDelivery(input.session),
-    history: [...input.history, { content: input.message, role: "assistant" }],
+    history: [...input.history, { content: input.historyContent, role: "assistant" }],
   };
   let emissionState = input.emissionState;
 
   if (input.emit) {
-    await input.emit(
-      createMessageCompletedEvent({
-        finishReason: "stop",
-        message: input.message,
-        sequence: emissionState.sequence,
-        stepIndex: emissionState.stepIndex,
-        turnId: emissionState.turnId,
-      }),
-    );
+    await input.emit(input.event);
     emissionState = await emitTurnEpilogue(input.emit, emissionState, input.mode);
     session = setHarnessEmissionState(session, emissionState);
   }
 
   return input.mode === "task"
-    ? { next: { done: true, output: input.message }, session }
+    ? { next: { done: true, output: input.output }, session }
     : { next: null, session };
 }
 
@@ -1832,7 +1832,6 @@ async function finishTaskTurn(input: {
   let { emissionState, session } = input;
 
   if (schema === undefined) {
-    session = clearAllowEmptyDelivery(session);
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "task");
       session = setHarnessEmissionState(session, emissionState);
@@ -1879,7 +1878,6 @@ async function finishConversationTurn(input: {
   let { emissionState, session } = input;
 
   if (schema === undefined) {
-    session = clearAllowEmptyDelivery(session);
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "conversation");
       session = setHarnessEmissionState(session, emissionState);

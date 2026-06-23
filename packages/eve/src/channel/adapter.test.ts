@@ -99,4 +99,16 @@ describe("ChannelAdapter helpers", () => {
   it("defaultDeliverResult returns undefined when the payload is empty", () => {
     expect(defaultDeliverResult({})).toBeUndefined();
   });
+
+  it("defaultDeliverResult treats empty inputResponses/context arrays as absent", () => {
+    expect(defaultDeliverResult({ inputResponses: [] })).toBeUndefined();
+    expect(defaultDeliverResult({ context: [] })).toBeUndefined();
+    expect(defaultDeliverResult({ inputResponses: [], context: [] })).toBeUndefined();
+  });
+
+  it("defaultDeliverResult forwards an allowEmptyDelivery-only payload", () => {
+    expect(defaultDeliverResult({ allowEmptyDelivery: true })).toEqual({
+      allowEmptyDelivery: true,
+    });
+  });
 });

@@ -196,11 +196,16 @@ export function defaultDeliverResult(payload: DeliverPayload): StepInput | undef
     allowEmptyDelivery: payload.allowEmptyDelivery,
   };
 
-  if (Object.values(input).every((v) => v === undefined)) {
-    return undefined;
-  }
+  // Empty arrays carry nothing to deliver, so they count as absent: a payload
+  // with only `inputResponses: []`/`context: []` re-parks without a model turn.
+  const hasContent =
+    input.message !== undefined ||
+    input.outputSchema !== undefined ||
+    input.allowEmptyDelivery !== undefined ||
+    (input.inputResponses?.length ?? 0) > 0 ||
+    (input.context?.length ?? 0) > 0;
 
-  return input;
+  return hasContent ? input : undefined;
 }
 
 /**

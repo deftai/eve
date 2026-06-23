@@ -467,20 +467,22 @@ export function resolveAllowEmptyDelivery(input: {
   readonly input: StepInput | undefined;
   readonly session: HarnessSession;
 }): HarnessSession {
-  const allowEmptyDelivery = input.input?.allowEmptyDelivery;
-  if (allowEmptyDelivery === undefined) {
-    if (input.input === undefined || input.input.runtimeActionResults !== undefined) {
-      return input.session;
-    }
-    const { allowEmptyDelivery: _allowEmptyDelivery, ...session } = input.session;
-    return session;
+  const requested = input.input?.allowEmptyDelivery;
+
+  // A continuation (or a step with no new input) preserves whatever the
+  // run-scoped flag already is; only a fresh delivery can change it.
+  if (
+    requested === undefined &&
+    (input.input === undefined || input.input.runtimeActionResults !== undefined)
+  ) {
+    return input.session;
   }
 
-  if (allowEmptyDelivery && input.session.outputSchema !== undefined) {
+  if (requested && input.session.outputSchema !== undefined) {
     throw new Error("allowEmptyDelivery cannot be combined with outputSchema.");
   }
 
-  if (allowEmptyDelivery) return { ...input.session, allowEmptyDelivery: true };
+  if (requested) return { ...input.session, allowEmptyDelivery: true };
 
   const { allowEmptyDelivery: _allowEmptyDelivery, ...session } = input.session;
   return session;
