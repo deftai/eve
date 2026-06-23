@@ -77,7 +77,7 @@ export default defineSchedule({
 });
 ```
 
-- `receive(channel, { message, target, auth, outputSchema? })`: starts a session on another channel. Same contract as a route handler's `args.receive`; `outputSchema` accepts Standard Schema or raw JSON Schema for this turn.
+- `receive(channel, { message, target, auth, outputSchema? })`: starts a session on another channel. Same contract as a route handler's `args.receive`; `outputSchema` accepts Standard JSON Schema (for example, Zod 4) or raw JSON Schema for this turn.
 - `waitUntil(promise)`: extends the cron task's lifetime so the parked session and any in-flight fetches settle before the task ends. Wrap the `receive` call in it.
 - `appAuth`: the app principal (`{ authenticator: "app", principalId: "eve:app", principalType: "runtime" }`). Pass it as `receive(..., { auth: appAuth })` for work the agent does on its own behalf.
 
@@ -113,7 +113,7 @@ export default defineSchedule({
 });
 ```
 
-Adding a schema does not change the target's run mode or durability. The schema applies only to the delivered turn, and successful structured completion emits `result.completed` for an [agent hook](./guides/hooks) or session event consumer.
+Adding a schema does not change the target's run mode or durability. The schema applies only to the delivered turn, and successful structured completion emits `result.completed` for an [agent hook](./guides/hooks) or session event consumer. `receive(...)` still resolves to a `Session`, so read the structured value asynchronously from that event rather than from the return value.
 
 ## Trigger a schedule while iterating
 

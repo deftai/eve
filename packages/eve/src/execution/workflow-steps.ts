@@ -441,9 +441,9 @@ export function reconcileSessionContinuationToken(
  * agent is invoked as a function (subagent / schedule / job), i.e. task mode.
  * A conversation run with no run-scoped schema enforces nothing. Fresh
  * conversation deliveries replace the previous turn's policy. Runtime-owned
- * continuation steps and HITL responses preserve whatever is already in
- * effect because their callers cannot attach the original run-scoped schema
- * again.
+ * continuation steps and pending HITL resolution preserve whatever is already
+ * in effect because their callers cannot attach the original run-scoped
+ * schema again.
  */
 export function resolveEffectiveOutputSchema(input: {
   readonly agentOutputSchema: JsonObject | undefined;
@@ -460,7 +460,7 @@ export function resolveEffectiveOutputSchema(input: {
   if (
     stepInput === undefined ||
     stepInput.runtimeActionResults !== undefined ||
-    (stepInput.inputResponses?.length ?? 0) > 0
+    hasPendingInputBatch(session.state)
   ) {
     return session;
   }

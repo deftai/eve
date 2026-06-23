@@ -26,7 +26,9 @@ export default defineEval({
       !isRecord(result) ||
       typeof result.title !== "string" ||
       typeof result.count !== "number" ||
-      !Number.isInteger(result.count)
+      !Number.isInteger(result.count) ||
+      Object.keys(result).some((key) => key !== "count" && key !== "title") ||
+      Object.keys(result).length !== 2
     ) {
       throw new Error(`Unexpected structured result: ${JSON.stringify(result)}`);
     }

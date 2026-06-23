@@ -7,6 +7,7 @@ import { ContextKey } from "#context/key.js";
 import { AuthKey, ContinuationTokenKey, ModeKey, SessionIdKey } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { serializeContext } from "#context/serialize.js";
+import { setPendingInputBatch } from "#harness/input-requests.js";
 import { setPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import type { HarnessSession, StepResult } from "#harness/types.js";
 import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
@@ -131,7 +132,11 @@ const threadContextAdapter: ChannelAdapter = {
     const thread = adapterCtx.ctx.ensure(ThreadKey, () => "unset");
     const message = payload.message ?? "";
 
-    return { message: `thread=${thread}; user=${message}`, outputSchema: payload.outputSchema };
+    return {
+      inputResponses: payload.inputResponses,
+      message: `thread=${thread}; user=${message}`,
+      outputSchema: payload.outputSchema,
+    };
   },
 };
 
@@ -521,7 +526,7 @@ describe("turnStep", () => {
     expect(second.serializedContext[ThreadKey.name]).toBe("alpha");
   });
 
-  it("does not leak a schema retained by a failed turn into the next delivery", async () => {
+  it("does not let stale input responses leak a failed turn's schema into the next delivery", async () => {
     const outputSchema = {
       properties: { assessment: { type: "string" } },
       required: ["assessment"],
@@ -579,7 +584,12 @@ describe("turnStep", () => {
     await turnStep({
       input: {
         kind: "deliver",
-        payloads: [{ message: "answer normally" }],
+        payloads: [
+          {
+            inputResponses: [{ optionId: "approve", requestId: "stale-approval" }],
+            message: "answer normally",
+          },
+        ],
       },
       parentWritable,
       serializedContext: first.serializedContext,
@@ -1033,7 +1043,7 @@ describe("resolveEffectiveOutputSchema", () => {
   });
 
   it("preserves the caller's run schema across a conversation-mode HITL response", () => {
-    const session = createStubSession({ outputSchema: runSchema });
+    const session = createPendingInputSession(createStubSession({ outputSchema: runSchema }));
     const resolved = resolveEffectiveOutputSchema({
       agentOutputSchema: agentSchema,
       input: { inputResponses: [{ optionId: "approve", requestId: "approval-1" }] },
@@ -1044,10 +1054,57 @@ describe("resolveEffectiveOutputSchema", () => {
   });
 
   it("preserves the caller's run schema across a task-mode HITL response", () => {
-    const session = createStubSession({ outputSchema: runSchema });
+    const session = createPendingInputSession(createStubSession({ outputSchema: runSchema }));
     const resolved = resolveEffectiveOutputSchema({
       agentOutputSchema: agentSchema,
       input: { inputResponses: [{ optionId: "approve", requestId: "approval-1" }] },
+      mode: "task",
+      session,
+    });
+    expect(resolved).toBe(session);
+  });
+
+  it("preserves the caller's run schema when a message resolves pending HITL", () => {
+    const session = createPendingInputSession(createStubSession({ outputSchema: runSchema }));
+    const resolved = resolveEffectiveOutputSchema({
+      agentOutputSchema: agentSchema,
+      input: { message: "continue without approving" },
+      mode: "conversation",
+      session,
+    });
+    expect(resolved).toBe(session);
+  });
+
+  it("clears a failed turn's schema when non-empty input responses are stale", () => {
+    const resolved = resolveEffectiveOutputSchema({
+      agentOutputSchema: agentSchema,
+      input: {
+        inputResponses: [{ optionId: "approve", requestId: "stale-approval" }],
+        message: "start a fresh turn",
+      },
+      mode: "conversation",
+      session: createStubSession({ outputSchema: runSchema }),
+    });
+    expect(resolved.outputSchema).toBeUndefined();
+  });
+
+  it("clears a failed turn's schema for stale response-only input", () => {
+    const resolved = resolveEffectiveOutputSchema({
+      agentOutputSchema: agentSchema,
+      input: {
+        inputResponses: [{ text: "late reply", requestId: "stale-question" }],
+      },
+      mode: "conversation",
+      session: createStubSession({ outputSchema: runSchema }),
+    });
+    expect(resolved.outputSchema).toBeUndefined();
+  });
+
+  it("preserves the in-flight policy for a pending context-only delivery", () => {
+    const session = createPendingInputSession(createStubSession({ outputSchema: runSchema }));
+    const resolved = resolveEffectiveOutputSchema({
+      agentOutputSchema: agentSchema,
+      input: { context: ["delivery context"] },
       mode: "task",
       session,
     });
@@ -1063,4 +1120,39 @@ describe("resolveEffectiveOutputSchema", () => {
     });
     expect(resolved.outputSchema).toEqual(agentSchema);
   });
+
+  it("clears stale task state on a fresh delivery when the agent has no schema", () => {
+    const resolved = resolveEffectiveOutputSchema({
+      agentOutputSchema: undefined,
+      input: { message: "run the task" },
+      mode: "task",
+      session: createStubSession({ outputSchema: runSchema }),
+    });
+    expect(resolved.outputSchema).toBeUndefined();
+  });
 });
+
+function createPendingInputSession(session: HarnessSession): HarnessSession {
+  return setPendingInputBatch({
+    requests: [
+      {
+        action: {
+          callId: "approval-call",
+          input: {},
+          kind: "tool-call",
+          toolName: "protected-action",
+        },
+        allowFreeform: false,
+        display: "confirmation",
+        options: [
+          { id: "approve", label: "Approve" },
+          { id: "deny", label: "Deny" },
+        ],
+        prompt: "Approve the protected action?",
+        requestId: "approval-1",
+      },
+    ],
+    responseMessages: [],
+    session,
+  });
+}

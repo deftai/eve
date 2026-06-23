@@ -14,16 +14,15 @@ import type { JsonObject } from "#shared/json.js";
 type OutputSchemaDefinition = StandardJSONSchemaV1<unknown, unknown> | JsonObject;
 
 /**
- * Options accepted by {@link CrossChannelReceiveFn}. Mirrors the input
- * argument of a channel's authored `receive(input, { send })` hook —
- * the runtime constructs `send` internally so route-handler callers
- * only supply the platform target, payload, auth, and optional turn policy.
+ * Options accepted by {@link CrossChannelReceiveFn}. Includes the fields from
+ * a channel's authored `receive(input, { send })` input plus optional
+ * framework-managed turn policy. The runtime constructs `send` internally.
  */
 export interface CrossChannelReceiveOptions<TTarget = Record<string, unknown>> {
   readonly message: string | UserContent;
   readonly target: TTarget;
   readonly auth: SessionAuthContext | null;
-  /** Standard Schema or raw JSON Schema required for this turn's result. */
+  /** Standard JSON Schema or raw JSON Schema required for this turn's result. */
   readonly outputSchema?: OutputSchemaDefinition;
 }
 

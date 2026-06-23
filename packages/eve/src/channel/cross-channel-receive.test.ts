@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 
 import { CHANNEL_SENTINEL, type CompiledChannel } from "#channel/compiled-channel.js";
@@ -114,7 +115,7 @@ describe("createCrossChannelReceiveFn", () => {
     expect(typeof ctx.send).toBe("function");
   });
 
-  it("normalizes and injects a Standard Schema when resuming a session", async () => {
+  it("normalizes and injects Standard JSON Schema when resuming a session", async () => {
     const normalizedSchema = {
       additionalProperties: false,
       properties: { summary: { type: "string" } },
@@ -154,7 +155,35 @@ describe("createCrossChannelReceiveFn", () => {
     );
   });
 
-  it("rejects an unsupported Standard Schema before invoking the target receive hook", async () => {
+  it("accepts and normalizes a Zod schema through the public receive type", async () => {
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeForwardingChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, {
+      auth: null,
+      message: "assess this",
+      outputSchema: z.object({
+        summary: z.string(),
+        verdict: z.enum(["approve", "reject"]),
+      }),
+      target: {},
+    });
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload.outputSchema).toEqual({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      additionalProperties: false,
+      properties: {
+        summary: { type: "string" },
+        verdict: { enum: ["approve", "reject"], type: "string" },
+      },
+      required: ["summary", "verdict"],
+      type: "object",
+    });
+  });
+
+  it("rejects unsupported Standard JSON Schema before invoking the target receive hook", async () => {
     const outputSchema: StandardJSONSchemaV1 = {
       "~standard": {
         jsonSchema: {
@@ -261,6 +290,56 @@ describe("createCrossChannelReceiveFn", () => {
     expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload.outputSchema).toEqual(
       channelSchema,
     );
+  });
+
+  it("keeps schemas isolated between concurrent receive invocations", async () => {
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeForwardingChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+    const firstSchema = { properties: { first: { type: "string" } }, type: "object" } as const;
+    const secondSchema = { properties: { second: { type: "number" } }, type: "object" } as const;
+
+    await Promise.all([
+      fn(target.definition, {
+        auth: null,
+        message: "first",
+        outputSchema: firstSchema,
+        target: {},
+      }),
+      fn(target.definition, {
+        auth: null,
+        message: "second",
+        outputSchema: secondSchema,
+        target: {},
+      }),
+    ]);
+
+    const payloads = vi.mocked(runtime.deliver).mock.calls.map(([input]) => input.payload);
+    expect(payloads).toEqual([
+      expect.objectContaining({ message: "first", outputSchema: firstSchema }),
+      expect.objectContaining({ message: "second", outputSchema: secondSchema }),
+    ]);
+  });
+
+  it("does not carry an outer schema into a later schema-free receive", async () => {
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeForwardingChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, {
+      auth: null,
+      message: "structured",
+      outputSchema: { type: "object" },
+      target: {},
+    });
+    await fn(target.definition, { auth: null, message: "plain", target: {} });
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload.outputSchema).toEqual({
+      type: "object",
+    });
+    expect(vi.mocked(runtime.deliver).mock.calls[1]![0].payload.outputSchema).toBeUndefined();
   });
 
   it("injects the outer schema into structured user content", async () => {

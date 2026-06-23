@@ -95,15 +95,11 @@ export default defineSandbox({
   },
   {
     descriptor: CROSS_CHANNEL_OUTPUT_SCHEMA_PORTABILITY_DESCRIPTOR,
-    include: [
-      "src/public/definitions/defineChannel.ts",
-      "src/public/definitions/schedule.ts",
-      "src/public/schedules/index.ts",
-    ],
+    include: ["src/public/channels/index.ts", "src/public/schedules/index.ts"],
     name: "lets tsc typecheck structured cross-channel receives from routes and schedules",
     packageExports: {
       "./channels": {
-        types: "./dist/src/public/definitions/defineChannel.d.ts",
+        types: "./dist/src/public/channels/index.d.ts",
       },
       "./schedules": {
         types: "./dist/src/public/schedules/index.d.ts",
