@@ -188,39 +188,19 @@ export type ChannelAdapter<TCtx extends ChannelAdapterContext<any> = ChannelAdap
  * harness even when the channel has no bespoke deliver logic.
  */
 export function defaultDeliverResult(payload: DeliverPayload): StepInput | undefined {
-  let options: Pick<StepInput, "allowEmptyDelivery" | "outputSchema"> = {};
-  if (payload.allowEmptyDelivery !== undefined) {
-    options = { ...options, allowEmptyDelivery: payload.allowEmptyDelivery };
-  }
-  if (payload.outputSchema !== undefined) {
-    options = { ...options, outputSchema: payload.outputSchema };
-  }
-  if (payload.message !== undefined) {
-    return {
-      ...options,
-      inputResponses: payload.inputResponses,
-      message: payload.message,
-      context: payload.context,
-    };
+  const input: StepInput = {
+    inputResponses: payload.inputResponses,
+    message: payload.message,
+    context: payload.context,
+    outputSchema: payload.outputSchema,
+    allowEmptyDelivery: payload.allowEmptyDelivery,
+  };
+
+  if (Object.values(input).every((v) => v === undefined)) {
+    return undefined;
   }
 
-  if (payload.inputResponses !== undefined && payload.inputResponses.length > 0) {
-    return {
-      ...options,
-      inputResponses: payload.inputResponses,
-      context: payload.context,
-    };
-  }
-
-  if (payload.context !== undefined && payload.context.length > 0) {
-    return { ...options, context: payload.context };
-  }
-
-  if (payload.outputSchema !== undefined) {
-    return options;
-  }
-
-  return undefined;
+  return input;
 }
 
 /**
