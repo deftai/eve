@@ -31,7 +31,14 @@ describe("isVercelAuthChallenge", () => {
     expect(isVercelAuthChallenge({ body: VERCEL_SSO_CHALLENGE_BODY, status: 401 })).toBe(true);
   });
 
-  it("requires HTTP 401 and the complete Vercel challenge signature", () => {
+  it("detects the 403 Vercel serves to automated, non-browser clients", () => {
+    // `eve dev --url` is a non-browser client; Vercel fronts it with 403,
+    // not the 401 a browser-like request receives.
+    expect(isVercelAuthChallenge(new ClientError(403, VERCEL_SSO_CHALLENGE_BODY))).toBe(true);
+    expect(isVercelAuthChallenge({ body: VERCEL_SSO_CHALLENGE_BODY, status: 403 })).toBe(true);
+  });
+
+  it("requires a challenge status and the complete Vercel challenge signature", () => {
     expect(isVercelAuthChallenge(new ClientError(500, VERCEL_SSO_CHALLENGE_BODY))).toBe(false);
     expect(
       isVercelAuthChallenge(new ClientError(401, "<title>Authentication Required</title>")),

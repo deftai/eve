@@ -19,14 +19,17 @@ import type { DevelopmentOidcTokenFailure } from "#services/dev-client/request-h
 import { isObject } from "#shared/guards.js";
 
 /**
- * Substrings that uniquely identify the Vercel Deployment Protection
+ * Substrings that together identify the Vercel Deployment Protection
  * SSO challenge page. The page is generated server-side by Vercel and
- * its markup includes a stable `<title>` plus the SSO redirect URL.
+ * its markup includes a stable `<title>`, the SSO redirect URL, and the
+ * "Vercel Authentication" link.
  *
- * Substring matching (rather than parsing the HTML) is intentional:
- * the page changes shape over time but these tokens have remained
- * stable, and a forgiving matcher keeps `eve dev` resilient when
- * minor markup tweaks ship.
+ * Substring matching (rather than parsing the HTML) is intentional, but
+ * we require the *complete* set rather than any single marker: the
+ * `<title>Authentication Required</title>` token alone is common to
+ * generic reverse-proxy 401/403 pages, so matching on it in isolation
+ * would misclassify unrelated auth failures as a Vercel challenge and
+ * send the user down the wrong remediation path.
  */
 const VERCEL_AUTH_CHALLENGE_MARKERS: readonly string[] = [
   "vercel.com/sso-api",
@@ -35,11 +38,11 @@ const VERCEL_AUTH_CHALLENGE_MARKERS: readonly string[] = [
 ];
 
 /**
- * Heuristic: returns `true` when the response body looks like a
- * Vercel Deployment Protection SSO challenge.
- *
- * Matching is substring-based against {@link VERCEL_AUTH_CHALLENGE_MARKERS}
- * so the CLI keeps degrading gracefully when Vercel tweaks the page.
+ * Heuristic: returns `true` when the response body carries the full
+ * {@link VERCEL_AUTH_CHALLENGE_MARKERS} signature of a Vercel Deployment
+ * Protection SSO challenge. Requiring every marker trades resilience to
+ * markup tweaks for precision — see the constant's note on why a single
+ * marker is not enough.
  */
 function bodyLooksLikeVercelAuthChallenge(body: string): boolean {
   return body.length > 0 && VERCEL_AUTH_CHALLENGE_MARKERS.every((marker) => body.includes(marker));
@@ -60,15 +63,28 @@ function bodyLooksLikeVercelAuthChallenge(body: string): boolean {
  */
 export function isVercelAuthChallenge(error: unknown): boolean {
   if (error instanceof ClientError) {
-    return error.status === 401 && bodyLooksLikeVercelAuthChallenge(error.body);
+    return isVercelChallengeStatus(error.status) && bodyLooksLikeVercelAuthChallenge(error.body);
   }
 
   return (
     isObject(error) &&
-    error.status === 401 &&
+    typeof error.status === "number" &&
+    isVercelChallengeStatus(error.status) &&
     typeof error.body === "string" &&
     bodyLooksLikeVercelAuthChallenge(error.body)
   );
+}
+
+/**
+ * Vercel fronts a protected deployment with the SSO challenge under two
+ * statuses: `401` for browser-like/server-side calls and `403` for
+ * automated, non-browser clients — which is exactly what `eve dev --url`
+ * is. Both must be recognized, or the most common case (a `403` to the
+ * CLI) silently degrades to a generic "unavailable" instead of the
+ * Deployment Protection auth prompt.
+ */
+function isVercelChallengeStatus(status: number): boolean {
+  return status === 401 || status === 403;
 }
 
 /**
