@@ -114,11 +114,19 @@ export default defineSandbox({
   },
   {
     descriptor: GITHUB_ROUTE_PORTABILITY_DESCRIPTOR,
-    include: ["src/public/channels/github/index.ts", "src/public/definitions/defineChannel.ts"],
-    name: "lets tsc typecheck a default-exported githubChannel without extra annotations",
+    include: [
+      "src/public/channels/github/index.ts",
+      "src/public/definitions/defineChannel.ts",
+      "src/public/definitions/schedule.ts",
+      "src/public/schedules/index.ts",
+    ],
+    name: "lets tsc typecheck GitHub structured turns from handlers and schedules",
     packageExports: {
       "./channels/github": {
         types: "./dist/src/public/channels/github/index.d.ts",
+      },
+      "./schedules": {
+        types: "./dist/src/public/schedules/index.d.ts",
       },
     },
   },

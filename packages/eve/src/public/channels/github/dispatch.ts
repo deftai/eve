@@ -30,10 +30,11 @@ import {
 import type {
   GitHubChannelConfig,
   GitHubInboundContext,
-  GitHubInboundResult,
   GitHubInboundResultOrPromise,
 } from "#public/channels/github/githubChannel.js";
-import type { SendFn } from "#public/definitions/defineChannel.js";
+import type { SendFn, SendPayload } from "#public/definitions/defineChannel.js";
+import { normalizeOutputSchemaDefinition } from "#shared/json-schema.js";
+import type { JsonObject } from "#shared/json.js";
 
 const log = createLogger("github.dispatch");
 
@@ -153,6 +154,7 @@ async function dispatchWebhookEventTurn(input: {
       github: await buildPullRequestContext(input.config, input.state, input.event.delivery.id),
       hook: result.context,
     }),
+    outputSchema: result.outputSchema,
     send: input.send,
     state: input.state,
   });
@@ -189,6 +191,7 @@ async function dispatchCommentTurn(input: {
       github: await buildPullRequestContext(input.config, input.state, input.event.delivery.id),
       hook: result.context,
     }),
+    outputSchema: result.outputSchema,
     send: input.send,
     state: input.state,
   });
@@ -197,9 +200,12 @@ async function dispatchCommentTurn(input: {
 async function runInboundHandler(input: {
   readonly event: GitHubTurnEvent;
   readonly handlerResult: () => GitHubInboundResultOrPromise;
-}): Promise<GitHubInboundResult | undefined> {
+}): Promise<NormalizedGitHubInboundResult | undefined> {
   try {
-    return await input.handlerResult();
+    const result = await input.handlerResult();
+    if (result === null) return result;
+    const outputSchema = normalizeOutputSchemaDefinition(result.outputSchema);
+    return { auth: result.auth, context: result.context, outputSchema };
   } catch (error) {
     logError(log, "GitHub inbound handler failed", error, {
       deliveryId: input.event.delivery.id,
@@ -208,12 +214,19 @@ async function runInboundHandler(input: {
   }
 }
 
+type NormalizedGitHubInboundResult = {
+  readonly auth: SessionAuthContext | null;
+  readonly context?: readonly string[];
+  readonly outputSchema?: JsonObject;
+} | null;
+
 async function sendGitHubTurn(input: {
   readonly auth: SessionAuthContext | null;
   readonly commentUrl?: string;
   readonly event: GitHubTurnEvent;
   readonly logMessage?: string;
   readonly message: string;
+  readonly outputSchema?: JsonObject;
   readonly context: readonly string[] | undefined;
   readonly send: SendFn<GitHubChannelState>;
   readonly state: GitHubChannelState;
@@ -228,19 +241,24 @@ async function sendGitHubTurn(input: {
     sender: input.event.sender,
   });
   const turnMessage = prependGitHubContext(input.message, contextBlock);
+  const payload: {
+    context: SendPayload["context"];
+    message: SendPayload["message"];
+    outputSchema?: SendPayload["outputSchema"];
+  } = {
+    context: input.context,
+    message: turnMessage,
+  };
+  if (input.outputSchema !== undefined) {
+    payload.outputSchema = input.outputSchema;
+  }
 
   try {
-    await input.send(
-      {
-        message: turnMessage,
-        context: input.context,
-      },
-      {
-        auth: input.auth,
-        continuationToken: continuationTokenFromState(input.state),
-        state: input.state,
-      },
-    );
+    await input.send(payload, {
+      auth: input.auth,
+      continuationToken: continuationTokenFromState(input.state),
+      state: input.state,
+    });
   } catch (error) {
     logError(log, input.logMessage ?? "GitHub delivery failed", error, {
       deliveryId: input.event.delivery.id,

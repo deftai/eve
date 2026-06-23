@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
+import { z } from "#compiled/zod/index.js";
 
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, type ChannelAdapter } from "#channel/adapter.js";
@@ -221,6 +223,7 @@ describe("githubChannel", () => {
     expect(payload.message).toContain("<github_context>");
     expect(payload.message).toContain("help me");
     expect(payload.inputResponses).toBeUndefined();
+    expect(payload).not.toHaveProperty("outputSchema");
     expect(options).toMatchObject({
       auth: {
         attributes: {
@@ -410,13 +413,47 @@ describe("githubChannel", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("dispatches opt-in issue webhook hooks", async () => {
+  it("forwards a custom comment hook's output schema", async () => {
+    const outputSchema = {
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      type: "object",
+    } as const;
+    const channel = githubChannel({
+      credentials: { webhookSecret: SECRET },
+      onComment(ctx) {
+        return { auth: defaultGitHubAuth(ctx), outputSchema };
+      },
+    });
+
+    const { send } = await firePost(
+      channel,
+      signedRequest(
+        "issue_comment",
+        basePayload({
+          action: "created",
+          comment: { body: "custom", id: 10, user: { id: 1, login: "octocat" } },
+          issue: { number: 5 },
+        }),
+      ),
+    );
+
+    expect(send.mock.calls[0]?.[0].outputSchema).toEqual(outputSchema);
+  });
+
+  it("dispatches opt-in issue webhook hooks with a raw output schema", async () => {
     const hook = vi.fn();
+    const outputSchema = {
+      additionalProperties: false,
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      type: "object",
+    } as const;
     const channel = githubChannel({
       credentials: { webhookSecret: SECRET },
       onIssue(ctx, issue) {
         hook(ctx.conversation, issue);
-        return { auth: defaultGitHubAuth(ctx) };
+        return { auth: defaultGitHubAuth(ctx), outputSchema };
       },
     });
 
@@ -438,6 +475,7 @@ describe("githubChannel", () => {
     expect(send).toHaveBeenCalledTimes(1);
     const [payload, options] = send.mock.calls[0]!;
     expect(payload.message).toContain("Issue opened: #5 Track webhook issue events");
+    expect(payload.outputSchema).toEqual(outputSchema);
     expect(options).toMatchObject({
       continuationToken: "repo:123:issue:5",
       state: {
@@ -449,14 +487,18 @@ describe("githubChannel", () => {
     });
   });
 
-  it("dispatches opt-in pull request webhook hooks with checkout-ready state", async () => {
+  it("normalizes a Standard Schema returned by a pull request webhook hook", async () => {
     const hook = vi.fn();
+    const outputSchema = z.object({
+      score: z.number().int(),
+      summary: z.string(),
+    });
     const channel = githubChannel({
       api: { apiBaseUrl: "https://github.test", fetch: prContextFetch() },
       credentials: { appId: "test-app", webhookSecret: SECRET },
       onPullRequest(ctx, pullRequest) {
         hook(ctx.conversation, pullRequest);
-        return { auth: defaultGitHubAuth(ctx) };
+        return { auth: defaultGitHubAuth(ctx), outputSchema };
       },
     });
 
@@ -489,6 +531,20 @@ describe("githubChannel", () => {
     expect(send).toHaveBeenCalledTimes(1);
     const [payload, options] = send.mock.calls[0]!;
     expect(payload.message).toContain("Pull request opened: #7 Add webhook PR handling");
+    expect(payload.outputSchema).toEqual({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      additionalProperties: false,
+      properties: {
+        score: {
+          maximum: 9_007_199_254_740_991,
+          minimum: -9_007_199_254_740_991,
+          type: "integer",
+        },
+        summary: { type: "string" },
+      },
+      required: ["score", "summary"],
+      type: "object",
+    });
     expect(options).toMatchObject({
       continuationToken: "repo:123:pull:7",
       state: {
@@ -502,6 +558,45 @@ describe("githubChannel", () => {
         pullRequestNumber: 7,
       },
     });
+  });
+
+  it("drops a webhook turn when its Standard Schema cannot be normalized", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const outputSchema: StandardJSONSchemaV1 = {
+      "~standard": {
+        jsonSchema: {
+          input: () => ({ type: "object" }),
+          output: () => {
+            throw new Error("draft-07 output conversion is unsupported");
+          },
+        },
+        vendor: "test",
+        version: 1,
+      },
+    };
+    const channel = githubChannel({
+      credentials: { webhookSecret: SECRET },
+      onIssue(ctx) {
+        return { auth: defaultGitHubAuth(ctx), outputSchema };
+      },
+    });
+
+    const { send } = await firePost(
+      channel,
+      signedRequest(
+        "issues",
+        basePayload({
+          action: "opened",
+          issue: { number: 5, title: "Unsupported schema" },
+        }),
+      ),
+    );
+
+    expect(send).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining("GitHub inbound handler failed"),
+      expect.anything(),
+    );
   });
 
   it("ignores issue and pull request webhooks without opt-in hooks", async () => {

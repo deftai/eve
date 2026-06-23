@@ -7,14 +7,21 @@ import { createSendFn } from "#channel/send.js";
 import type { Session } from "#channel/session.js";
 import type { Runtime, SessionAuthContext } from "#channel/types.js";
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
+import {
+  normalizeOutputSchemaDefinition,
+  type OutputSchemaDefinition,
+} from "#shared/json-schema.js";
+import type { JsonObject } from "#shared/json.js";
 
 /**
  * Options accepted by {@link CrossChannelReceiveFn}. Mirrors the input
  * argument of a channel's authored `receive(input, { send })` hook —
  * the runtime constructs `send` internally so route-handler callers
- * only supply the platform target, payload, and auth.
+ * only supply the platform target, payload, auth, and optional turn policy.
  */
 export interface CrossChannelReceiveOptions<TTarget = Record<string, unknown>> {
+  /** Standard Schema or raw JSON Schema required for this turn's result. */
+  readonly outputSchema?: OutputSchemaDefinition;
   readonly message: string | UserContent;
   readonly target: TTarget;
   readonly auth: SessionAuthContext | null;
@@ -79,9 +86,11 @@ export function createCrossChannelReceiveFn(
 ): CrossChannelReceiveFn {
   return async (channel, options) => {
     const targetChannel = resolveTargetByReference(channel, channels);
+    const outputSchema = normalizeOutputSchemaDefinition(options.outputSchema);
     return await invokeChannelReceive({
       runtime,
       target: targetChannel,
+      outputSchema,
       input: {
         message: options.message as string,
         target: options.target as Readonly<Record<string, unknown>>,
@@ -99,6 +108,7 @@ export function createCrossChannelReceiveFn(
 interface InvokeChannelReceiveInput {
   readonly runtime: Runtime;
   readonly target: Pick<CrossChannelTarget, "name" | "receive" | "adapter">;
+  readonly outputSchema?: JsonObject;
   readonly input: {
     readonly message: string;
     readonly target: Readonly<Record<string, unknown>>;
@@ -121,7 +131,18 @@ export async function invokeChannelReceive(args: InvokeChannelReceiveInput): Pro
   if (!args.target.adapter) {
     throw new Error(args.describeMissingAdapter());
   }
-  const send = createSendFn(args.runtime, args.target.adapter, args.target.name);
+  const baseSend = createSendFn(args.runtime, args.target.adapter, args.target.name);
+  const outputSchema = args.outputSchema;
+  const send: typeof baseSend =
+    outputSchema === undefined
+      ? baseSend
+      : (input, options) =>
+          baseSend(
+            typeof input === "string" || Array.isArray(input)
+              ? { message: input, outputSchema }
+              : { ...input, outputSchema },
+            options,
+          );
   return await args.target.receive(args.input, { send });
 }
 

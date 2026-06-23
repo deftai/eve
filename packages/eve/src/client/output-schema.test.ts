@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 
 import { extractCompletedResult, normalizeOutputSchemaForRequest } from "#client/output-schema.js";
 import {
@@ -18,6 +19,24 @@ describe("output schema client helpers", () => {
     } as const;
 
     expect(normalizeOutputSchemaForRequest(schema)).toEqual(schema);
+  });
+
+  it("normalizes the output side of Standard Schema definitions", () => {
+    const schema: StandardJSONSchemaV1 = {
+      "~standard": {
+        jsonSchema: {
+          input: () => ({ title: "input" }),
+          output: ({ target }) => ({ target, title: "output" }),
+        },
+        vendor: "test",
+        version: 1,
+      },
+    };
+
+    expect(normalizeOutputSchemaForRequest(schema)).toEqual({
+      target: "draft-07",
+      title: "output",
+    });
   });
 
   it("extracts the most recent completed structured result", () => {

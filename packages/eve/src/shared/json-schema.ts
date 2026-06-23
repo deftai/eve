@@ -6,6 +6,11 @@ const STANDARD_JSON_SCHEMA_TARGET: StandardJSONSchemaV1.Target = "draft-07";
 
 type JsonSchemaDirection = "input" | "output";
 
+/** Schema input accepted by eve public APIs that request structured output. */
+export type OutputSchemaDefinition<TOutput = unknown> =
+  | StandardJSONSchemaV1<unknown, TOutput>
+  | JsonObject;
+
 /**
  * Normalizes one Standard Schema or JSON Schema definition into plain JSON
  * Schema data that can cross eve runtime and client boundaries.
@@ -23,6 +28,13 @@ export function normalizeJsonSchemaDefinition(
   }
 
   return parseJsonObject(value);
+}
+
+/** Normalizes an optional output schema into durable, wire-safe JSON data. */
+export function normalizeOutputSchemaDefinition<TOutput>(
+  value: OutputSchemaDefinition<TOutput> | undefined,
+): JsonObject | undefined {
+  return value === undefined ? undefined : normalizeJsonSchemaDefinition(value, "output");
 }
 
 function isStandardSchema(value: unknown): value is StandardJSONSchemaV1 {

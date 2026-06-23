@@ -1,18 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
+import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 
-import { CHANNEL_SENTINEL, type CompiledChannel } from "#channel/compiled-channel.js";
+import {
+  CHANNEL_SENTINEL,
+  isCompiledChannel,
+  type CompiledChannel,
+} from "#channel/compiled-channel.js";
 import {
   createCrossChannelReceiveFn,
   type CrossChannelTarget,
 } from "#channel/cross-channel-receive.js";
 import type { Session } from "#channel/session.js";
-import type { Runtime } from "#channel/types.js";
+import type { RunHandle, Runtime } from "#channel/types.js";
+import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import { githubChannel } from "#public/channels/github/githubChannel.js";
 
 function makeRuntime(): Runtime {
   return {
     deliver: vi.fn(),
     getEventStream: vi.fn(),
     run: vi.fn(),
+  };
+}
+
+function makeRunHandle(): RunHandle {
+  return {
+    continuationToken: "target:token",
+    events: new ReadableStream<HandleMessageStreamEvent>(),
+    sessionId: "new-session-id",
   };
 }
 
@@ -50,6 +66,25 @@ function makeChannel(name: string): {
   };
 }
 
+function makeGitHubChannel(): {
+  readonly definition: CompiledChannel;
+  readonly target: CrossChannelTarget;
+} {
+  const definition = githubChannel();
+  if (!isCompiledChannel(definition)) {
+    throw new Error("expected a compiled GitHub channel");
+  }
+  return {
+    definition,
+    target: {
+      adapter: definition.adapter,
+      definition,
+      name: "github",
+      receive: definition.receive,
+    },
+  };
+}
+
 describe("createCrossChannelReceiveFn", () => {
   it("delegates to the target channel's receive with a per-target send", async () => {
     const slack = makeChannel("slack");
@@ -70,6 +105,182 @@ describe("createCrossChannelReceiveFn", () => {
       auth: expect.objectContaining({ principalId: "u" }),
     });
     expect(typeof ctx.send).toBe("function");
+  });
+
+  it("normalizes and injects a Standard Schema when resuming a session", async () => {
+    const normalizedSchema = {
+      additionalProperties: false,
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      type: "object",
+    } as const;
+    const inputConverter = vi.fn(() => ({ type: "string" }));
+    const outputConverter = vi.fn(() => normalizedSchema);
+    const outputSchema: StandardJSONSchemaV1 = {
+      "~standard": {
+        jsonSchema: { input: inputConverter, output: outputConverter },
+        vendor: "test",
+        version: 1,
+      },
+    };
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, {
+      auth: null,
+      message: "assess this",
+      outputSchema,
+      target: {},
+    });
+
+    const [receiveInput, receiveContext] = target.receive.mock.calls[0]!;
+    expect(receiveInput).toEqual({ auth: null, message: "assess this", target: {} });
+    await receiveContext.send(
+      { message: "from the channel", outputSchema: { type: "string" } },
+      { auth: null, continuationToken: "token" },
+    );
+
+    expect(outputConverter).toHaveBeenCalledWith({ target: "draft-07" });
+    expect(inputConverter).not.toHaveBeenCalled();
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload.outputSchema).toEqual(
+      normalizedSchema,
+    );
+  });
+
+  it("rejects an unsupported Standard Schema before invoking the target receive hook", async () => {
+    const outputSchema: StandardJSONSchemaV1 = {
+      "~standard": {
+        jsonSchema: {
+          input: () => ({ type: "object" }),
+          output: () => {
+            throw new Error("draft-07 output conversion is unsupported");
+          },
+        },
+        vendor: "test",
+        version: 1,
+      },
+    };
+    const runtime = makeRuntime();
+    const target = makeChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await expect(
+      fn(target.definition, {
+        auth: null,
+        message: "assess this",
+        outputSchema,
+        target: {},
+      }),
+    ).rejects.toThrow("draft-07 output conversion is unsupported");
+
+    expect(target.receive).not.toHaveBeenCalled();
+    expect(runtime.deliver).not.toHaveBeenCalled();
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
+  it("injects a raw output schema when receive(github, ...) starts a new session", async () => {
+    const outputSchema = {
+      properties: { verdict: { type: "string" } },
+      required: ["verdict"],
+      type: "object",
+    } as const;
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockRejectedValue(new RuntimeNoActiveSessionError("target:token"));
+    vi.mocked(runtime.run).mockResolvedValue(makeRunHandle());
+    const github = makeGitHubChannel();
+    const fn = createCrossChannelReceiveFn(runtime, [github.target]);
+
+    await fn(github.definition, {
+      auth: null,
+      message: "assess this",
+      outputSchema,
+      target: {
+        issueNumber: 214,
+        owner: "vercel",
+        repo: "eve",
+        repositoryId: 123,
+      },
+    });
+
+    expect(vi.mocked(runtime.run).mock.calls[0]![0].continuationToken).toBe(
+      "github:repo:123:issue:214",
+    );
+    expect(vi.mocked(runtime.run).mock.calls[0]![0].mode).toBe("conversation");
+    expect(vi.mocked(runtime.run).mock.calls[0]![0].input.outputSchema).toEqual(outputSchema);
+  });
+
+  it("injects a raw output schema when receive(github, ...) resumes a session", async () => {
+    const outputSchema = {
+      properties: { verdict: { type: "string" } },
+      required: ["verdict"],
+      type: "object",
+    } as const;
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const github = makeGitHubChannel();
+    const fn = createCrossChannelReceiveFn(runtime, [github.target]);
+
+    await fn(github.definition, {
+      auth: null,
+      message: "retry this assessment",
+      outputSchema,
+      target: {
+        issueNumber: 214,
+        owner: "vercel",
+        repo: "eve",
+        repositoryId: 123,
+      },
+    });
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0]).toMatchObject({
+      continuationToken: "github:repo:123:issue:214",
+      payload: { message: "retry this assessment", outputSchema },
+    });
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
+  it("preserves a target channel's send payload when no outer schema is provided", async () => {
+    const channelSchema = { type: "string" } as const;
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, { auth: null, message: "plain", target: {} });
+    const receiveContext = target.receive.mock.calls[0]![1];
+    await receiveContext.send(
+      { message: "from the channel", outputSchema: channelSchema },
+      { auth: null, continuationToken: "token" },
+    );
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload.outputSchema).toEqual(
+      channelSchema,
+    );
+  });
+
+  it("injects the outer schema into structured user content", async () => {
+    const outputSchema = { type: "object" } as const;
+    const message = [{ text: "inspect this image", type: "text" as const }];
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, {
+      auth: null,
+      message: "assess this",
+      outputSchema,
+      target: {},
+    });
+    const receiveContext = target.receive.mock.calls[0]![1];
+    await receiveContext.send(message, { auth: null, continuationToken: "token" });
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload).toMatchObject({
+      message,
+      outputSchema,
+    });
   });
 
   it("resolves the target by reference identity even when multiple channels are registered", async () => {

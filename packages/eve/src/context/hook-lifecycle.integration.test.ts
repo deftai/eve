@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createRuntimeHookRegistry } from "#runtime/hooks/registry.js";
 import type { ResolvedHookDefinition } from "#runtime/types.js";
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import { createResultCompletedEvent, type HandleMessageStreamEvent } from "#protocol/message.js";
 import { ContextContainer, contextStorage } from "./container.js";
 import { dispatchStreamEventHooks } from "./hook-lifecycle.js";
 import {
@@ -100,5 +100,60 @@ describe("dispatchStreamEventHooks", () => {
         }),
       ),
     ).rejects.toThrow(/event hook boom/);
+  });
+
+  it("provides structured results with the trusted current session auth", async () => {
+    const ctx = buildCtx();
+    ctx.set(SessionKey, {
+      auth: {
+        current: {
+          attributes: { repository: "vercel/eve" },
+          authenticator: "github-webhook",
+          principalId: "github:1",
+          principalType: "user",
+        },
+        initiator: null,
+      },
+      sessionId: "session_test",
+      turn: { id: "turn_0", sequence: 0 },
+    });
+
+    const observed: Array<{ principalId: string | undefined; result: unknown }> = [];
+    const registry = createRuntimeHookRegistry([
+      hook("assessment", {
+        events: {
+          "result.completed": async (event, hookCtx) => {
+            const completed = event as Extract<
+              HandleMessageStreamEvent,
+              { type: "result.completed" }
+            >;
+            observed.push({
+              principalId: hookCtx.session.auth.current?.principalId,
+              result: completed.data.result,
+            });
+          },
+        },
+      }),
+    ]);
+
+    await contextStorage.run(ctx, () =>
+      dispatchStreamEventHooks({
+        ctx,
+        registry,
+        event: createResultCompletedEvent({
+          result: { priority: "high", summary: "Needs maintainer review" },
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        }),
+      }),
+    );
+
+    expect(observed).toEqual([
+      {
+        principalId: "github:1",
+        result: { priority: "high", summary: "Needs maintainer review" },
+      },
+    ]);
   });
 });

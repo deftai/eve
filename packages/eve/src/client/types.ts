@@ -1,8 +1,8 @@
 import type { UserContent } from "ai";
-import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
+import type { OutputSchemaDefinition } from "#shared/json-schema.js";
 import type { JsonObject } from "#shared/json.js";
 
 export type {
@@ -155,7 +155,7 @@ export interface SendTurnPayload<TOutput = unknown> {
    * authoritative for validation; {@link MessageResult.data} is typed to this
    * schema's output type and is not revalidated client-side.
    */
-  readonly outputSchema?: StandardJSONSchemaV1<unknown, TOutput> | JsonObject;
+  readonly outputSchema?: OutputSchemaDefinition<TOutput>;
 
   /**
    * Abort signal for cancelling the request.

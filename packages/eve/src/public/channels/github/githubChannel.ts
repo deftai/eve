@@ -2,6 +2,7 @@ import type { SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/defineChannel.js";
+import type { OutputSchemaDefinition } from "#shared/json-schema.js";
 
 import { createLogger } from "#internal/logging.js";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
@@ -93,11 +94,15 @@ export interface GitHubEventContext extends GitHubChannelContext, ChannelSession
 /**
  * Result of a GitHub inbound hook. Return `null` to acknowledge without
  * dispatching; return `{ auth }` to dispatch. Optional `context` strings are
- * added as `role: "user"` messages before the dispatched turn.
+ * added as `role: "user"` messages before the dispatched turn. An optional
+ * `outputSchema` requests framework-managed structured output for this turn
+ * without changing the session's conversation mode.
  */
 export type GitHubInboundResult = {
   readonly auth: SessionAuthContext | null;
   readonly context?: readonly string[];
+  /** Standard Schema or raw JSON Schema required for this turn's result. */
+  readonly outputSchema?: OutputSchemaDefinition;
 } | null;
 
 /**
