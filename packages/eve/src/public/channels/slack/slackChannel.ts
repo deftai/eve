@@ -319,6 +319,7 @@ export type SlackInboundResultOrPromise = SlackMentionResultOrPromise;
  * {@link SessionContext}; `session.failed` receives only data and context.
  */
 export interface SlackChannelEvents {
+  readonly "delivery.skipped"?: SlackEventHandler<"delivery.skipped">;
   readonly "turn.started"?: SlackEventHandler<"turn.started">;
   readonly "actions.requested"?: SlackEventHandler<"actions.requested">;
   readonly "action.result"?: SlackEventHandler<"action.result">;

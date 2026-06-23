@@ -15,6 +15,11 @@ import type { ResolvedChannelDefinition } from "#runtime/types.js";
  * only supply the platform target, payload, and auth.
  */
 export interface CrossChannelReceiveOptions<TTarget = Record<string, unknown>> {
+  /**
+   * Lets the model finish this turn without a channel message by calling the
+   * framework `skip_delivery` tool. Scoped to this turn only.
+   */
+  readonly allowEmptyDelivery?: boolean;
   readonly message: string | UserContent;
   readonly target: TTarget;
   readonly auth: SessionAuthContext | null;
@@ -83,6 +88,7 @@ export function createCrossChannelReceiveFn(
       runtime,
       target: targetChannel,
       input: {
+        allowEmptyDelivery: options.allowEmptyDelivery,
         message: options.message as string,
         target: options.target as Readonly<Record<string, unknown>>,
         auth: options.auth,
@@ -100,6 +106,7 @@ interface InvokeChannelReceiveInput {
   readonly runtime: Runtime;
   readonly target: Pick<CrossChannelTarget, "name" | "receive" | "adapter">;
   readonly input: {
+    readonly allowEmptyDelivery?: boolean;
     readonly message: string;
     readonly target: Readonly<Record<string, unknown>>;
     readonly auth: SessionAuthContext | null;
@@ -121,7 +128,12 @@ export async function invokeChannelReceive(args: InvokeChannelReceiveInput): Pro
   if (!args.target.adapter) {
     throw new Error(args.describeMissingAdapter());
   }
-  const send = createSendFn(args.runtime, args.target.adapter, args.target.name);
+  const baseSend = createSendFn(args.runtime, args.target.adapter, args.target.name);
+  const send: typeof baseSend = (input, options) =>
+    baseSend(input, {
+      ...options,
+      allowEmptyDelivery: args.input.allowEmptyDelivery ?? options.allowEmptyDelivery,
+    });
   return await args.target.receive(args.input, { send });
 }
 

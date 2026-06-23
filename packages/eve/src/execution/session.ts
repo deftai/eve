@@ -135,6 +135,7 @@ export function mintSubagentContinuationToken(suffix?: string): string {
  */
 export function projectToDurableSession(session: HarnessSession): DurableSession {
   const durable: {
+    allowEmptyDelivery?: boolean;
     agent: { system: string };
     compaction?: {
       lastKnownInputTokens?: number;
@@ -153,6 +154,10 @@ export function projectToDurableSession(session: HarnessSession): DurableSession
     history: session.history,
     sessionId: session.sessionId,
   };
+
+  if (session.allowEmptyDelivery !== undefined) {
+    durable.allowEmptyDelivery = session.allowEmptyDelivery;
+  }
 
   if (
     session.compaction.lastKnownInputTokens !== undefined ||
@@ -213,6 +218,10 @@ export function hydrateDurableSession(input: {
     history: durable.history,
     sessionId: durable.sessionId,
   };
+
+  if (durable.allowEmptyDelivery !== undefined) {
+    session.allowEmptyDelivery = durable.allowEmptyDelivery;
+  }
 
   if (durable.rootSessionId !== undefined) {
     session.rootSessionId = durable.rootSessionId;

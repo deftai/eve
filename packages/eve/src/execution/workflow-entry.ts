@@ -117,13 +117,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
       driverWritable,
       initialInput: {
         kind: "deliver",
-        payloads: [
-          {
-            message: input.input.message,
-            context: input.input.context,
-            outputSchema: input.input.outputSchema,
-          },
-        ],
+        payloads: [input.input],
       },
       mode,
       serializedContext: input.serializedContext,

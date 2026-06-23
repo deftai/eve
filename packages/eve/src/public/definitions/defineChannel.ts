@@ -70,6 +70,7 @@ type ChannelSessionFailedHandler<TCtx> = (
  * and the channel context, with no `ctx`.
  */
 export interface ChannelEvents<TCtx = void> {
+  readonly "delivery.skipped"?: ChannelEventHandler<"delivery.skipped", TCtx>;
   readonly "turn.started"?: ChannelEventHandler<"turn.started", TCtx>;
   readonly "actions.requested"?: ChannelEventHandler<"actions.requested", TCtx>;
   readonly "action.result"?: ChannelEventHandler<"action.result", TCtx>;
@@ -231,6 +232,7 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
   let hasEventHandlers = false;
 
   const eventTypes = [
+    "delivery.skipped",
     "turn.started",
     "actions.requested",
     "action.result",

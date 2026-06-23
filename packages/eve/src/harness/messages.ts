@@ -12,6 +12,7 @@ import type { StepInput } from "#harness/types.js";
  * for each queued delivery payload.
  */
 export function coalesceTurnInputs(a: StepInput, b: StepInput): StepInput {
+  const allowEmptyDelivery = b.allowEmptyDelivery ?? a.allowEmptyDelivery;
   const inputResponses = coalesceInputResponses({
     a: a.inputResponses,
     b: b.inputResponses,
@@ -27,11 +28,16 @@ export function coalesceTurnInputs(a: StepInput, b: StepInput): StepInput {
   const outputSchema = b.outputSchema ?? a.outputSchema;
 
   const result: {
+    allowEmptyDelivery?: boolean;
     inputResponses?: readonly InputResponse[];
     message?: string | UserContent;
     context?: readonly string[];
     outputSchema?: StepInput["outputSchema"];
   } = {};
+
+  if (allowEmptyDelivery !== undefined) {
+    result.allowEmptyDelivery = allowEmptyDelivery;
+  }
 
   if (inputResponses !== undefined) {
     result.inputResponses = inputResponses;

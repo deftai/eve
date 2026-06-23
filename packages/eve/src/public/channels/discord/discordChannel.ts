@@ -130,6 +130,7 @@ type DiscordSessionFailedHandler = (
 
 /** Per-event handlers for `discordChannel({ events })`. Supplied handlers override built-in defaults per key; unspecified events keep their defaults. `session.failed` receives only `(data, channel)`; every other handler also gets the session `ctx`. */
 export interface DiscordChannelEvents {
+  readonly "delivery.skipped"?: DiscordEventHandler<"delivery.skipped">;
   readonly "turn.started"?: DiscordEventHandler<"turn.started">;
   readonly "actions.requested"?: DiscordEventHandler<"actions.requested">;
   readonly "action.result"?: DiscordEventHandler<"action.result">;

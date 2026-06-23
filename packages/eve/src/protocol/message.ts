@@ -310,6 +310,17 @@ export interface MessageCompletedStreamEvent {
   type: "message.completed";
 }
 
+/** A successful turn that intentionally produced no channel message. */
+export interface DeliverySkippedStreamEvent {
+  data: {
+    sequence: number;
+    source: "empty-output" | "tool";
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "delivery.skipped";
+}
+
 /**
  * Stream event emitted when one completed reasoning block is available for the
  * current step.
@@ -526,6 +537,7 @@ export type HandleMessageStreamEvent = (
   | CompactionRequestedStreamEvent
   | AuthorizationCompletedStreamEvent
   | AuthorizationRequiredStreamEvent
+  | DeliverySkippedStreamEvent
   | MessageAppendedStreamEvent
   | MessageCompletedStreamEvent
   | MessageReceivedStreamEvent
@@ -914,6 +926,19 @@ export function createMessageCompletedEvent(input: {
       turnId: input.turnId,
     },
     type: "message.completed",
+  };
+}
+
+/** Creates the event emitted when a turn intentionally skips channel delivery. */
+export function createDeliverySkippedEvent(input: {
+  readonly sequence: number;
+  readonly source: DeliverySkippedStreamEvent["data"]["source"];
+  readonly stepIndex: number;
+  readonly turnId: string;
+}): DeliverySkippedStreamEvent {
+  return {
+    data: input,
+    type: "delivery.skipped",
   };
 }
 

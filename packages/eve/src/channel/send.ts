@@ -1,7 +1,7 @@
 import type { FilePart, UserContent } from "ai";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
-import type { Runtime, SessionAuthContext } from "#channel/types.js";
+import type { DeliverPayload, RunInput, Runtime, SessionAuthContext } from "#channel/types.js";
 import { createSession, type Session } from "#channel/session.js";
 import type { SendFn, SendOptions, SendPayload } from "#channel/routes.js";
 import { isRuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
@@ -20,6 +20,7 @@ export function createSendFn<TState = undefined>(
     options: SendOptions<TState>,
   ): Promise<Session> => {
     const auth = (options as { auth: SessionAuthContext | null }).auth;
+    const allowEmptyDelivery = (options as { allowEmptyDelivery?: boolean }).allowEmptyDelivery;
     const callback = (options as { callback?: SendOptions<TState>["callback"] }).callback;
     const mode = (options as { mode?: SendOptions<TState>["mode"] }).mode ?? "conversation";
     const state = (options as { state?: TState }).state;
@@ -33,12 +34,21 @@ export function createSendFn<TState = undefined>(
       outputSchema,
     } = normalizeSendInput(input);
     const message = serializeUrlFilePartsInMessage(rawMessage);
+    let payload: DeliverPayload = {
+      inputResponses,
+      message,
+      context,
+      outputSchema,
+    };
+    if (allowEmptyDelivery === true) {
+      payload = { ...payload, allowEmptyDelivery: true };
+    }
 
     try {
       const { sessionId } = await runtime.deliver({
         auth,
         continuationToken,
-        payload: { inputResponses, message, context, outputSchema },
+        payload,
       });
 
       return createSession(sessionId, rawToken, runtime);
@@ -61,6 +71,14 @@ export function createSendFn<TState = undefined>(
     const sessionAdapter = state
       ? { ...adapter, state: { ...adapter.state, ...(state as Record<string, unknown>) } }
       : adapter;
+    let runInput: RunInput["input"] = {
+      message: message ?? "",
+      context,
+      outputSchema,
+    };
+    if (allowEmptyDelivery === true) {
+      runInput = { ...runInput, allowEmptyDelivery: true };
+    }
 
     const handle = await runtime.run({
       adapter: sessionAdapter,
@@ -69,7 +87,7 @@ export function createSendFn<TState = undefined>(
       channelName,
       callback,
       continuationToken,
-      input: { message: message ?? "", context, outputSchema },
+      input: runInput,
       mode,
     });
 

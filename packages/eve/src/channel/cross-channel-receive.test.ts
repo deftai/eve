@@ -72,6 +72,26 @@ describe("createCrossChannelReceiveFn", () => {
     expect(typeof ctx.send).toBe("function");
   });
 
+  it("applies allowEmptyDelivery to the target channel's send", async () => {
+    const runtime = makeRuntime();
+    vi.mocked(runtime.deliver).mockResolvedValue({ sessionId: "existing-session-id" });
+    const target = makeChannel("target");
+    const fn = createCrossChannelReceiveFn(runtime, [target.target]);
+
+    await fn(target.definition, {
+      allowEmptyDelivery: true,
+      message: "check",
+      target: {},
+      auth: null,
+    });
+    const send = target.receive.mock.calls[0]![1].send;
+    await send("check", { auth: null, continuationToken: "token" });
+
+    expect(vi.mocked(runtime.deliver).mock.calls[0]![0].payload).toMatchObject({
+      allowEmptyDelivery: true,
+    });
+  });
+
   it("resolves the target by reference identity even when multiple channels are registered", async () => {
     const slack = makeChannel("slack");
     const twilio = makeChannel("twilio");

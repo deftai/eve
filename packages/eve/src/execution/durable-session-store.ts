@@ -70,6 +70,7 @@ export interface DurableSessionState {
  * `bundle.turnAgent`.
  */
 export interface DurableSession {
+  readonly allowEmptyDelivery?: boolean;
   readonly sessionId: string;
   /**
    * Top user-facing session id in the dispatch chain. Optional because

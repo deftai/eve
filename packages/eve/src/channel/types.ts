@@ -92,6 +92,7 @@ export type EventEmitFn = (event: HandleMessageStreamEvent) => Promise<void>;
  * attachments and other multimodal input straight to the harness.
  */
 export interface DeliverPayload {
+  readonly allowEmptyDelivery?: boolean;
   readonly inputResponses?: readonly InputResponse[];
   readonly message?: string | UserContent;
   readonly context?: readonly string[];
@@ -257,6 +258,7 @@ export interface RunInput {
    */
   readonly initiatorAuth?: SessionAuthContext | null;
   readonly input: {
+    readonly allowEmptyDelivery?: boolean;
     readonly message: string | UserContent;
     readonly context?: readonly string[];
     readonly outputSchema?: JsonObject;

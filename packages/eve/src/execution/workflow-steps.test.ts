@@ -26,6 +26,7 @@ import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-
 import {
   dispatchTurnStep,
   emitTerminalSessionFailureStep,
+  resolveAllowEmptyDelivery,
   resolveEffectiveOutputSchema,
   runProxyInputRequestStep,
   turnStep,
@@ -931,5 +932,27 @@ describe("resolveEffectiveOutputSchema", () => {
       session,
     });
     expect(resolved).toBe(session);
+  });
+});
+
+describe("resolveAllowEmptyDelivery", () => {
+  it("sets, clears, and validates the turn-scoped option", () => {
+    const session = createStubSession();
+    expect(
+      resolveAllowEmptyDelivery({ input: { allowEmptyDelivery: true }, session })
+        .allowEmptyDelivery,
+    ).toBe(true);
+    expect(
+      resolveAllowEmptyDelivery({
+        input: { allowEmptyDelivery: false },
+        session: { ...session, allowEmptyDelivery: true },
+      }).allowEmptyDelivery,
+    ).toBeUndefined();
+    expect(() =>
+      resolveAllowEmptyDelivery({
+        input: { allowEmptyDelivery: true },
+        session: { ...session, outputSchema: { type: "object" } },
+      }),
+    ).toThrow(/cannot be combined with outputSchema/);
   });
 });

@@ -83,6 +83,17 @@ export default defineSchedule({
 
 A handler-form session runs on the same durable runtime engine as any other session, so it can park (durably suspend), for instance when the channel handoff is waiting for a Slack reply. Only markdown task mode is barred from waiting.
 
+For frequent checks that usually have nothing to report, opt the turn into empty delivery. eve exposes `skip_delivery` only for that turn; calling it completes successfully without posting a channel message, while emitting `delivery.skipped` on the session stream.
+
+```ts
+receive(slack, {
+  message: "Check for new incidents. Report them, or call `skip_delivery` if there are none.",
+  target: { channelId: "C0123ABC" },
+  auth: appAuth,
+  allowEmptyDelivery: true,
+});
+```
+
 ## Trigger a schedule while iterating
 
 The dev server mounts a one-shot dispatch route that fires a schedule by name, out of band, exactly once. Since `eve dev` never runs schedules on their cron cadence, this is how you trigger one without waiting for the next production tick.

@@ -62,6 +62,11 @@ export type SendFn<TState = undefined> = (
 ) => Promise<Session>;
 
 type BaseSendOptions = {
+  /**
+   * Lets the model finish this turn without a channel message by calling the
+   * framework `skip_delivery` tool. Scoped to this turn only.
+   */
+  allowEmptyDelivery?: boolean;
   auth: SessionAuthContext | null;
   callback?: SessionCallback;
   continuationToken: string;

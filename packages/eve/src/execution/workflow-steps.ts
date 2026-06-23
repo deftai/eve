@@ -288,8 +288,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       mode,
       session: enrichedSession,
     });
+    const turnSession = resolveAllowEmptyDelivery({ input: resolved, session: schemaSession });
     if (completedAuths) {
-      const emissionState = getHarnessEmissionState(schemaSession.state);
+      const emissionState = getHarnessEmissionState(turnSession.state);
       for (const { name, authorization } of completedAuths) {
         await handleEvent(
           createAuthorizationCompletedEvent({
@@ -332,7 +333,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       return step(refreshedSession, stepInput);
     };
 
-    return runHarnessStep(schemaSession, resolved);
+    return runHarnessStep(turnSession, resolved);
   });
 
   // Re-stamp the in-memory session's continuation token in case a
@@ -458,6 +459,30 @@ export function resolveEffectiveOutputSchema(input: {
     return { ...session, outputSchema: agentOutputSchema };
   }
 
+  return session;
+}
+
+/** Applies the delivery opt-in for a fresh turn and preserves it on continuations. */
+export function resolveAllowEmptyDelivery(input: {
+  readonly input: StepInput | undefined;
+  readonly session: HarnessSession;
+}): HarnessSession {
+  const allowEmptyDelivery = input.input?.allowEmptyDelivery;
+  if (allowEmptyDelivery === undefined) {
+    if (input.input === undefined || input.input.runtimeActionResults !== undefined) {
+      return input.session;
+    }
+    const { allowEmptyDelivery: _allowEmptyDelivery, ...session } = input.session;
+    return session;
+  }
+
+  if (allowEmptyDelivery && input.session.outputSchema !== undefined) {
+    throw new Error("allowEmptyDelivery cannot be combined with outputSchema.");
+  }
+
+  if (allowEmptyDelivery) return { ...input.session, allowEmptyDelivery: true };
+
+  const { allowEmptyDelivery: _allowEmptyDelivery, ...session } = input.session;
   return session;
 }
 

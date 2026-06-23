@@ -152,6 +152,34 @@ describe("createSendFn", () => {
     });
   });
 
+  it("forwards allowEmptyDelivery through resumed and new turns", async () => {
+    const deliverRuntime: Runtime = {
+      deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
+      run: vi.fn(),
+      getEventStream: vi.fn(),
+    };
+    const deliverSend = createSendFn(deliverRuntime, ADAPTER, "test");
+    await deliverSend("hello", {
+      allowEmptyDelivery: true,
+      auth: null,
+      continuationToken: "token",
+    });
+    expect(vi.mocked(deliverRuntime.deliver).mock.calls[0]![0].payload).toMatchObject({
+      allowEmptyDelivery: true,
+    });
+
+    const runRuntime = createRuntime(new RuntimeNoActiveSessionError("test:token"));
+    const runSend = createSendFn(runRuntime, ADAPTER, "test");
+    await runSend("hello", {
+      allowEmptyDelivery: true,
+      auth: null,
+      continuationToken: "token",
+    });
+    expect(vi.mocked(runRuntime.run).mock.calls[0]![0].input).toMatchObject({
+      allowEmptyDelivery: true,
+    });
+  });
+
   it("namespaces the channel-local raw token with the channel name", async () => {
     interface State {
       channelId: string;

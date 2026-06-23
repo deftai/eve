@@ -34,6 +34,7 @@ import {
   createActionResultEvent,
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
+  createDeliverySkippedEvent,
   createInputRequestedEvent,
   createResultCompletedEvent,
 } from "#protocol/message.js";
@@ -151,6 +152,10 @@ import {
   buildFinalOutputTool,
   FINAL_OUTPUT_TOOL_NAME,
 } from "#runtime/framework-tools/final-output.js";
+import {
+  SKIP_DELIVERY_TOOL,
+  SKIP_DELIVERY_TOOL_NAME,
+} from "#runtime/framework-tools/skip-delivery.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type {
   CompactionConfig,
@@ -666,6 +671,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       if (session.outputSchema !== undefined) {
         flatTools[FINAL_OUTPUT_TOOL_NAME] = buildFinalOutputTool(session.outputSchema);
       }
+      if (session.allowEmptyDelivery === true) {
+        flatTools[SKIP_DELIVERY_TOOL_NAME] = SKIP_DELIVERY_TOOL;
+      }
 
       const modelTools =
         sandboxSurfaces.length > 0
@@ -752,6 +760,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               ASK_QUESTION_TOOL_NAME,
               CODE_MODE_TOOL_NAME,
               FINAL_OUTPUT_TOOL_NAME,
+              SKIP_DELIVERY_TOOL_NAME,
             ]),
             handledInlineToolResultCallIds,
             tools: config.tools,
@@ -1568,6 +1577,18 @@ async function handleStepResult(input: {
   // dangling tool_use the next provider call rejects, and drop the result.
   const calledFinalOutput =
     nextSession.outputSchema !== undefined && extractFinalOutput(result) !== undefined;
+  const skippedDelivery = resolveSkippedDeliverySource(nextSession, result, stepOutput);
+
+  if (skippedDelivery !== null) {
+    return finishSkippedDelivery({
+      emissionState,
+      emit,
+      history: promptMessages,
+      mode: config.mode,
+      session: nextSession,
+      source: skippedDelivery,
+    });
+  }
 
   const continueLoop =
     !calledFinalOutput &&
@@ -1619,6 +1640,70 @@ const OUTPUT_SCHEMA_NOT_FULFILLED = {
 function extractFinalOutput(result: HarnessStepResult): JsonValue | undefined {
   return (result.toolCalls ?? []).find((call) => call.toolName === FINAL_OUTPUT_TOOL_NAME)
     ?.input as JsonValue | undefined;
+}
+
+function resolveSkippedDeliverySource(
+  session: HarnessSession,
+  result: HarnessStepResult,
+  stepOutput: string | null,
+): "empty-output" | "tool" | null {
+  if (session.allowEmptyDelivery !== true) return null;
+  if (
+    (result.toolCalls ?? []).some(
+      (call) => call.toolName === SKIP_DELIVERY_TOOL_NAME && !isInvalidToolCall(call),
+    )
+  ) {
+    return "tool";
+  }
+  if (
+    stepOutput === null &&
+    result.toolCalls.length === 0 &&
+    (result.finishReason === "stop" || result.finishReason === "length")
+  ) {
+    return "empty-output";
+  }
+  return null;
+}
+
+async function finishSkippedDelivery(input: {
+  readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
+  readonly emit?: ToolLoopHarnessConfig["handleEvent"];
+  readonly history: readonly ModelMessage[];
+  readonly mode: RunMode;
+  readonly session: HarnessSession;
+  readonly source: "empty-output" | "tool";
+}): Promise<StepResult> {
+  const { allowEmptyDelivery: _allowEmptyDelivery, ...rest } = input.session;
+  let session: HarnessSession = {
+    ...rest,
+    history: [
+      ...input.history,
+      { content: "No channel message was delivered for this turn.", role: "assistant" },
+    ],
+  };
+  let emissionState = input.emissionState;
+
+  if (input.emit) {
+    await input.emit(
+      createDeliverySkippedEvent({
+        sequence: emissionState.sequence,
+        source: input.source,
+        stepIndex: emissionState.stepIndex,
+        turnId: emissionState.turnId,
+      }),
+    );
+    emissionState = await emitTurnEpilogue(input.emit, emissionState, input.mode);
+    session = setHarnessEmissionState(session, emissionState);
+  }
+
+  return input.mode === "task"
+    ? { next: { done: true, output: "" }, session }
+    : { next: null, session };
+}
+
+function clearAllowEmptyDelivery(session: HarnessSession): HarnessSession {
+  const { allowEmptyDelivery: _allowEmptyDelivery, ...rest } = session;
+  return rest;
 }
 
 /**
@@ -1674,6 +1759,7 @@ async function finishTaskTurn(input: {
   let { emissionState, session } = input;
 
   if (schema === undefined) {
+    session = clearAllowEmptyDelivery(session);
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "task");
       session = setHarnessEmissionState(session, emissionState);
@@ -1720,6 +1806,7 @@ async function finishConversationTurn(input: {
   let { emissionState, session } = input;
 
   if (schema === undefined) {
+    session = clearAllowEmptyDelivery(session);
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "conversation");
       session = setHarnessEmissionState(session, emissionState);

@@ -49,6 +49,7 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 | `reasoning.completed`     | The finalized reasoning block.                                                                                   |
 | `message.appended`        | An assistant text delta (incremental, with cumulative text so far).                                              |
 | `message.completed`       | A finalized assistant text block.                                                                                |
+| `delivery.skipped`        | The opted-in turn completed successfully without a channel message.                                              |
 | `result.completed`        | The finalized structured result for a turn that requested an output schema; carries `result`.                    |
 | `compaction.requested`    | Context-window compaction began; carries `modelId`, `sessionId`, `turnId`, `usageInputTokens`.                   |
 | `compaction.completed`    | A compaction checkpoint was written to durable history.                                                          |

@@ -55,6 +55,8 @@ export interface SessionAgent {
  */
 export interface HarnessSession {
   readonly agent: SessionAgent;
+  /** Run-scoped opt-in for a turn that may complete without channel delivery. */
+  readonly allowEmptyDelivery?: boolean;
   readonly compaction: CompactionConfig;
   readonly continuationToken: string;
   readonly history: ModelMessage[];
@@ -84,6 +86,8 @@ export interface HarnessSession {
  * `runStep` before the model call.
  */
 export interface StepInput {
+  /** Whether this turn may complete without a channel message. */
+  readonly allowEmptyDelivery?: boolean;
   readonly inputResponses?: readonly InputResponse[];
   readonly message?: string | UserContent;
   /**

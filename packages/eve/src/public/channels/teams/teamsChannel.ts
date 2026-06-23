@@ -155,6 +155,7 @@ type TeamsSessionFailedHandler = (
 
 /** Event handlers supported by `teamsChannel({ events })`. */
 export interface TeamsChannelEvents {
+  readonly "delivery.skipped"?: TeamsEventHandler<"delivery.skipped">;
   readonly "turn.started"?: TeamsEventHandler<"turn.started">;
   readonly "actions.requested"?: TeamsEventHandler<"actions.requested">;
   readonly "action.result"?: TeamsEventHandler<"action.result">;
