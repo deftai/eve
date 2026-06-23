@@ -22,16 +22,20 @@ export function InputBlock({ width }: { readonly width: number }) {
   // Reserve three columns (prompt glyph, its trailing space, the caret) so the
   // windowed text matches the imperative renderer's budget exactly.
   const budget = Math.max(4, width - 3);
-  const { before, after } = visibleLine({ text, cursor }, budget, glyph.ellipsis);
+  // `visibleLine` returns a block-cursor split: `under` is the grapheme at the
+  // cursor (empty at end-of-line). The new TUI keeps a thin bar caret, so the
+  // caret sits *before* `under` and `under` is rendered after it — dropping it
+  // would swallow the character beneath the cursor.
+  const { before, under, after } = visibleLine({ text, cursor }, budget, glyph.ellipsis);
 
-  // One Text leaf — `<glyph.prompt> <before><caret><after>` — so the whole line
-  // wraps in a single context at the full width and the styled runs stay
+  // One Text leaf — `<glyph.prompt> <before><caret><under><after>` — so the whole
+  // line wraps in a single context at the full width and the styled runs stay
   // adjacent; the prompt and caret are the cyan prompt/caret glyphs.
   const segments: StyledSegment[] = [
     { text: `${glyph.prompt} `, style: cyan },
     { text: before, style: "" },
     { text: glyph.caret, style: cyan },
-    { text: after, style: "" },
+    { text: `${under}${after}`, style: "" },
   ];
 
   return <Text segments={segments} />;

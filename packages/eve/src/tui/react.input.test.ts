@@ -19,13 +19,13 @@ describe("input -> onKey", () => {
     const onCtrlL = vi.fn();
     const onChar = vi.fn();
     input.onKey("ctrl-l", onCtrlL);
-    input.onKey("character", onChar);
+    input.onKey("text", onChar);
 
     stream.emit("data", Buffer.from([0x0c])); // Ctrl+L
     stream.emit("data", "x");
 
     expect(onCtrlL).toHaveBeenCalledTimes(1);
-    expect(onChar).toHaveBeenCalledWith({ type: "character", value: "x" });
+    expect(onChar).toHaveBeenCalledWith({ type: "text", value: "x", framing: "unframed" });
     input.dispose();
   });
 });

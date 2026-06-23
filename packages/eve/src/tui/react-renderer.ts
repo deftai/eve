@@ -388,8 +388,8 @@ export class ReactRenderer implements AgentTUIRenderer {
       };
       open();
       this.#armConsumer((key) => {
-        if (key.type === "character" && key.value === "y") return settle({ approved: true });
-        if (key.type === "character" && key.value === "n")
+        if (key.type === "text" && key.value === "y") return settle({ approved: true });
+        if (key.type === "text" && key.value === "n")
           return settle({ approved: false, reason: "Denied by user." });
         if (key.type === "left" || key.type === "right") {
           cursor = cursor === 0 ? 1 : 0;
@@ -761,7 +761,7 @@ export class ReactRenderer implements AgentTUIRenderer {
         } else if (key.type === "down") {
           cursor = (cursor + 1) % options.length;
           open();
-        } else if (multi && key.type === "character" && key.value === " ") {
+        } else if (multi && key.type === "text" && key.value === " ") {
           const value = options[cursor]?.value;
           if (value !== undefined)
             selected = selected.includes(value)

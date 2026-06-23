@@ -21,7 +21,7 @@ export interface InputStream {
 export type KeyHandler = (key: TerminalKey) => void;
 
 export interface Input {
-  /** Handle one key kind (e.g. "ctrl-l", "enter", "character"). Returns an
+  /** Handle one key kind (e.g. "ctrl-l", "enter", "text"). Returns an
    * unsubscribe function. */
   onKey(type: TerminalKey["type"], handler: KeyHandler): () => void;
   /** Handle every decoded key. Returns an unsubscribe function. */
