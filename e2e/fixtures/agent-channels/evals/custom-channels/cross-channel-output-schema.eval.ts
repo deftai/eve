@@ -8,7 +8,8 @@ export default defineEval({
 
   async test(t) {
     const payload = await postChannel<{ ok: boolean; sessionId?: string }>(t.target, "/webhook", {
-      message: "Return a structured summary of this handoff.",
+      message:
+        'Return exactly one structured result with title "handoff" and count 1. Do not answer in prose.',
       structured: true,
     });
     if (payload.ok !== true || typeof payload.sessionId !== "string") {
@@ -18,7 +19,17 @@ export default defineEval({
     const session = await t.target.attachSession(payload.sessionId);
     const results = session.events.filter((event) => event.type === "result.completed");
     if (results.length !== 1) {
-      throw new Error(`Expected one result.completed event, received ${results.length}.`);
+      const failures = session.events.filter(
+        (event) =>
+          event.type === "session.failed" ||
+          event.type === "turn.failed" ||
+          event.type === "step.failed",
+      );
+      throw new Error(
+        `Expected one result.completed event, received ${results.length}. ` +
+          `Observed events: ${session.events.map((event) => event.type).join(", ")}. ` +
+          `Failures: ${JSON.stringify(failures)}.`,
+      );
     }
 
     const result = results[0]?.data.result;
