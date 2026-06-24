@@ -17,6 +17,8 @@
 eve is a filesystem-first framework for durable AI agents. Core agent capabilities live in
 conventional locations, so projects are easier to inspect, extend, and operate.
 
+No config file with 47 undocumented keys. No "it works on my machine" ritual. Just a directory.
+
 ## The filesystem is the authoring interface
 
 A typical eve agent has this structure:
@@ -36,6 +38,8 @@ my-agent/
         └── weekly_recap.ts
 ```
 
+If you can read a directory listing, you already understand the architecture. That's the whole point.
+
 Read the [documentation](https://eve.dev/docs) for the full project layout and guides.
 
 ## Quick start
@@ -45,7 +49,7 @@ npx eve@latest init my-agent
 ```
 
 This creates a new `my-agent` directory, installs its dependencies, initializes Git, and starts
-the interactive terminal UI.
+the interactive terminal UI. Your agent will be running before your coffee finishes brewing.
 
 To add eve to an existing project, pass a path:
 
@@ -81,6 +85,9 @@ export default defineTool({
 });
 ```
 
+> [!TIP]
+> Yes, it's always sunny. Real weather APIs are left as an exercise for the reader (and their API key budget).
+
 Choose the model in `agent/agent.ts`:
 
 ```ts
@@ -100,6 +107,17 @@ npm run dev
 That's a working agent. Add human-in-the-loop prompts, subagents, and schedules as needed.
 Follow the [first-agent tutorial](https://eve.dev/docs/tutorial/first-agent) for a complete
 walkthrough.
+
+## FAQ
+
+**Does eve stand for anything?**
+No. But it does come before everything else alphabetically, which feels right for a framework that handles your agent's entire lifecycle.
+
+**Will my agent become sentient?**
+Almost certainly not. But if it does, at least its instructions live in a file you can edit.
+
+**Do I need to understand the entire framework before I can ship anything?**
+No. One file (`instructions.md`) is enough to get started. The rest is there when you need it.
 
 ## Community
 
