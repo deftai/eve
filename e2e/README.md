@@ -39,7 +39,7 @@ One-time project setup:
 
 - Configure the shared Vercel project for Node.js 24.
 - Provide the model-provider credentials the fixtures need (the agents and
-  judges run against `openai/gpt-5.5`) in the project's Preview environment.
+  judges run against `zai/glm-5.2`) in the project's Preview environment.
 - Provide `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` in CI.
 
 Run a fixture against Vercel from its directory:
@@ -59,7 +59,7 @@ Do not set `VERCEL_TEAM_ID` at build: sandbox template keys must derive
 identically at build and runtime, and Vercel has no team variable at runtime.
 
 Both local and deployed evals run the fixture agents and judges against real
-models (`openai/gpt-5.5`), so the environment must provide the corresponding
+models (`zai/glm-5.2`), so the environment must provide the corresponding
 model-provider credentials.
 
 ## Fixtures
