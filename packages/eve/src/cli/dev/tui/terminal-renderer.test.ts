@@ -1726,7 +1726,7 @@ describe("TerminalRenderer setup panel", () => {
     renderer.shutdown();
   });
 
-  it("renames the hovered editable row directly via typing and backspace", async () => {
+  it("renames the hovered editable row by typing over the placeholder", async () => {
     const { screen, input, renderer } = makeRenderer();
 
     const answer = renderer.setupFlow.readEditableSelect?.({
@@ -1744,22 +1744,81 @@ describe("TerminalRenderer setup panel", () => {
     });
     expect(answer).toBeDefined();
 
-    // Hovering the editable row is already a live field — no → to enter.
+    // Hovering the editable row shows the default as a placeholder with the
+    // caret at position 0. The field is empty — nothing to backspace.
     expect(screen.snapshot()).toContain("type to rename");
-    expect(screen.snapshot()).toContain("Named 'weather-agent");
-    // Backspace edits the seeded default in place, exactly like typing.
+    expect(screen.snapshot()).toContain("Named '");
+    expect(screen.snapshot()).toContain("weather-agent");
+    // Backspace at position 0 does nothing (no text to delete).
     input.backspace();
-    input.backspace();
-    // "nt" trimmed off the end of the seeded default.
+    expect(screen.snapshot()).toContain("weather-agent");
+    // Typing inserts from the start, replacing the placeholder display.
+    input.type("my-bot");
+    expect(screen.snapshot()).toContain("Named 'my-bot");
     expect(screen.snapshot()).not.toContain("weather-agent");
-    input.type("!");
-    expect(screen.snapshot()).toContain("Named 'weather-age!");
     input.enter();
     await expect(answer).resolves.toEqual({
       kind: "edited",
       value: "new",
-      text: "weather-age!",
+      text: "my-bot",
     });
+    renderer.shutdown();
+  });
+
+  it("accepts the default name when the editable row is submitted without typing", async () => {
+    const { input, renderer } = makeRenderer();
+
+    const answer = renderer.setupFlow.readEditableSelect?.({
+      message: "Vercel project",
+      options: [
+        { value: "new", label: "Create a new project", hint: "Named 'weather-agent'" },
+        { value: "link", label: "Link an existing project" },
+      ],
+      initialValue: "new",
+      editable: {
+        value: "new",
+        defaultValue: "weather-agent",
+        formatHint: (value) => `Named '${value}'`,
+      },
+    });
+    expect(answer).toBeDefined();
+
+    // Submitting without typing accepts the default name as a plain selection.
+    input.enter();
+    await expect(answer).resolves.toEqual({ kind: "selected", value: "new" });
+    renderer.shutdown();
+  });
+
+  it("restores the default placeholder after clearing and re-hovering the editable row", async () => {
+    const { screen, input, renderer } = makeRenderer();
+
+    const answer = renderer.setupFlow.readEditableSelect?.({
+      message: "Vercel project",
+      options: [
+        { value: "new", label: "Create a new project", hint: "Named 'weather-agent'" },
+        { value: "link", label: "Link an existing project" },
+      ],
+      initialValue: "new",
+      editable: {
+        value: "new",
+        defaultValue: "weather-agent",
+        formatHint: (value) => `Named '${value}'`,
+      },
+    });
+    expect(answer).toBeDefined();
+
+    // Type a name, then move away and back — the typed name is cleared and the
+    // placeholder reappears so the default is never stuck in the buffer.
+    input.type("temp");
+    expect(screen.snapshot()).toContain("Named 'temp");
+    // Move down to the non-editable row, then back up.
+    input.down();
+    input.up();
+    // The editor was reset when leaving the row; the placeholder is back.
+    expect(screen.snapshot()).toContain("Named '");
+    expect(screen.snapshot()).toContain("weather-agent");
+    input.enter();
+    await expect(answer).resolves.toEqual({ kind: "selected", value: "new" });
     renderer.shutdown();
   });
 

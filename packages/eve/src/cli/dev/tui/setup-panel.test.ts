@@ -424,8 +424,7 @@ describe("renderSelectQuestion", () => {
       }) as const;
     const baseEdit = { optionValue: "new", caretVisible: true };
 
-    // Hovering the editable row: the seeded default reads back with the caret
-    // parked after it, never wedged before the name, and the footer says so.
+    // When the editor has text, the caret is parked after it, never before.
     const hover = renderSelectQuestion(
       {
         kind: "inline-edit",
@@ -458,7 +457,24 @@ describe("renderSelectQuestion", () => {
     expect(hoverOff.join("\n")).toContain("Named 'weather-agent'");
     expect(hoverOff.join("\n")).not.toContain("Named 'weather-agent '");
 
-    // A backspaced field renders the shortened name with the caret at its end.
+    // When the editor is empty, the default is shown as a placeholder with the
+    // caret at position 0, so the first keystroke inserts before the name.
+    const placeholder = renderSelectQuestion(
+      {
+        kind: "inline-edit",
+        layout: "task-list",
+        message: "Vercel project",
+        options,
+        select: initialSelectState({ options }),
+        edit: { ...baseEdit, editor: renameEditor(lineOf("")) },
+      },
+      theme,
+      80,
+    );
+    expect(placeholder.join("\n")).toContain("Named '▏weather-agent'");
+    expect(placeholder.join("\n")).not.toContain("Named 'weather-agent▏'");
+
+    // A partially edited field renders the shortened name with the caret at its end.
     const edited = renderSelectQuestion(
       {
         kind: "inline-edit",

@@ -1438,7 +1438,6 @@ export class TerminalRenderer implements AgentTUIRenderer {
       selectValueAtCursor([...opts.options], select.cursor) === opts.editable.value;
     const syncEditableRow = () => {
       if (onEditableRow()) {
-        if (editor.text.length === 0) editor = lineOf(opts.editable.defaultValue);
         this.#startCaretBlink();
       } else {
         editor = lineOf("");

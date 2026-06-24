@@ -407,7 +407,7 @@ function renameHint(
   theme: Theme,
 ): SetupPanelOption {
   const value = rename.editor.text || rename.defaultValue;
-  const caretAt = rename.editor.text.length === 0 ? value.length : rename.editor.cursor;
+  const caretAt = rename.editor.text.length === 0 ? 0 : rename.editor.cursor;
   const caret = caretVisible ? theme.colors.cyan(theme.glyph.caret) : "";
   const editableValue = `${value.slice(0, caretAt)}${caret}${value.slice(caretAt)}`;
   return { ...option, hint: rename.formatHint(editableValue) };
