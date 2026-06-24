@@ -14,6 +14,7 @@ import {
 } from "#execution/cancellation.js";
 import type { CancellationScope } from "#channel/types.js";
 import { applyEveWorkflowQueueNamespace } from "#internal/workflow/queue-namespace.js";
+import { disposeHook } from "#execution/hook-ownership.js";
 
 const TASK_MODE_WAIT_ERROR_MESSAGE = "Task mode cannot wait for follow-up input (`next: null`).";
 
@@ -50,10 +51,6 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
   });
 
   try {
-    const conflict = await cancelHook.getConflict();
-    if (conflict !== null) {
-      throw new Error(`Turn cancellation token is owned by run "${conflict.runId}".`);
-    }
     const cancellation = awaitHookPayload(cancelHook).then(() => ({ kind: "cancel" as const }));
 
     while (true) {
@@ -172,7 +169,7 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
     });
     throw error;
   } finally {
-    cancelHook.dispose();
+    await disposeHook(cancelHook);
   }
 }
 

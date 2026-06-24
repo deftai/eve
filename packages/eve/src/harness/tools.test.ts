@@ -5,9 +5,9 @@ import { always, never, once } from "#public/tools/approval/approval-helpers.js"
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import {
   WEB_SEARCH_ANTHROPIC_OUTPUT_SCHEMA,
-  WEB_SEARCH_GATEWAY_OUTPUT_SCHEMA,
   WEB_SEARCH_GOOGLE_OUTPUT_SCHEMA,
   WEB_SEARCH_OPENAI_OUTPUT_SCHEMA,
+  WEB_SEARCH_PARALLEL_OUTPUT_SCHEMA,
 } from "#runtime/framework-tools/web-search.js";
 import type { JsonObject } from "#shared/json.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -165,8 +165,32 @@ describe("buildToolSet", () => {
   });
 
   it.each([
-    [{ id: "openai/gpt-5.4" }, WEB_SEARCH_OPENAI_OUTPUT_SCHEMA],
-    [{ id: "anthropic/claude-opus-4.6" }, WEB_SEARCH_ANTHROPIC_OUTPUT_SCHEMA],
+    [{ id: "openai/gpt-5.4" }, WEB_SEARCH_PARALLEL_OUTPUT_SCHEMA],
+    [{ id: "anthropic/claude-opus-4.6" }, WEB_SEARCH_PARALLEL_OUTPUT_SCHEMA],
+    [
+      {
+        id: "openai.chat/gpt-5.4",
+        source: {
+          exportName: "model",
+          logicalPath: "agent.ts",
+          sourceId: "agent.ts",
+          sourceKind: "module",
+        },
+      },
+      WEB_SEARCH_OPENAI_OUTPUT_SCHEMA,
+    ],
+    [
+      {
+        id: "anthropic.messages/claude-opus-4.6",
+        source: {
+          exportName: "model",
+          logicalPath: "agent.ts",
+          sourceId: "agent.ts",
+          sourceKind: "module",
+        },
+      },
+      WEB_SEARCH_ANTHROPIC_OUTPUT_SCHEMA,
+    ],
     [
       {
         id: "google.generative-ai/gemini-3.1-pro",
@@ -179,7 +203,7 @@ describe("buildToolSet", () => {
       },
       WEB_SEARCH_GOOGLE_OUTPUT_SCHEMA,
     ],
-    [{ id: "mistral/mistral-large" }, WEB_SEARCH_GATEWAY_OUTPUT_SCHEMA],
+    [{ id: "mistral/mistral-large" }, WEB_SEARCH_PARALLEL_OUTPUT_SCHEMA],
   ] satisfies Array<readonly [RuntimeModelReference, JsonObject]>)(
     "injects the selected web_search provider output schema",
     async (modelReference, expectedOutputSchema) => {

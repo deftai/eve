@@ -23,7 +23,6 @@ vi.mock("#compiled/@workflow/core/index.js", () => ({
       };
     },
     dispose: disposeHookMock,
-    getConflict: vi.fn().mockResolvedValue(null),
     token: options?.token ?? "cancel-token",
   })),
 }));
@@ -45,7 +44,6 @@ describe("turnWorkflow", () => {
             return { next: () => new Promise<IteratorResult<void>>(() => {}) };
           },
           dispose: disposeHookMock,
-          getConflict: vi.fn().mockResolvedValue(null),
           token: options?.token ?? "cancel-token",
         }) as never,
     );
@@ -102,7 +100,6 @@ describe("turnWorkflow", () => {
             };
           },
           dispose: disposeHookMock,
-          getConflict: vi.fn().mockResolvedValue(null),
           token: options?.token ?? "cancel-token",
         }) as never,
     );

@@ -8,12 +8,10 @@ import {
 } from "#harness/runtime-actions.js";
 import type { HarnessSession } from "#harness/types.js";
 
-const getHookByTokenMock = vi.fn();
 const readDurableSessionMock = vi.fn();
 const resumeHookMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
-  getHookByToken: (...args: unknown[]) => getHookByTokenMock(...args),
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
 }));
 
@@ -32,7 +30,6 @@ vi.mock("#context/serialize.js", () => ({
 
 describe("cancelDescendantsStep", () => {
   beforeEach(() => {
-    getHookByTokenMock.mockReset().mockResolvedValue({ runId: "child-session" });
     resumeHookMock.mockReset().mockResolvedValue(undefined);
     readDurableSessionMock.mockReset();
   });
@@ -45,13 +42,12 @@ describe("cancelDescendantsStep", () => {
       sessionState: {} as DurableSessionState,
     });
 
-    expect(getHookByTokenMock).toHaveBeenCalledWith("subagent:parent:call-1");
     expect(resumeHookMock).toHaveBeenCalledWith("child-session:cancel-session", undefined);
   });
 
   it("ignores a child whose cancellation hook is unavailable", async () => {
     const { HookNotFoundError } = await import("#compiled/@workflow/errors/index.js");
-    getHookByTokenMock.mockRejectedValue(new HookNotFoundError("subagent:parent:call-1"));
+    resumeHookMock.mockRejectedValue(new HookNotFoundError("child-session:cancel-session"));
     readDurableSessionMock.mockResolvedValue(createSessionWithChild());
 
     await cancelDescendantsStep({
@@ -59,7 +55,7 @@ describe("cancelDescendantsStep", () => {
       sessionState: {} as DurableSessionState,
     });
 
-    expect(resumeHookMock).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledWith("child-session:cancel-session", undefined);
   });
 
   it("keeps parent cancellation non-fatal when a descendant request fails", async () => {

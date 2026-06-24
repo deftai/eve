@@ -15,6 +15,7 @@ import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import type { TurnCompletionPayload } from "#execution/turn-workflow.js";
 import { cancelTurnSegmentStep } from "#execution/turn-cancellation-step.js";
+import { disposeHook } from "#execution/hook-ownership.js";
 import { rebuildSerializableError } from "#execution/workflow-errors.js";
 import {
   dispatchTurnStep,
@@ -59,10 +60,6 @@ export async function dispatchAndAwaitTurn(input: {
   const completionToken = completion.token;
 
   try {
-    const conflict = await completion.getConflict();
-    if (conflict !== null) {
-      throw new Error(`Turn completion token is owned by run "${conflict.runId}".`);
-    }
     await dispatchTurnStep({
       capabilities: input.capabilities,
       completionToken,
@@ -104,7 +101,7 @@ export async function dispatchAndAwaitTurn(input: {
 
     return { action: payload.action, kind: "action" };
   } finally {
-    completion.dispose();
+    await disposeHook(completion);
   }
 }
 

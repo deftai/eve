@@ -121,6 +121,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   await setEveAttributes(
     buildTurnAttributes({
       parentSessionId: input.sessionState.sessionId,
+      requestId: input.input?.kind === "deliver" ? input.input.requestId : undefined,
       rootSessionId: readRootSessionId(input.serializedContext) ?? input.sessionState.sessionId,
     }),
   );
@@ -669,8 +670,12 @@ export async function routeProxiedDeliverStep(input: {
 }
 
 /** Starts a per-turn child workflow for the current driver session. */
-export async function dispatchTurnStep(input: TurnWorkflowDispatchInput): Promise<void> {
+export async function dispatchTurnStep(
+  input: TurnWorkflowDispatchInput,
+): Promise<{ readonly runId: string }> {
   "use step";
 
-  await startWorkflowPreferLatest(turnWorkflow, [createTurnWorkflowInput(input)]);
+  const run = await startWorkflowPreferLatest(turnWorkflow, [createTurnWorkflowInput(input)]);
+
+  return { runId: run.runId };
 }
