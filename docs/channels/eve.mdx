@@ -37,7 +37,7 @@ curl -X POST https://<deployment>/eve/v1/session \
 
 Cancel the currently running turn with `{ "scope": "turn" }`, or cancel the complete entry session with `{ "scope": "session" }`. The route requires exactly one explicit scope.
 
-An accepted cancellation returns `202`. This acknowledges the best-effort request but does not guarantee it takes effect — confirm the outcome from the stream (`turn.cancelled`, then `session.waiting` or `session.cancelled`). Turn cancellation while the session is parked is a no-op; an unavailable or completed session returns `409`.
+An accepted cancellation returns `202`. This acknowledges the best-effort request but does not guarantee it takes effect. Cancelling active work emits `turn.cancelled`, followed by `session.waiting` or `session.cancelled`; cancelling an already parked session emits `session.cancelled` directly. Turn cancellation while the session is parked is a no-op. An unavailable or completed session returns `409`.
 
 Stream that session's events as newline-delimited JSON (`application/x-ndjson; charset=utf-8`), one event object per line:
 

@@ -42,7 +42,7 @@ import {
   awaitCancellationSignal,
   createActiveTurnCancellation,
   dispatchAndAwaitTurn,
-  raceTurnCancellation,
+  raceDriverCancellation,
   rearmActiveTurnCancellation,
   routeDeliverForChildren,
   waitForNextDeliver,
@@ -277,18 +277,17 @@ async function runDriverLoop(input: {
       await rekeyHook(input.sessionState.continuationToken);
     }
 
-    const initialTransition = await applyTurnOutcome(
-      await dispatchAndAwaitTurn({
-        cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
-        capabilities: input.capabilities,
-        completionToken: nextTurnCompletionToken(),
-        delivery: input.initialInput,
-        mode: input.mode,
-        parentWritable: input.driverWritable,
-        serializedContext: input.serializedContext,
-        sessionState: input.sessionState,
-      }),
-    );
+    const initialOutcome = await dispatchAndAwaitTurn({
+      cancellation: raceDriverCancellation(activeTurnCancellation, sessionCancellation),
+      capabilities: input.capabilities,
+      completionToken: nextTurnCompletionToken(),
+      delivery: input.initialInput,
+      mode: input.mode,
+      parentWritable: input.driverWritable,
+      serializedContext: input.serializedContext,
+      sessionState: input.sessionState,
+    });
+    const initialTransition = await applyTurnOutcome(initialOutcome);
     if (initialTransition.kind === "done") return initialTransition.result;
     let action = initialTransition.action;
 
@@ -318,7 +317,7 @@ async function runDriverLoop(input: {
 
           const runtimeResults = await waitForPendingRuntimeActionResults({
             bufferedDeliveries,
-            cancellation: () => raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+            cancellation: () => raceDriverCancellation(activeTurnCancellation, sessionCancellation),
             consumeNext,
             getNextPromise,
             initialResults: dispatchResult.results,
@@ -340,21 +339,20 @@ async function runDriverLoop(input: {
             break;
           }
 
-          const transition = await applyTurnOutcome(
-            await dispatchAndAwaitTurn({
-              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
-              capabilities: input.capabilities,
-              completionToken: nextTurnCompletionToken(),
-              delivery: {
-                kind: "runtime-action-result",
-                results: runtimeResults.results,
-              },
-              mode: input.mode,
-              parentWritable: input.driverWritable,
-              serializedContext: runtimeResults.serializedContext,
-              sessionState: runtimeResults.sessionState,
-            }),
-          );
+          const runtimeActionOutcome = await dispatchAndAwaitTurn({
+            cancellation: raceDriverCancellation(activeTurnCancellation, sessionCancellation),
+            capabilities: input.capabilities,
+            completionToken: nextTurnCompletionToken(),
+            delivery: {
+              kind: "runtime-action-result",
+              results: runtimeResults.results,
+            },
+            mode: input.mode,
+            parentWritable: input.driverWritable,
+            serializedContext: runtimeResults.serializedContext,
+            sessionState: runtimeResults.sessionState,
+          });
+          const transition = await applyTurnOutcome(runtimeActionOutcome);
           if (transition.kind === "done") return transition.result;
           action = transition.action;
           break;
@@ -367,7 +365,7 @@ async function runDriverLoop(input: {
 
             while (allPayloads.length < expected) {
               const nextOrCancellation = await Promise.race([
-                raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+                raceDriverCancellation(activeTurnCancellation, sessionCancellation),
                 getAuthNextPromise().then((next) => ({ kind: "next" as const, next })),
               ]);
               if (nextOrCancellation.kind === "cancelled") {
@@ -392,21 +390,20 @@ async function runDriverLoop(input: {
               break;
             }
 
-            const transition = await applyTurnOutcome(
-              await dispatchAndAwaitTurn({
-                cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
-                capabilities: input.capabilities,
-                completionToken: nextTurnCompletionToken(),
-                delivery: {
-                  kind: "deliver",
-                  payloads: allPayloads,
-                },
-                mode: input.mode,
-                parentWritable: input.driverWritable,
-                serializedContext: action.serializedContext,
-                sessionState: action.sessionState,
-              }),
-            );
+            const authorizationOutcome = await dispatchAndAwaitTurn({
+              cancellation: raceDriverCancellation(activeTurnCancellation, sessionCancellation),
+              capabilities: input.capabilities,
+              completionToken: nextTurnCompletionToken(),
+              delivery: {
+                kind: "deliver",
+                payloads: allPayloads,
+              },
+              mode: input.mode,
+              parentWritable: input.driverWritable,
+              serializedContext: action.serializedContext,
+              sessionState: action.sessionState,
+            });
+            const transition = await applyTurnOutcome(authorizationOutcome);
             if (transition.kind === "done") return transition.result;
             action = transition.action;
             break;
@@ -416,7 +413,7 @@ async function runDriverLoop(input: {
           while (true) {
             nextDeliver = await waitForNextDeliver({
               bufferedDeliveries,
-              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+              cancellation: raceDriverCancellation(activeTurnCancellation, sessionCancellation),
               consumeNext,
               getNextPromise,
             });
@@ -451,23 +448,22 @@ async function runDriverLoop(input: {
             continue;
           }
 
-          const transition = await applyTurnOutcome(
-            await dispatchAndAwaitTurn({
-              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
-              capabilities: input.capabilities,
-              completionToken: nextTurnCompletionToken(),
-              delivery: {
-                auth: nextDeliver.auth,
-                kind: "deliver",
-                payloads: [remainder],
-                requestId: nextDeliver.requestId,
-              },
-              mode: input.mode,
-              parentWritable: input.driverWritable,
-              serializedContext: action.serializedContext,
-              sessionState: action.sessionState,
-            }),
-          );
+          const deliveryOutcome = await dispatchAndAwaitTurn({
+            cancellation: raceDriverCancellation(activeTurnCancellation, sessionCancellation),
+            capabilities: input.capabilities,
+            completionToken: nextTurnCompletionToken(),
+            delivery: {
+              auth: nextDeliver.auth,
+              kind: "deliver",
+              payloads: [remainder],
+              requestId: nextDeliver.requestId,
+            },
+            mode: input.mode,
+            parentWritable: input.driverWritable,
+            serializedContext: action.serializedContext,
+            sessionState: action.sessionState,
+          });
+          const transition = await applyTurnOutcome(deliveryOutcome);
           if (transition.kind === "done") return transition.result;
           action = transition.action;
           break;

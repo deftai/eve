@@ -17,7 +17,7 @@ import { clearPendingCodeModeInterrupt } from "#harness/code-mode-interrupt-stat
 import { clearPendingInputBatch } from "#harness/input-requests.js";
 import { clearProxyInputRequests } from "#harness/proxy-input-requests.js";
 import { clearPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
-import { setHarnessEmissionState } from "#harness/emission.js";
+import { isHarnessBetweenTurns, setHarnessEmissionState } from "#harness/emission.js";
 import {
   createSessionCancelledEvent,
   createSessionWaitingEvent,
@@ -63,13 +63,15 @@ export async function finalizeCancellationStep(input: {
   session = clearProxyInputRequests(session);
 
   const prior = input.sessionState.emissionState;
-  const turnId = prior.turnId || `turn_${prior.sequence}`;
-  const events: HandleMessageStreamEvent[] = [
-    createTurnCancelledEvent({ sequence: prior.sequence, turnId }),
+  const events: HandleMessageStreamEvent[] = [];
+  if (!isHarnessBetweenTurns(session)) {
+    events.push(createTurnCancelledEvent({ sequence: prior.sequence, turnId: prior.turnId }));
+  }
+  events.push(
     input.scope === "turn"
       ? createSessionWaitingEvent()
       : createSessionCancelledEvent(input.sessionState.sessionId),
-  ];
+  );
 
   const reason = createCancellationReason(input.scope);
   const scopeResult = await withContextScope(

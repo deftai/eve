@@ -148,21 +148,22 @@ export function recordPendingRuntimeActionChild(input: {
  * so the loop can process interleaved deliveries and results without
  * coupling to a concrete `HookPayload` shape.
  */
-type RuntimeActionAccumulatorItem<TDeliver> =
+type RuntimeActionAccumulatorItem<TDeliver, TInterrupt> =
   | { readonly kind: "deliver"; readonly value: TDeliver }
-  | { readonly kind: "runtime-action-result"; readonly results: readonly RuntimeActionResult[] };
+  | { readonly kind: "runtime-action-result"; readonly results: readonly RuntimeActionResult[] }
+  | { readonly kind: "interrupted"; readonly value: TInterrupt };
 
 /**
  * Accumulates runtime-action results until every pending key has a
  * matching result. The caller passes the ordered key list so the
  * workflow runtime can drive the loop without hydrating a session.
  */
-export async function accumulateRuntimeActionResults<TDeliver>(input: {
+export async function accumulateRuntimeActionResults<TDeliver, TInterrupt = never>(input: {
   readonly bufferedDeliveries: TDeliver[];
-  readonly getNext: () => Promise<RuntimeActionAccumulatorItem<TDeliver> | null>;
+  readonly getNext: () => Promise<RuntimeActionAccumulatorItem<TDeliver, TInterrupt> | null>;
   readonly initialResults?: readonly RuntimeActionResult[];
   readonly pendingActionKeys: readonly string[] | undefined;
-}): Promise<RuntimeActionResult[] | null> {
+}): Promise<RuntimeActionResult[] | TInterrupt | null> {
   const pendingKeys = input.pendingActionKeys;
   const buffered: RuntimeActionResult[] = [...(input.initialResults ?? [])];
 
@@ -182,6 +183,10 @@ export async function accumulateRuntimeActionResults<TDeliver>(input: {
 
     if (item === null) {
       return null;
+    }
+
+    if (item.kind === "interrupted") {
+      return item.value;
     }
 
     if (item.kind === "deliver") {
