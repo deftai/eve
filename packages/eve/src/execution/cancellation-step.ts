@@ -52,6 +52,7 @@ export async function finalizeCancellationStep(input: {
     durable,
     turnAgent: bundle.turnAgent,
   });
+  session = setHarnessEmissionState(session, input.sessionState.emissionState);
 
   session = clearPendingRuntimeActionBatch(session);
   session = clearPendingCodeModeInterrupt(session);

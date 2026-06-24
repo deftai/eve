@@ -69,6 +69,20 @@ export async function dispatchAndAwaitTurn(input: {
       serializedContext: input.serializedContext,
       sessionState: input.sessionState,
     });
+    // A cancelled child step cannot return its active snapshot, so the driver
+    // records the turn boundary when dispatch succeeds.
+    const activeSessionState: DurableSessionState = {
+      ...input.sessionState,
+      emissionState:
+        input.sessionState.emissionState.turnId === ""
+          ? {
+              ...input.sessionState.emissionState,
+              sessionStarted: true,
+              stepIndex: 0,
+              turnId: `turn_${input.sessionState.emissionState.sequence}`,
+            }
+          : input.sessionState.emissionState,
+    };
 
     const completionPayload = awaitHookPayload(completion);
     const outcome = await Promise.race([
@@ -84,7 +98,7 @@ export async function dispatchAndAwaitTurn(input: {
       return {
         ...outcome,
         serializedContext: input.serializedContext,
-        sessionState: input.sessionState,
+        sessionState: activeSessionState,
       };
     }
     payload = outcome.payload;
@@ -95,7 +109,7 @@ export async function dispatchAndAwaitTurn(input: {
         kind: "cancelled",
         scope: payload.scope,
         serializedContext: input.serializedContext,
-        sessionState: input.sessionState,
+        sessionState: activeSessionState,
       };
     }
 
