@@ -29,6 +29,7 @@ import { contextStorage } from "#context/container.js";
 import { buildDynamicInstructionMessages } from "#context/dynamic-instruction-lifecycle.js";
 import { buildDynamicTools } from "#context/build-dynamic-tools.js";
 import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js";
+import { AbortSignalKey } from "#context/keys.js";
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
@@ -161,6 +162,7 @@ import type {
   StepResult,
   ToolLoopHarnessConfig,
 } from "#harness/types.js";
+import { readCancellationScope } from "#execution/cancellation.js";
 
 /**
  * Creates a tool-loop harness step function backed by AI SDK `ToolLoopAgent`.
@@ -192,6 +194,7 @@ function logToolExecutionError(event: {
   if (event.toolOutput.type !== "tool-error") {
     return;
   }
+  if (readCancellationScope(event.toolOutput.error) !== undefined) return;
   logError(log, "tool execution failed", event.toolOutput.error, {
     toolName: event.toolCall.toolName,
     toolCallId: event.toolCall.toolCallId,
@@ -523,8 +526,12 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // Runs before `agent.stream()` so the compacted messages flow through
     // `messages` (which the harness uses to rebuild session history).
     const attributionHeaders = buildGatewayAttributionHeaders(model, config.runtimeIdentity);
+    // Direct harness unit tests may run without an ambient context.
+    const ctx = contextStorage.getStore();
+    const abortSignal = ctx?.get(AbortSignalKey);
 
     ({ messages, session } = await maybeCompact({
+      abortSignal,
       emit,
       emissionState,
       headers: attributionHeaders,
@@ -537,9 +544,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }));
 
     const approvedTools = getApprovedTools(session);
-
-    // Direct harness unit tests may run without an ambient context.
-    const ctx = contextStorage.getStore();
 
     // --- Execute via ToolLoopAgent ------------------------------------------
 
@@ -737,7 +741,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
       const executeModelCall = async (): Promise<HarnessStepResult> => {
         if (emit) {
-          const streamResult = await agent.stream({ messages: callMessages });
+          const streamResult = await agent.stream({ abortSignal, messages: callMessages });
           const {
             handledInlineToolResultCallIds,
             inlineAuthorizationResults,
@@ -795,7 +799,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           }
           return stepResult;
         }
-        await agent.generate({ messages: callMessages });
+        await agent.generate({ abortSignal, messages: callMessages });
         const stepResult = await hooks.stepResult;
         if (isEmptyModelResponse(stepResult)) {
           throw new EmptyModelResponseError();
@@ -846,6 +850,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         suppressStepStartedEmission: true,
       });
     } catch (error) {
+      if (abortSignal?.aborted) {
+        throw abortSignal.reason;
+      }
       // Stage order: drop a gateway-rejected provider tool first, then
       // reissue an empty response; see runModelCallRecoveryPipeline for
       // the skip/act semantics.
@@ -2077,6 +2084,7 @@ function createNextCompactionConfig(
  * harness uses to rebuild `session.history` after the step.
  */
 async function maybeCompact(input: {
+  readonly abortSignal?: AbortSignal;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
   readonly headers?: Record<string, string>;
@@ -2121,6 +2129,7 @@ async function maybeCompact(input: {
     compaction.providerOptions,
     input.telemetry,
     input.headers,
+    input.abortSignal,
   );
 
   if (input.onCompaction) {

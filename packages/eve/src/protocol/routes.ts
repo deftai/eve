@@ -29,6 +29,9 @@ export const EVE_CREATE_SESSION_ROUTE_PATH = `${EVE_ROUTE_PREFIX}/session`;
  */
 export const EVE_CONTINUE_SESSION_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/session/:sessionId`;
 
+/** Stable framework-owned route pattern for turn and session cancellation. */
+export const EVE_CANCEL_SESSION_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/session/:sessionId/cancel`;
+
 /**
  * Stable framework-owned message stream route pattern.
  */
@@ -110,6 +113,11 @@ export function createEveMessageStreamRoutePath(sessionId: string): string {
  */
 export function createEveContinueSessionRoutePath(sessionId: string): string {
   return `${EVE_ROUTE_PREFIX}/session/${encodeURIComponent(sessionId)}`;
+}
+
+/** Creates the stable framework-owned cancellation route for one session. */
+export function createEveCancelSessionRoutePath(sessionId: string): string {
+  return `${EVE_ROUTE_PREFIX}/session/${encodeURIComponent(sessionId)}/cancel`;
 }
 
 /**

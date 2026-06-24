@@ -1,7 +1,9 @@
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { CancellationScope } from "#channel/types.js";
 import { EVE_SESSION_ID_HEADER, isCurrentTurnBoundaryEvent } from "#protocol/message.js";
 import {
   EVE_CREATE_SESSION_ROUTE_PATH,
+  createEveCancelSessionRoutePath,
   createEveContinueSessionRoutePath,
 } from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
@@ -9,7 +11,7 @@ import { MessageResponse } from "#client/message-response.js";
 import { isStreamDisconnectError, readNdjsonStream } from "#client/ndjson.js";
 import { openStreamBody, openStreamIterable } from "#client/open-stream.js";
 import { normalizeOutputSchemaForRequest } from "#client/output-schema.js";
-import { advanceSession } from "#client/session-utils.js";
+import { advanceSession, createInitialSessionState } from "#client/session-utils.js";
 import { createClientUrl } from "#client/url.js";
 import type {
   ClientRedirectPolicy,
@@ -71,12 +73,28 @@ export class ClientSession {
     const state = this.#state;
     const postResult = await this.#postTurn(payload, state);
     const { continuationToken, sessionId } = postResult;
+    this.#state = {
+      continuationToken: continuationToken ?? state.continuationToken,
+      sessionId,
+      streamIndex: state.sessionId === sessionId ? state.streamIndex : 0,
+    };
 
     return new MessageResponse<TOutput>({
+      cancel: () => this.#cancelRequest(sessionId, { scope: "turn" }, payload.headers),
       continuationToken,
       createStream: () => this.#createEventStream(sessionId, continuationToken, state, payload),
       sessionId,
     });
+  }
+
+  /** Makes a best-effort session cancellation request, then clears the resumable cursor. */
+  async cancel(options?: { readonly headers?: Readonly<Record<string, string>> }): Promise<void> {
+    const { sessionId } = this.#state;
+    if (!sessionId) {
+      throw new Error("Session has no active server-side session to cancel.");
+    }
+    await this.#cancelRequest(sessionId, { scope: "session" }, options?.headers);
+    this.#state = createInitialSessionState();
   }
 
   /**
@@ -150,6 +168,25 @@ export class ClientSession {
     return { continuationToken, sessionId };
   }
 
+  async #cancelRequest(
+    sessionId: string,
+    body: { readonly scope: CancellationScope },
+    perRequestHeaders?: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    const url = createClientUrl(this.#context.host, createEveCancelSessionRoutePath(sessionId));
+    const headers = await this.#context.resolveHeaders(perRequestHeaders);
+    headers.set("content-type", "application/json");
+    const response = await fetch(url, {
+      body: JSON.stringify(body),
+      headers,
+      method: "POST",
+      redirect: this.#context.redirect,
+    });
+    if (!response.ok) {
+      throw new ClientError(response.status, await response.text());
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Internal: event stream with reconnection
   // ---------------------------------------------------------------------------
@@ -210,13 +247,15 @@ export class ClientSession {
         remainingReconnectAttempts -= 1;
       }
     } finally {
-      this.#state = advanceSession({
-        continuationToken,
-        events,
-        preserveCompletedSessions: this.#context.preserveCompletedSessions,
-        sessionId,
-        session: initialState,
-      });
+      if (this.#state.sessionId === sessionId) {
+        this.#state = advanceSession({
+          continuationToken,
+          events,
+          preserveCompletedSessions: this.#context.preserveCompletedSessions,
+          sessionId,
+          session: initialState,
+        });
+      }
     }
   }
 

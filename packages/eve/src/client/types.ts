@@ -220,12 +220,13 @@ export interface MessageResult<TOutput = unknown> {
   /**
    * How the turn ended.
    *
+   * - `"cancelled"`: this turn or session was intentionally cancelled.
    * - `"completed"`: the session finished (`session.completed`).
    * - `"waiting"`: the session is parked for the next user message
    *   (`session.waiting`).
    * - `"failed"`: the session ended in a terminal failure (`session.failed`).
    */
-  readonly status: "completed" | "failed" | "waiting";
+  readonly status: "cancelled" | "completed" | "failed" | "waiting";
 }
 
 /**

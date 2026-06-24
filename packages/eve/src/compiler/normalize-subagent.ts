@@ -19,7 +19,6 @@ import {
   expectOnlyKnownKeys,
   expectString,
 } from "#internal/authored-module.js";
-import { EVE_CREATE_SESSION_ROUTE_PATH } from "#protocol/routes.js";
 import { normalizeJsonSchemaDefinition } from "#shared/json-schema.js";
 import type { JsonObject } from "#shared/json.js";
 
@@ -236,7 +235,6 @@ function compileRemoteAgent(input: {
     name: input.source.subagentId,
     nodeId: input.source.sourceId,
     outputSchema: definition.outputSchema,
-    path: definition.path,
     rootPath: input.source.rootPath,
     url: definition.url,
   };
@@ -287,13 +285,12 @@ function normalizeRemoteAgentDefinition(
 ): {
   readonly description: string;
   readonly outputSchema?: JsonObject;
-  readonly path: string;
   readonly url: string;
 } {
   const record = expectObjectRecord(value, message);
   expectOnlyKnownKeys(
     record,
-    ["auth", "description", "headers", "kind", "outputSchema", "path", "url"],
+    ["auth", "description", "headers", "kind", "outputSchema", "url"],
     message,
   );
 
@@ -307,10 +304,6 @@ function normalizeRemoteAgentDefinition(
       record.outputSchema === undefined
         ? undefined
         : normalizeJsonSchemaDefinition(record.outputSchema, "output"),
-    path:
-      record.path === undefined
-        ? EVE_CREATE_SESSION_ROUTE_PATH
-        : expectString(record.path, message),
     url: expectString(record.url, message),
   };
 }

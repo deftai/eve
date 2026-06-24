@@ -27,7 +27,10 @@ export type {
   DynamicToolSet,
   DynamicToolResult,
 } from "#shared/dynamic-tool-definition.js";
-export { type SessionContext } from "#public/definitions/callback-context.js";
+export {
+  type CancellationScope,
+  type SessionContext,
+} from "#public/definitions/callback-context.js";
 export {
   toolResultFrom,
   type MatchedConnectionResult,

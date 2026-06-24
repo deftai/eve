@@ -19,7 +19,15 @@ import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import { buildRunContext } from "#execution/runtime-context.js";
-import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import {
+  RuntimeCancellationConflictError,
+  RuntimeNoActiveSessionError,
+} from "#execution/runtime-errors.js";
+import {
+  createActiveTurnCancellationHookId,
+  createSessionCancellationHookId,
+} from "#execution/cancellation.js";
+import { normalizeWorkflowHook, resumeOwnedCancellationHook } from "#execution/workflow-hook.js";
 
 const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
@@ -45,10 +53,6 @@ export const STABLE_WORKFLOW_NAMES: ReadonlySet<string> = new Set([
 const STABLE_ID_BASE = EVE_PACKAGE_INFO.name;
 
 const log = createLogger("execution.workflow-runtime");
-
-interface WorkflowHookRecord {
-  readonly runId: string;
-}
 
 /**
  * Stable workflow reference used by `start()` to locate the workflow
@@ -109,16 +113,17 @@ export function createWorkflowRuntime(config: {
         return events;
       };
 
-      return {
+      const handle: RunHandle = {
         continuationToken: input.continuationToken ?? run.runId,
         get events() {
           return getEvents();
         },
         sessionId: run.runId,
       };
+      return handle;
     },
 
-    async deliver(input: DeliverInput): Promise<{ sessionId: string }> {
+    async deliver(input: DeliverInput): Promise<{ readonly sessionId: string }> {
       applyEveWorkflowQueueNamespace();
       const hookPayload: HookPayload = {
         auth: input.auth,
@@ -139,6 +144,29 @@ export function createWorkflowRuntime(config: {
           continuationToken: input.continuationToken,
         });
         throw error;
+      }
+    },
+
+    async cancelTurn(input): Promise<void> {
+      const resumed = await resumeOwnedCancellationHook({
+        cancellationHookId: createActiveTurnCancellationHookId(input.sessionId),
+        expectedRunId: input.sessionId,
+        ownerHookId: createActiveTurnCancellationHookId(input.sessionId),
+      });
+      if (!resumed) {
+        throw new RuntimeCancellationConflictError();
+      }
+    },
+
+    async cancelSession(input): Promise<void> {
+      const cancellationHookId = createSessionCancellationHookId(input.sessionId);
+      const resumed = await resumeOwnedCancellationHook({
+        cancellationHookId,
+        expectedRunId: input.sessionId,
+        ownerHookId: cancellationHookId,
+      });
+      if (!resumed) {
+        throw new RuntimeCancellationConflictError();
       }
     },
 
@@ -191,21 +219,6 @@ function shouldRouteToLatestDeployment(): boolean {
 
 function isLatestDeploymentUnsupportedError(error: unknown): boolean {
   return error instanceof Error && error.message.includes(LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE);
-}
-
-function normalizeWorkflowHook(value: unknown): WorkflowHookRecord {
-  if (value === null || typeof value !== "object" || !("runId" in value)) {
-    throw new Error("Workflow hook did not include a run id.");
-  }
-
-  const runId = (value as { runId?: unknown }).runId;
-  if (typeof runId !== "string" || runId.length === 0) {
-    throw new Error("Workflow hook did not include a run id.");
-  }
-
-  return {
-    runId,
-  };
 }
 
 function parseNdjsonStream(

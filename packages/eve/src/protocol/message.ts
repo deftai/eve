@@ -10,7 +10,7 @@ export const EVE_STREAM_FORMAT_HEADER = "x-eve-stream-format";
 export const EVE_STREAM_VERSION_HEADER = "x-eve-stream-version";
 export const EVE_MESSAGE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
 export const EVE_MESSAGE_STREAM_FORMAT = "ndjson";
-export const EVE_MESSAGE_STREAM_VERSION = "16";
+export const EVE_MESSAGE_STREAM_VERSION = "17";
 
 /**
  * eve-owned finish reason for one completed assistant step.
@@ -409,6 +409,15 @@ export interface TurnFailedStreamEvent {
   type: "turn.failed";
 }
 
+/** Stream event emitted when an active turn is intentionally cancelled. */
+export interface TurnCancelledStreamEvent {
+  data: {
+    sequence: number;
+    turnId: string;
+  };
+  type: "turn.cancelled";
+}
+
 /**
  * Stream event emitted when the workflow decides to compact the current
  * visible session history before the next model fragment runs.
@@ -518,6 +527,14 @@ export interface SessionCompletedStreamEvent {
   type: "session.completed";
 }
 
+/** Stream event emitted when an entry session is intentionally cancelled. */
+export interface SessionCancelledStreamEvent {
+  data: {
+    sessionId: string;
+  };
+  type: "session.cancelled";
+}
+
 /**
  * Serializable stream event union for the durable message session flow.
  */
@@ -531,6 +548,7 @@ export type HandleMessageStreamEvent = (
   | MessageReceivedStreamEvent
   | ReasoningAppendedStreamEvent
   | SessionCompletedStreamEvent
+  | SessionCancelledStreamEvent
   | SessionFailedStreamEvent
   | SessionStartedStreamEvent
   | SessionWaitingStreamEvent
@@ -547,6 +565,7 @@ export type HandleMessageStreamEvent = (
   | StepFailedStreamEvent
   | StepStartedStreamEvent
   | TurnCompletedStreamEvent
+  | TurnCancelledStreamEvent
   | TurnFailedStreamEvent
   | TurnStartedStreamEvent
 ) & {
@@ -580,6 +599,7 @@ const textEncoder = new TextEncoder();
 export function isCurrentTurnBoundaryEvent(event: HandleMessageStreamEvent): boolean {
   return (
     event.type === "session.completed" ||
+    event.type === "session.cancelled" ||
     event.type === "session.failed" ||
     event.type === "session.waiting"
   );
@@ -1069,6 +1089,17 @@ export function createTurnFailedEvent(input: {
   };
 }
 
+/** Creates the `turn.cancelled` event for an intentional turn cancellation. */
+export function createTurnCancelledEvent(input: {
+  readonly sequence: number;
+  readonly turnId: string;
+}): TurnCancelledStreamEvent {
+  return {
+    data: { sequence: input.sequence, turnId: input.turnId },
+    type: "turn.cancelled",
+  };
+}
+
 /**
  * Creates the `compaction.requested` event for one runtime compaction pass.
  */
@@ -1149,6 +1180,11 @@ export function createSessionFailedEvent(input: {
  */
 export function createSessionCompletedEvent(): SessionCompletedStreamEvent {
   return { type: "session.completed" };
+}
+
+/** Creates the terminal `session.cancelled` event. */
+export function createSessionCancelledEvent(sessionId: string): SessionCancelledStreamEvent {
+  return { data: { sessionId }, type: "session.cancelled" };
 }
 
 /**

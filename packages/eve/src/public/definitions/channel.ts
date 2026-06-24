@@ -90,7 +90,11 @@ export interface Agent {
    * `continuationToken` — routes typically catch the failure and fall back
    * to `run()` to start a new session.
    */
-  deliver(input: DeliverInput): Promise<{ sessionId: string }>;
+  deliver(input: DeliverInput): Promise<{ readonly sessionId: string }>;
+  /** Makes a best-effort request to cancel one turn and resolves once accepted. */
+  cancelTurn(input: { readonly sessionId: string }): Promise<void>;
+  /** Makes a best-effort entry-session cancellation request and resolves once accepted. */
+  cancelSession(input: { readonly sessionId: string }): Promise<void>;
   /**
    * Returns a readable NDJSON-style stream of lifecycle events for an
    * existing session. Used by the framework's HTTP session-stream route and by

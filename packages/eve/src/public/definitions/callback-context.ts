@@ -1,8 +1,10 @@
 import type { SkillHandle } from "#execution/skills/types.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
 import type { SessionAuth, SessionParent, SessionTurn } from "#context/keys.js";
+import type { CancellationScope } from "#channel/types.js";
 
 export type { SessionAuth, SessionParent, SessionTurn };
+export type { CancellationScope } from "#channel/types.js";
 
 /**
  * Shared runtime context available to all authored callbacks that run
@@ -13,6 +15,11 @@ export type { SessionAuth, SessionParent, SessionTurn };
  * domain-specific arguments instead.
  */
 export interface SessionContext {
+  /** Cooperative signal for work owned by the active turn. */
+  readonly abortSignal: AbortSignal;
+
+  /** Requests cancellation and never returns to authored code. */
+  cancel(input: { readonly scope: CancellationScope }): never;
   /**
    * Active session metadata. Mirrors the `Session` type but exposes the
    * identifier as `id` here, where `Session` names it `sessionId`.

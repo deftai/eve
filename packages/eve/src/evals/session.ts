@@ -16,6 +16,7 @@ import { extractCompletedResult } from "#client/output-schema.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import { deriveRunFacts } from "#evals/runner/derive-run-facts.js";
 import type {
+  EveEvalActiveTurn,
   EveEvalSession,
   EveEvalSessionResult,
   EveEvalToolCall,
@@ -115,16 +116,30 @@ export class EvalSessionDriver implements EveEvalSession {
   }
 
   async send(input: SendTurnInput): Promise<EveEvalTurn> {
+    return await (await this.start(input)).result();
+  }
+
+  async start(input: SendTurnInput): Promise<EveEvalActiveTurn> {
     const response = await this.#session.send(attachSignal(input, this.#signal));
-    const result = await response.result();
-    return this.#recordTurn({
-      data: result.data,
-      events: result.events,
-      inputRequests: result.inputRequests,
-      message: result.message,
-      sessionId: result.sessionId,
-      status: result.status,
+    return new EvalActiveTurn({
+      cancel: () => response.cancel(),
+      read: async () => {
+        const result = await response.result();
+        return this.#recordTurn({
+          data: result.data,
+          events: result.events,
+          inputRequests: result.inputRequests,
+          message: result.message,
+          sessionId: result.sessionId,
+          status: result.status,
+        });
+      },
+      sessionId: response.sessionId,
     });
+  }
+
+  async cancel(): Promise<void> {
+    await this.#session.cancel();
   }
 
   async sendFile(text: string, filePath: string, mediaType?: string): Promise<EveEvalTurn> {
@@ -188,7 +203,7 @@ export class EvalSessionDriver implements EveEvalSession {
     readonly inputRequests: readonly InputRequest[];
     readonly message: string | undefined;
     readonly sessionId: string | undefined;
-    readonly status: "completed" | "failed" | "waiting";
+    readonly status: "cancelled" | "completed" | "failed" | "waiting";
   }): EveEvalTurn {
     this.#events.push(...input.events);
     this.#pendingInputRequests = input.status === "waiting" ? input.inputRequests : [];
@@ -208,13 +223,39 @@ export class EvalSessionDriver implements EveEvalSession {
   }
 }
 
+class EvalActiveTurn implements EveEvalActiveTurn {
+  readonly sessionId: string;
+  readonly #cancel: () => Promise<void>;
+  readonly #read: () => Promise<EveEvalTurn>;
+  #result: Promise<EveEvalTurn> | undefined;
+
+  constructor(input: {
+    readonly cancel: () => Promise<void>;
+    readonly read: () => Promise<EveEvalTurn>;
+    readonly sessionId: string;
+  }) {
+    this.#cancel = input.cancel;
+    this.#read = input.read;
+    this.sessionId = input.sessionId;
+  }
+
+  async cancel(): Promise<void> {
+    await this.#cancel();
+  }
+
+  result(): Promise<EveEvalTurn> {
+    this.#result ??= this.#read();
+    return this.#result;
+  }
+}
+
 class EvalTurn implements EveEvalTurn {
   readonly data: unknown;
   readonly events: readonly HandleMessageStreamEvent[];
   readonly inputRequests: readonly InputRequest[];
   readonly message: string | undefined;
   readonly sessionId: string;
-  readonly status: "completed" | "failed" | "waiting";
+  readonly status: "cancelled" | "completed" | "failed" | "waiting";
   readonly toolCalls: readonly EveEvalToolCall[];
 
   constructor(input: {
@@ -223,7 +264,7 @@ class EvalTurn implements EveEvalTurn {
     readonly inputRequests: readonly InputRequest[];
     readonly message: string | undefined;
     readonly sessionId: string;
-    readonly status: "completed" | "failed" | "waiting";
+    readonly status: "cancelled" | "completed" | "failed" | "waiting";
     readonly toolCalls: readonly EveEvalToolCall[];
   }) {
     this.data = input.data;

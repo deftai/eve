@@ -25,7 +25,11 @@
  */
 
 import type { EveAttributeValue } from "#runtime/attributes/emit.js";
-import { isNonEmptyString } from "#shared/guards.js";
+import { isNonEmptyString, isObject } from "#shared/guards.js";
+import {
+  readSerializedChannel,
+  readSerializedParentSession,
+} from "#execution/workflow-serialized-context.js";
 
 /**
  * Active compiled graph node id for the session's agent. Returned by
@@ -37,21 +41,6 @@ import { isNonEmptyString } from "#shared/guards.js";
  */
 export interface SessionIdentitySummary {
   readonly nodeId: string;
-}
-
-/** Untyped channel adapter snapshot as it survives serialization. */
-interface SerializedChannelAdapter {
-  readonly kind?: unknown;
-}
-
-/** Untyped session parent snapshot as it survives serialization. */
-interface SerializedSessionParent {
-  readonly callId?: unknown;
-  readonly sessionId?: unknown;
-  readonly rootSessionId?: unknown;
-  readonly turn?: {
-    readonly id?: unknown;
-  };
 }
 
 /**
@@ -70,7 +59,7 @@ export interface SessionParentLineage {
  * tag emission silently drops undefined values.
  */
 export function readChannelKind(serializedContext: Record<string, unknown>): string | undefined {
-  const channel = serializedContext["eve.channel"] as SerializedChannelAdapter | undefined;
+  const channel = readSerializedChannel(serializedContext);
   const kind = channel?.kind;
   return isNonEmptyString(kind) ? kind : undefined;
 }
@@ -82,11 +71,11 @@ export function readChannelKind(serializedContext: Record<string, unknown>): str
 export function readParentLineage(
   serializedContext: Record<string, unknown>,
 ): SessionParentLineage {
-  const parent = serializedContext["eve.parentSession"] as SerializedSessionParent | undefined;
+  const parent = readSerializedParentSession(serializedContext);
   const callId = parent?.callId;
   const rootSessionId = parent?.rootSessionId;
   const sessionId = parent?.sessionId;
-  const turnId = parent?.turn?.id;
+  const turnId = isObject(parent?.turn) ? parent.turn.id : undefined;
   return {
     callId: isNonEmptyString(callId) ? callId : undefined,
     rootSessionId: isNonEmptyString(rootSessionId) ? rootSessionId : undefined,

@@ -1,7 +1,8 @@
 import { type FilePart, type TextPart, type UserContent } from "ai";
 
-import type { SessionAuthContext, SessionCallback } from "#channel/types.js";
+import type { CancellationScope, SessionAuthContext, SessionCallback } from "#channel/types.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
+import { isRuntimeCancellationConflictError } from "#execution/runtime-errors.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
 import { createLogger, logError } from "#internal/logging.js";
 import {
@@ -261,6 +262,48 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         );
       }),
 
+      POST("/eve/v1/session/:sessionId/cancel", async (req, args) => {
+        const authResult = await routeAuth(req, input.auth);
+        if (authResult instanceof Response) return authResult;
+        const { cancelSession, cancelTurn, params } = args;
+
+        const sessionId = params.sessionId;
+        if (!sessionId) {
+          return Response.json({ error: "Missing session id.", ok: false }, { status: 400 });
+        }
+
+        let payload: unknown;
+        try {
+          payload = await req.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON body.", ok: false }, { status: 400 });
+        }
+
+        const cancellation = parseCancellationBody(payload);
+        if (cancellation instanceof Response) return cancellation;
+
+        try {
+          if (cancellation.scope === "turn") {
+            await cancelTurn({ sessionId });
+          } else {
+            await cancelSession({ sessionId });
+          }
+        } catch (error) {
+          if (isRuntimeCancellationConflictError(error)) {
+            return Response.json(
+              {
+                error: "Cancellation capability is stale or does not match the session.",
+                ok: false,
+              },
+              { status: 409 },
+            );
+          }
+          throw error;
+        }
+
+        return Response.json({ ok: true }, { status: 202 });
+      }),
+
       GET("/eve/v1/session/:sessionId/stream", async (req, { getSession, params }) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
@@ -298,6 +341,26 @@ export function eveChannel(input: EveChannelInput): EveChannel {
     ],
     events: input.events,
   });
+}
+
+function parseCancellationBody(value: unknown): { readonly scope: CancellationScope } | Response {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return Response.json({ error: "Expected a JSON object.", ok: false }, { status: 400 });
+  }
+
+  const body = value as Record<string, unknown>;
+  const keys = Object.keys(body);
+  if (body.scope === "turn" && keys.length === 1) {
+    return { scope: "turn" };
+  }
+  if (body.scope === "session" && keys.length === 1) {
+    return { scope: "session" };
+  }
+
+  return Response.json(
+    { error: 'Expected exactly one scope: "turn" or "session".', ok: false },
+    { status: 400 },
+  );
 }
 
 type OnMessageOutcome =

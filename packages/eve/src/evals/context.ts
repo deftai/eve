@@ -51,12 +51,17 @@ export function createEvalContext(deps: {
     get sessionId() {
       return primary().sessionId;
     },
+    cancel: () => primary().cancel(),
     expectInputRequests: (filter) => primary().expectInputRequests(filter),
     respond: (...responses) => primary().respond(...responses),
     respondAll: (optionId) => primary().respondAll(optionId),
     send: (input) => {
       lastPrompt = promptText(input);
       return primary().send(input);
+    },
+    start: (input) => {
+      lastPrompt = promptText(input);
+      return primary().start(input);
     },
     sendFile: (text, filePath, mediaType) => {
       lastPrompt = text;

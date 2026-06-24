@@ -6,11 +6,24 @@ description: "Runtime helpers: ctx.session, ctx.getSandbox, ctx.getSkill, and de
 eve exposes runtime state through the `ctx` parameter passed to tool `execute`, hook handlers, and channel event handlers:
 
 - `ctx.session`: session metadata, turn, auth, and parent lineage
+- `ctx.abortSignal`: cooperative cancellation signal for the active turn
+- `ctx.cancel({ scope })`: cancel the active turn or complete entry session and exit authored execution
 - `ctx.getSandbox()`: live sandbox handle for the current agent
 - `ctx.getSkill(identifier)`: handle for a named skill visible to the current agent
 - `defineState(name, initial)`: typed durable state with `get()` and `update()` (imported from `eve/context`)
 
 These APIs work only inside active authored runtime execution, including tools, channel event handlers, and authored hooks. They throw when called outside a managed context.
+
+## Cancellation
+
+Pass `ctx.abortSignal` to authored APIs that accept an `AbortSignal`. eve already forwards it to model calls and tool execution. Request explicit cancellation when authored logic decides work should stop:
+
+```ts
+if (shouldStopOnlyThisTurn) ctx.cancel({ scope: "turn" });
+if (shouldEndTheSession) ctx.cancel({ scope: "session" });
+```
+
+`ctx.cancel()` never returns, so code after it does not run. Turn cancellation emits `turn.cancelled` followed by `session.waiting`; session cancellation emits `turn.cancelled` followed by terminal `session.cancelled`.
 
 ## `ctx.session`
 

@@ -11,6 +11,7 @@ import type { MessageResult } from "#client/types.js";
  * Internal configuration passed to construct a {@link MessageResponse}.
  */
 interface MessageResponseInput {
+  readonly cancel: () => Promise<void>;
   readonly continuationToken?: string;
   readonly createStream: () => AsyncGenerator<HandleMessageStreamEvent>;
   readonly sessionId: string;
@@ -35,13 +36,20 @@ export class MessageResponse<TOutput = unknown> implements AsyncIterable<HandleM
   readonly sessionId: string;
 
   #consumed = false;
+  readonly #cancel: () => Promise<void>;
   readonly #createStream: () => AsyncGenerator<HandleMessageStreamEvent>;
 
   /** @internal */
   constructor(input: MessageResponseInput) {
+    this.#cancel = input.cancel;
     this.continuationToken = input.continuationToken;
     this.sessionId = input.sessionId;
     this.#createStream = input.createStream;
+  }
+
+  /** Makes a best-effort cancellation request and resolves once the server accepts it. */
+  async cancel(): Promise<void> {
+    await this.#cancel();
   }
 
   /**

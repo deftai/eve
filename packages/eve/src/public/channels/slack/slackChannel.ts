@@ -320,6 +320,7 @@ export type SlackInboundResultOrPromise = SlackMentionResultOrPromise;
  */
 export interface SlackChannelEvents {
   readonly "turn.started"?: SlackEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: SlackEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: SlackEventHandler<"actions.requested">;
   readonly "action.result"?: SlackEventHandler<"action.result">;
   readonly "message.completed"?: SlackEventHandler<"message.completed">;
@@ -331,6 +332,7 @@ export interface SlackChannelEvents {
   readonly "turn.completed"?: SlackEventHandler<"turn.completed">;
   readonly "session.failed"?: SlackSessionFailedHandler;
   readonly "session.completed"?: SlackEventHandler<"session.completed">;
+  readonly "session.cancelled"?: SlackEventHandler<"session.cancelled">;
   readonly "session.waiting"?: SlackEventHandler<"session.waiting">;
   /**
    * Override receives {@link SlackAuthorizationEventContext}, a

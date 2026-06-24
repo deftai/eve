@@ -162,6 +162,9 @@ export type HookPayload =
   | RuntimeActionResultHookPayload
   | SubagentInputRequestHookPayload;
 
+/** Scope accepted by authored and runtime cancellation operations. */
+export type CancellationScope = "turn" | "session";
+
 /**
  * Terminal callback metadata attached to a session at creation.
  *
@@ -319,7 +322,13 @@ export interface Runtime {
   /**
    * Delivers a follow-up message to a parked session.
    */
-  deliver(input: DeliverInput): Promise<{ sessionId: string }>;
+  deliver(input: DeliverInput): Promise<{ readonly sessionId: string }>;
+
+  /** Makes a best-effort request to cancel one turn and resolves once accepted. */
+  cancelTurn(input: { readonly sessionId: string }): Promise<void>;
+
+  /** Makes a best-effort entry-session cancellation request. */
+  cancelSession(input: { readonly sessionId: string }): Promise<void>;
 
   /**
    * Returns a readable stream of lifecycle events for an existing session.

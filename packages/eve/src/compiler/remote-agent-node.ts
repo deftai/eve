@@ -17,7 +17,6 @@ export type CompiledRemoteAgentNode = Readonly<
       entryPath: string;
       name: string;
       outputSchema?: JsonObject;
-      path: string;
       rootPath: string;
       url: string;
     }
@@ -35,7 +34,6 @@ export const compiledRemoteAgentNodeSchema: z.ZodType<CompiledRemoteAgentNode> =
     name: z.string(),
     nodeId: z.string(),
     outputSchema: jsonObjectSchema.optional(),
-    path: z.string(),
     rootPath: z.string(),
     sourceId: z.string(),
     sourceKind: z.literal("module"),

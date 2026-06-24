@@ -139,6 +139,7 @@ type LinearSessionFailedHandler = (
 /** Event handlers supported by `linearChannel({ events })`. */
 export interface LinearChannelEvents {
   readonly "turn.started"?: LinearEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: LinearEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: LinearEventHandler<"actions.requested">;
   readonly "action.result"?: LinearEventHandler<"action.result">;
   readonly "message.completed"?: LinearEventHandler<"message.completed">;
@@ -148,6 +149,7 @@ export interface LinearChannelEvents {
   readonly "turn.completed"?: LinearEventHandler<"turn.completed">;
   readonly "session.failed"?: LinearSessionFailedHandler;
   readonly "session.completed"?: LinearEventHandler<"session.completed">;
+  readonly "session.cancelled"?: LinearEventHandler<"session.cancelled">;
   readonly "session.waiting"?: LinearEventHandler<"session.waiting">;
   readonly "authorization.required"?: LinearEventHandler<"authorization.required">;
   readonly "authorization.completed"?: LinearEventHandler<"authorization.completed">;

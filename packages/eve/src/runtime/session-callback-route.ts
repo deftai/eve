@@ -25,6 +25,12 @@ type SessionTerminalCallbackPayload =
       readonly kind: "session.failed";
       readonly sessionId: string;
       readonly subagentName: string;
+    }
+  | {
+      readonly callId: string;
+      readonly kind: "session.cancelled";
+      readonly sessionId: string;
+      readonly subagentName: string;
     };
 
 export function getSessionCallbackChannelDefinitions(): readonly ResolvedChannelDefinition[] {
@@ -122,6 +128,19 @@ function projectSessionCallbackResult(
               message: "Remote agent failed.",
             }
           : payload.error,
+      subagentName: payload.subagentName,
+    };
+  }
+
+  if (payload.kind === "session.cancelled") {
+    return {
+      callId: payload.callId,
+      isError: true,
+      kind: "subagent-result",
+      output: {
+        code: "REMOTE_AGENT_CANCELLED",
+        message: "Remote agent session was cancelled.",
+      },
       subagentName: payload.subagentName,
     };
   }

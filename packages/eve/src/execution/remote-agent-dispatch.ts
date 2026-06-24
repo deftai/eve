@@ -1,5 +1,9 @@
 import { EVE_SESSION_ID_HEADER } from "#protocol/message.js";
-import { createEveCallbackRoutePath } from "#protocol/routes.js";
+import {
+  createEveCallbackRoutePath,
+  createEveCancelSessionRoutePath,
+  EVE_CREATE_SESSION_ROUTE_PATH,
+} from "#protocol/routes.js";
 import { createWorkflowCallbackUrl } from "#execution/workflow-callback-url.js";
 import { formatSubagentInvocation } from "#execution/subagent-invocation.js";
 import type { HarnessSession } from "#harness/types.js";
@@ -12,7 +16,7 @@ export async function startRemoteAgentSession(input: {
   readonly callbackBaseUrl: string | undefined;
   readonly remote: ResolvedRuntimeRemoteAgentNode;
   readonly session: HarnessSession;
-}): Promise<string> {
+}): Promise<{ readonly continuationToken: string; readonly sessionId: string }> {
   const callbackToken = input.session.continuationToken;
   if (!callbackToken) {
     throw new Error("Cannot dispatch remote agent without a parent continuation token.");
@@ -51,23 +55,55 @@ export async function startRemoteAgentSession(input: {
     );
   }
 
-  const sessionIdFromHeader = response.headers.get(EVE_SESSION_ID_HEADER);
-  if (sessionIdFromHeader !== null && sessionIdFromHeader.length > 0) {
-    return sessionIdFromHeader;
-  }
-
+  let body: { readonly continuationToken?: unknown; readonly sessionId?: unknown };
   try {
-    const body = (await response.json()) as { readonly sessionId?: unknown };
-    if (typeof body.sessionId === "string" && body.sessionId.length > 0) {
-      return body.sessionId;
-    }
+    body = (await response.json()) as typeof body;
   } catch {
-    // Fall through to the generic error below.
+    throw new Error(
+      `Remote agent "${input.action.remoteAgentName}" create-session response was not valid JSON.`,
+    );
   }
 
-  throw new Error(
-    `Remote agent "${input.action.remoteAgentName}" create-session response did not include a session id.`,
+  const sessionIdFromHeader = response.headers.get(EVE_SESSION_ID_HEADER);
+  const sessionId =
+    sessionIdFromHeader && sessionIdFromHeader.length > 0 ? sessionIdFromHeader : body.sessionId;
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new Error(
+      `Remote agent "${input.action.remoteAgentName}" create-session response did not include a session id.`,
+    );
+  }
+  if (typeof body.continuationToken !== "string" || body.continuationToken.length === 0) {
+    throw new Error(
+      `Remote agent "${input.action.remoteAgentName}" create-session response did not include a continuation token.`,
+    );
+  }
+
+  return { continuationToken: body.continuationToken, sessionId };
+}
+
+/** Cancels a remote child through the public eve cancellation endpoint. */
+export async function cancelRemoteAgentSession(input: {
+  readonly remote: ResolvedRuntimeRemoteAgentNode;
+  readonly sessionId: string;
+}): Promise<void> {
+  const headers = await resolveRemoteAgentRequestHeaders(input.remote);
+  const response = await fetch(
+    new URL(
+      createEveCancelSessionRoutePath(input.sessionId),
+      `${trimTrailingSlash(input.remote.url)}/`,
+    ).toString(),
+    {
+      body: JSON.stringify({
+        scope: "session",
+      }),
+      headers: { "content-type": "application/json", ...headers },
+      method: "POST",
+    },
   );
+
+  if (!response.ok && response.status !== 409) {
+    throw new Error(`Remote agent cancellation failed with HTTP ${response.status}.`);
+  }
 }
 
 export function resolveRemoteAgentForAction(input: {
@@ -84,7 +120,7 @@ export function resolveRemoteAgentForAction(input: {
 }
 
 function createRemoteAgentSessionUrl(remote: ResolvedRuntimeRemoteAgentNode): string {
-  return new URL(remote.path, `${trimTrailingSlash(remote.url)}/`).toString();
+  return new URL(EVE_CREATE_SESSION_ROUTE_PATH, `${trimTrailingSlash(remote.url)}/`).toString();
 }
 
 async function resolveRemoteAgentRequestHeaders(

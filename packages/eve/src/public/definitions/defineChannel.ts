@@ -71,6 +71,7 @@ type ChannelSessionFailedHandler<TCtx> = (
  */
 export interface ChannelEvents<TCtx = void> {
   readonly "turn.started"?: ChannelEventHandler<"turn.started", TCtx>;
+  readonly "turn.cancelled"?: ChannelEventHandler<"turn.cancelled", TCtx>;
   readonly "actions.requested"?: ChannelEventHandler<"actions.requested", TCtx>;
   readonly "action.result"?: ChannelEventHandler<"action.result", TCtx>;
   readonly "message.completed"?: ChannelEventHandler<"message.completed", TCtx>;
@@ -82,6 +83,7 @@ export interface ChannelEvents<TCtx = void> {
   readonly "turn.completed"?: ChannelEventHandler<"turn.completed", TCtx>;
   readonly "session.failed"?: ChannelSessionFailedHandler<TCtx>;
   readonly "session.completed"?: ChannelEventHandler<"session.completed", TCtx>;
+  readonly "session.cancelled"?: ChannelEventHandler<"session.cancelled", TCtx>;
   readonly "session.waiting"?: ChannelEventHandler<"session.waiting", TCtx>;
   readonly "authorization.required"?: ChannelEventHandler<"authorization.required", TCtx>;
   readonly "authorization.completed"?: ChannelEventHandler<"authorization.completed", TCtx>;
@@ -232,6 +234,7 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
 
   const eventTypes = [
     "turn.started",
+    "turn.cancelled",
     "actions.requested",
     "action.result",
     "message.completed",
@@ -243,6 +246,7 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
     "turn.completed",
     "session.failed",
     "session.completed",
+    "session.cancelled",
     "session.waiting",
     "authorization.required",
     "authorization.completed",

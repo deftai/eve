@@ -156,6 +156,7 @@ type TeamsSessionFailedHandler = (
 /** Event handlers supported by `teamsChannel({ events })`. */
 export interface TeamsChannelEvents {
   readonly "turn.started"?: TeamsEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: TeamsEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: TeamsEventHandler<"actions.requested">;
   readonly "action.result"?: TeamsEventHandler<"action.result">;
   readonly "message.completed"?: TeamsEventHandler<"message.completed">;
@@ -165,6 +166,7 @@ export interface TeamsChannelEvents {
   readonly "turn.completed"?: TeamsEventHandler<"turn.completed">;
   readonly "session.failed"?: TeamsSessionFailedHandler;
   readonly "session.completed"?: TeamsEventHandler<"session.completed">;
+  readonly "session.cancelled"?: TeamsEventHandler<"session.cancelled">;
   readonly "session.waiting"?: TeamsEventHandler<"session.waiting">;
   readonly "authorization.required"?: TeamsEventHandler<"authorization.required">;
   readonly "authorization.completed"?: TeamsEventHandler<"authorization.completed">;

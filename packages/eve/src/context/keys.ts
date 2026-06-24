@@ -8,6 +8,7 @@ import type { SystemModelMessage } from "ai";
 
 import type { JsonObject } from "#shared/json.js";
 import type {
+  CancellationScope,
   ChannelInstrumentationProjection,
   SessionAuthContext,
   SessionCallback,
@@ -84,6 +85,12 @@ export const SessionCallbackKey = new ContextKey<SessionCallback>("eve.sessionCa
 
 export const SessionKey = new ContextKey<Session>("eve.session");
 export const SandboxKey = new ContextKey<SandboxAccess>("eve.sandbox");
+/** Cooperative signal for the currently executing turn step. */
+export const AbortSignalKey = new ContextKey<AbortSignal>("eve.abortSignal");
+/** Step-local operation used by authored callbacks to request cancellation. */
+export const CancelKey = new ContextKey<(input: { readonly scope: CancellationScope }) => never>(
+  "eve.cancel",
+);
 
 // ---------------------------------------------------------------------------
 // Dynamic tool keys

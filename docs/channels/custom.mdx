@@ -46,12 +46,16 @@ export default defineChannel({
 
 Declare routes with the `POST()` and `GET()` helpers. Each route handler receives the raw `Request` and a helpers object:
 
-- `send(message, { auth, continuationToken, state? })` starts or resumes a session. Returns a `Session`.
+- `send(message, { auth, continuationToken, state? })` starts or resumes a session and returns its `Session`.
 - `getSession(sessionId)` looks up an existing session. The returned `Session` exposes `getEventStream({ startIndex? })` for streaming.
+- `cancelTurn({ sessionId })` requests cancellation of the session's currently running turn.
+- `cancelSession({ sessionId })` requests cancellation of the entry session.
 - `receive(channel, ...)` hands inbound work to a different channel for cross-channel hand-off.
 - `params` holds route parameters extracted from the path pattern.
 - `waitUntil(promise)` extends the request lifetime for background work.
 - `requestIp` is the client IP, or `null` when the host cannot provide it.
+
+Cancellation is best effort. Requests return after the runtime accepts them, not after cleanup finishes, and can fail if they race hook registration or completion. A later reset operation that reuses the same stable continuation identity must wait for release before starting replacement work.
 
 Event handlers like `"message.completed"` are declared under the `events` key. They receive `(eventData, channel, ctx)`, where `eventData` is the event payload, `channel` carries platform handles and session continuation operations, and `ctx` is the eve `SessionContext`. Every channel kind shares this signature. The one exception is `session.failed`, which receives only `(eventData, channel)` with no `ctx`.
 

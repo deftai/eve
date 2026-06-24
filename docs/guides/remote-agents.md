@@ -20,14 +20,13 @@ export default defineRemoteAgent({
 
 `defineRemoteAgent` accepts:
 
-| Parameter      | Type                            | Required | Default           | Description                                                                                                                                     |
-| -------------- | ------------------------------- | -------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`          | `string`                        | Yes      | n/a               | Base URL of the remote eve deployment to call.                                                                                                  |
-| `description`  | `string`                        | Yes      | n/a               | Model-visible delegation description.                                                                                                           |
-| `auth`         | `OutboundAuthFn`                | No       | none              | Outbound auth hook from `eve/agents/auth`.                                                                                                      |
-| `headers`      | `HeadersValue`                  | No       | none              | Static or lazily resolved request headers.                                                                                                      |
-| `path`         | `string`                        | No       | `/eve/v1/session` | Route appended to `url` for the create-session request.                                                                                         |
-| `outputSchema` | `StandardSchema \| JSON Schema` | No       | none              | Structured return type the caller requires. Lowered to JSON Schema at compile time and enforced by the remote like any task-mode output schema. |
+| Parameter      | Type                            | Required | Default | Description                                                                                                                                     |
+| -------------- | ------------------------------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`          | `string`                        | Yes      | n/a     | Base URL of the remote eve deployment to call.                                                                                                  |
+| `description`  | `string`                        | Yes      | n/a     | Model-visible delegation description.                                                                                                           |
+| `auth`         | `OutboundAuthFn`                | No       | none    | Outbound auth hook from `eve/agents/auth`.                                                                                                      |
+| `headers`      | `HeadersValue`                  | No       | none    | Static or lazily resolved request headers.                                                                                                      |
+| `outputSchema` | `StandardSchema \| JSON Schema` | No       | none    | Structured return type the caller requires. Lowered to JSON Schema at compile time and enforced by the remote like any task-mode output schema. |
 
 ## The lowered tool
 

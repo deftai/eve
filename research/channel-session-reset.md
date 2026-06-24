@@ -33,20 +33,16 @@ Expose one authenticated route:
 The body is a strict union with no default scope:
 
 ```json
-{ "scope": "turn", "cancelToken": "<active-turn capability>" }
+{ "scope": "turn" }
 ```
 
 ```json
-{ "scope": "session", "continuationToken": "<current session capability>" }
+{ "scope": "session" }
 ```
 
-The route authenticates first, then verifies that the capability belongs to `:sessionId`. Invalid
-bodies return `400`; stale or mismatched capabilities return a non-disclosing `409`; accepted
+The route authenticates first, then targets the session identified by `:sessionId`. Invalid bodies
+return `400`; unavailable cancellation requests return a non-disclosing `409`; accepted
 cancellation returns `202`.
-
-Every request that starts a turn returns a fresh `cancelToken` alongside `sessionId` and the current
-`continuationToken`. A cancel token is valid only for that active turn. It cannot cancel the entry
-session or a later turn.
 
 ### TypeScript client
 
@@ -62,8 +58,8 @@ session or a later turn.
 
 Custom `defineChannel` route handlers receive separate operations to:
 
-- cancel a turn using its session id and turn cancel token;
-- cancel a session using its channel-local continuation token;
+- cancel the currently running turn using its session id;
+- cancel a session using its session id;
 - restart a session with replacement input after the old session releases its identity.
 
 The operations own token namespacing and ordering. Authors do not call workflow APIs or manually
@@ -91,7 +87,7 @@ created by custom channels as well as the built-in eve channel.
 
 ### Turn cancellation
 
-The cancel token is minted per turn and bound to `(sessionId, turnId)`.
+Turn cancellation addresses the active turn through its session id.
 
 ```text
 TURN START
@@ -101,49 +97,46 @@ ClientSession.send()
     `-- eve channel / runtime
         |-- resume entry session S1 through continuation C1
         |-- start turn T7
-        |-- bind cancel token K7 -> (S1, T7)
-        `-- return { sessionId: S1, continuationToken: C1, cancelToken: K7 }
-            `-- MessageResponse stores K7
+        |-- return { sessionId: S1, continuationToken: C1 }
+        `-- T7 registers as the active turn for S1
 
 TURN CANCEL
 
 MessageResponse.cancel()
 `-- POST /eve/v1/session/S1/cancel
-    `-- { scope: "turn", cancelToken: K7 }
+    `-- { scope: "turn" }
         `-- eve channel / runtime
             |-- authenticate the request
-            |-- resolve K7 -> (S1, T7)
-            |-- verify the URL session is S1
+            |-- resolve the active turn for S1
             |-- durably accept cancellation and return 202
             |-- cancel T7 and its descendants
-            |-- retire K7 when T7 settles
             `-- keep C1 -> S1 and emit session.waiting
 ```
 
-When T7 completes, fails, or is cancelled, K7 becomes stale. The next turn receives a new token K8.
-K7 can never cancel K8 or session S1.
+If no turn is currently running for S1, the request is an accepted no-op. Once a later turn starts,
+the same operation targets that new active turn.
 
 ### Session cancellation
 
-Session cancellation binds the current continuation token to the session id in the request. The
-runtime releases the continuation before tearing down the tree; that release is the reset
-linearization point.
+Session cancellation addresses the immutable session id in the request. The cancellation API
+acknowledges once cancellation is durably accepted. It does not wait for the continuation to
+release or for teardown to finish. A reset operation that reuses a stable identity must separately
+wait for release; that release is the reset linearization point.
 
 ```text
 SESSION CANCEL
 
 ClientSession.cancel() or authenticated /new handler
-`-- request session cancellation for (S1, C1)
+`-- request session cancellation for S1
     `-- channel / runtime
-        |-- verify C1 currently belongs to S1
         |-- mark S1 as closing
-        |-- release C1 from S1  [reset linearization point]
         |-- acknowledge accepted cancellation
+        |-- release C1 from S1  [reset linearization point]
         |-- cancel the complete S1 tree
         |   `-- active turn
         |       |-- model and tools
         |       `-- local and remote delegates
-        |-- wait for every branch to settle
+        |-- retire parent-owned pending work so late results are inert
         `-- emit session.cancelled and close S1
 
 IDENTITY REUSE
@@ -158,16 +151,20 @@ Old cleanup remains bound to S1.
 `-- a stale request naming S1 cannot cancel S2, even though S2 reuses C1
 ```
 
-For bare `/new`, the flow ends after S1 is cancelled. For `/new <message>` or `/new` with an
-attachment, restart waits for the release barrier and creates S2 with that replacement content.
+For bare `/new`, the flow ends after cancellation is accepted. For `/new <message>` or `/new` with
+an attachment, restart waits for the release barrier and creates S2 with that replacement content.
 
 ### Runtime guarantees
 
 - Cancellation follows ownership from entry session → turn → tools and delegated agents, including
   remote descendants.
+- Tree propagation makes one cancellation attempt per descendant; it does not poll hooks or wait
+  for descendant run completion. Retired pending-work state makes late results inert.
+- eve creates no readiness streams or barriers for cancellation. Workflow's durable
+  `AbortController` owns real-time propagation to active model and tool steps.
 - A cancelling session cannot accept input, launch work, or reclaim its continuation.
-- Cooperative abort reaches models, tools, sandboxes, and delegates; the runtime remains responsible
-  for terminating work that does not cooperate.
+- Cooperative abort reaches models, tools, sandboxes, and delegates through Workflow's
+  `AbortController`. Work that ignores its signal may continue, but its late result is inert.
 - Late descendant results cannot resume a cancelled ancestor or mutate a replacement session.
 - Turn cancellation ends at `session.waiting`; session cancellation ends at `session.cancelled`.
 - Cancellation is intentional control flow and does not trigger generic user-facing failure output.

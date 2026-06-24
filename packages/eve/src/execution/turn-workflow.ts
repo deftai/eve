@@ -6,6 +6,14 @@ import {
   type TurnWorkflowInput,
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { turnStep } from "#execution/workflow-steps.js";
+import { createHook, type Hook } from "#compiled/@workflow/core/index.js";
+import {
+  createCancellationReason,
+  createTurnWorkflowCancellationHookId,
+  readCancellationScope,
+} from "#execution/cancellation.js";
+import type { CancellationScope } from "#channel/types.js";
+import { applyEveWorkflowQueueNamespace } from "#internal/workflow/queue-namespace.js";
 
 const TASK_MODE_WAIT_ERROR_MESSAGE = "Task mode cannot wait for follow-up input (`next: null`).";
 
@@ -17,6 +25,7 @@ const TASK_MODE_WAIT_ERROR_MESSAGE = "Task mode cannot wait for follow-up input 
  */
 export type TurnCompletionPayload =
   | { readonly kind: "turn-result"; readonly action: NextDriverAction }
+  | { readonly kind: "turn-cancelled"; readonly scope: CancellationScope }
   | { readonly kind: "turn-error"; readonly error: unknown };
 
 export type { TurnWorkflowInput };
@@ -34,10 +43,41 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
 
   const input = migrateTurnWorkflowInput(rawInput);
   let currentStepInput: TurnStepInput = input.stepInput;
+  const controller = new AbortController();
+  const cancellationHookId = createTurnWorkflowCancellationHookId(input.completionToken);
+  const cancelHook = createHook<void>({
+    token: cancellationHookId,
+  });
 
   try {
+    const conflict = await cancelHook.getConflict();
+    if (conflict !== null) {
+      throw new Error(`Turn cancellation token is owned by run "${conflict.runId}".`);
+    }
+    const cancellation = awaitHookPayload(cancelHook).then(() => ({ kind: "cancel" as const }));
+
     while (true) {
-      const result = await turnStep(currentStepInput);
+      const outcome = await Promise.race([
+        turnStep({
+          ...currentStepInput,
+          abortController: controller,
+        }).then((result) => ({
+          kind: "result" as const,
+          result,
+        })),
+        cancellation,
+      ]);
+
+      if (outcome.kind === "cancel") {
+        controller.abort(createCancellationReason("turn"));
+        await notifyDriverStep({
+          completionToken: input.completionToken,
+          payload: { kind: "turn-cancelled", scope: "turn" },
+        });
+        return;
+      }
+
+      const { result } = outcome;
 
       if (result.action === "done") {
         await notifyDriverStep({
@@ -107,6 +147,7 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
       }
 
       currentStepInput = {
+        abortController: controller,
         input: undefined,
         parentWritable: currentStepInput.parentWritable,
         serializedContext: result.serializedContext,
@@ -114,6 +155,14 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
       };
     }
   } catch (error) {
+    const cancellationScope = readCancellationScope(controller.signal.reason);
+    if (controller.signal.aborted && cancellationScope !== undefined) {
+      await notifyDriverStep({
+        completionToken: input.completionToken,
+        payload: { kind: "turn-cancelled", scope: cancellationScope },
+      });
+      return;
+    }
     await notifyDriverStep({
       completionToken: input.completionToken,
       payload: {
@@ -122,7 +171,14 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
       },
     });
     throw error;
+  } finally {
+    cancelHook.dispose();
   }
+}
+
+async function awaitHookPayload<T>(hook: Hook<T>): Promise<T> {
+  for await (const value of hook) return value;
+  throw new Error("Turn cancellation hook closed before receiving a signal.");
 }
 
 /** Resumes the driver's one-shot completion hook with the turn result. */
@@ -132,7 +188,15 @@ export async function notifyDriverStep(input: {
 }): Promise<void> {
   "use step";
 
-  process.env.WORKFLOW_QUEUE_NAMESPACE = "eve";
-  const { resumeHook } = await import("#compiled/@workflow/core/runtime.js");
-  await resumeHook(input.completionToken, input.payload);
+  applyEveWorkflowQueueNamespace();
+  const [{ resumeHook }, { HookNotFoundError }] = await Promise.all([
+    import("#compiled/@workflow/core/runtime.js"),
+    import("#compiled/@workflow/errors/index.js"),
+  ]);
+  try {
+    await resumeHook(input.completionToken, input.payload);
+  } catch (error) {
+    if (HookNotFoundError.is(error)) return;
+    throw error;
+  }
 }

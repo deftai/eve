@@ -1,7 +1,6 @@
 import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 import type { HeadersValue } from "#client/types.js";
 import type { OutboundAuthFn } from "#public/agents/auth.js";
-import { EVE_CREATE_SESSION_ROUTE_PATH } from "#protocol/routes.js";
 import type { JsonObject } from "#shared/json.js";
 
 /**
@@ -24,11 +23,6 @@ export interface RemoteAgentDefinition {
    */
   readonly outputSchema?: StandardJSONSchemaV1<unknown, unknown> | JsonObject;
   /**
-   * Route eve appends to `url` for the create-session request. Defaults to the
-   * framework create-session route (`/eve/v1/session`).
-   */
-  readonly path: string;
-  /**
    * Base URL of the remote eve deployment to call.
    */
   readonly url: string;
@@ -39,21 +33,18 @@ export interface RemoteAgentDefinition {
  * from the file path under `agent/subagents/`; authored definitions do not
  * carry a `name` field.
  */
-export type RemoteAgentDefinitionInput = Omit<RemoteAgentDefinition, "kind" | "path"> & {
-  readonly path?: string;
-};
+export type RemoteAgentDefinitionInput = Omit<RemoteAgentDefinition, "kind">;
 
 /**
  * Defines a remote eve agent that the parent can call as a subagent tool. The
  * compiler lowers it at compile time from the file path under `agent/subagents/`.
  *
- * Stamps `kind: "remote"` and, when `path` is omitted, defaults it to the
- * framework create-session route (`/eve/v1/session`) on the target `url`.
+ * Stamps `kind: "remote"`. Remote delegation uses eve's framework-owned
+ * session protocol on the target `url`.
  */
 export function defineRemoteAgent(input: RemoteAgentDefinitionInput): RemoteAgentDefinition {
   return {
     ...input,
     kind: "remote",
-    path: input.path ?? EVE_CREATE_SESSION_ROUTE_PATH,
   };
 }

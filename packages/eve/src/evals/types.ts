@@ -93,11 +93,11 @@ export interface EveEvalTaskResult {
   readonly finalMessage: string | null;
   readonly sessionId?: string;
   /**
-   * How the run's final turn ended: `"completed"` (session finished),
-   * `"failed"` (terminal failure), or `"waiting"` (parked for the next
-   * user message).
+   * How the run's final turn ended: `"cancelled"` (intentional cancellation),
+   * `"completed"` (session finished), `"failed"` (terminal failure), or
+   * `"waiting"` (parked for the next user message).
    */
-  readonly status: "completed" | "failed" | "waiting";
+  readonly status: "cancelled" | "completed" | "failed" | "waiting";
   /** The captured stream events from the run. */
   readonly events: readonly HandleMessageStreamEvent[];
   /** Lines written through `t.log` while the eval ran. */
@@ -184,6 +184,8 @@ export interface EveEvalSession {
   readonly state: SessionState;
   /** eve session id after the first successful send. */
   readonly sessionId: string | undefined;
+  /** Make a best-effort request to cancel this driver's entry session. */
+  cancel(): Promise<void>;
   /** Assert the last turn parked on HITL input and return matching requests. */
   expectInputRequests(filter?: {
     readonly display?: InputRequest["display"];
@@ -195,8 +197,19 @@ export interface EveEvalSession {
   respondAll(optionId: string): Promise<EveEvalTurn>;
   /** Send one turn through this session. */
   send(input: SendTurnInput): Promise<EveEvalTurn>;
+  /** Start one turn and retain a handle that can cancel it while it is active. */
+  start(input: SendTurnInput): Promise<EveEvalActiveTurn>;
   /** Send one text turn with a local file attached as a data URL. */
   sendFile(text: string, filePath: string, mediaType?: string): Promise<EveEvalTurn>;
+}
+
+/** Active eval turn returned by {@link EveEvalSession.start}. */
+export interface EveEvalActiveTurn {
+  readonly sessionId: string;
+  /** Make a best-effort request to cancel only this active turn. */
+  cancel(): Promise<void>;
+  /** Consume the turn through its cancellation or normal boundary. */
+  result(): Promise<EveEvalTurn>;
 }
 
 /**
@@ -207,7 +220,7 @@ export interface EveEvalTurn {
   readonly events: readonly HandleMessageStreamEvent[];
   readonly inputRequests: readonly InputRequest[];
   readonly message: string | undefined;
-  readonly status: "completed" | "failed" | "waiting";
+  readonly status: "cancelled" | "completed" | "failed" | "waiting";
   readonly toolCalls: readonly EveEvalToolCall[];
   expectOk(): this;
 }

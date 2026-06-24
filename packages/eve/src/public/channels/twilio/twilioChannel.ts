@@ -154,6 +154,7 @@ type TwilioSessionFailedHandler = (
 /** Event handlers supported by `twilioChannel({ events })`. */
 export interface TwilioChannelEvents {
   readonly "turn.started"?: TwilioEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: TwilioEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: TwilioEventHandler<"actions.requested">;
   readonly "action.result"?: TwilioEventHandler<"action.result">;
   readonly "message.completed"?: TwilioEventHandler<"message.completed">;
@@ -163,6 +164,7 @@ export interface TwilioChannelEvents {
   readonly "turn.completed"?: TwilioEventHandler<"turn.completed">;
   readonly "session.failed"?: TwilioSessionFailedHandler;
   readonly "session.completed"?: TwilioEventHandler<"session.completed">;
+  readonly "session.cancelled"?: TwilioEventHandler<"session.cancelled">;
   readonly "session.waiting"?: TwilioEventHandler<"session.waiting">;
   readonly "authorization.required"?: TwilioEventHandler<"authorization.required">;
   readonly "authorization.completed"?: TwilioEventHandler<"authorization.completed">;

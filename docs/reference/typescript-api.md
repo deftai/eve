@@ -59,6 +59,8 @@ A few non-`define*` helpers round out the set: `disableTool` and `ExperimentalWo
 | Member                      | Use                                                                          |
 | --------------------------- | ---------------------------------------------------------------------------- |
 | `ctx.session`               | Current session, turn, auth, and optional parent lineage (read-only)         |
+| `ctx.abortSignal`           | Cooperative cancellation signal for work owned by the active turn            |
+| `ctx.cancel({ scope })`     | Cancel `"turn"` or `"session"` and exit the current authored execution       |
 | `ctx.getSandbox()`          | Live sandbox handle for the current agent                                    |
 | `ctx.getSkill(identifier)`  | Handle for a named skill visible to the current agent                        |
 | `ctx.getToken(provider)`    | Resolve a bearer token for an inline auth provider such as `connect("...")`  |

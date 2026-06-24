@@ -97,6 +97,8 @@ export default defineEval({
 `t` drives the primary session; `t.newSession()` returns an independent `EveEvalSession` against the same target, whose events feed the same run-level assertions.
 
 - `t.send(input)` sends a turn and waits for it to settle. It accepts the same input as `ClientSession.send()` (a string or a structured message) and resolves to a turn carrying `.message` and `.expectOk()`.
+- `t.start(input)` starts a turn without waiting and returns an active handle. Call `active.cancel()` to request cancellation of that turn and `active.result()` to observe its eventual boundary.
+- `t.cancel()` requests cancellation of the complete entry session. A later send starts a fresh session after cancellation wins.
 - `t.sendFile(text, path, mediaType?)` attaches a local file as a data URL.
 - `t.expectInputRequests(filter?)` asserts the previous turn parked on HITL input and returns the pending requests.
 - `t.respond(...responses)` answers specific pending input requests and sends them as the next turn.
@@ -104,6 +106,16 @@ export default defineEval({
 - `t.reply` is the last assistant message (or `null`); `t.sessionId` is the current session id; `t.events` is the full typed event stream captured so far.
 
 Each `send` (and `respond`/`respondAll`) resolves to a turn whose `expectOk()` throws only when the turn ended failed. A session left open for a next message is the normal end state of a successful turn.
+
+Cancellation is best effort and does not make `expectOk()` throw when it wins. A request that races hook registration or completion can return `409`:
+
+```ts
+const active = await t.start("Keep working until cancelled.");
+await active.cancel();
+const turn = await active.result();
+
+if (turn.status !== "cancelled") throw new Error("Expected turn cancellation.");
+```
 
 Events from every session are captured in the result and artifacts. `t.log(message)` records debug lines into the eval artifact; `--verbose` also streams them to stdout as evals run. `t.signal` is an `AbortSignal` that fires on timeout.
 

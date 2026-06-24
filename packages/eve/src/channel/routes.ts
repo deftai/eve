@@ -18,6 +18,10 @@ type WebSocketHeaders = Headers | readonly (readonly [string, string])[] | Recor
  * `requestIp` is the client IP, or `null` when the host cannot provide it.
  */
 export interface RouteHandlerArgs<TState = undefined> {
+  /** Makes a best-effort request to cancel one turn and resolves once accepted. */
+  cancelTurn(input: { readonly sessionId: string }): Promise<void>;
+  /** Makes a best-effort request to cancel an entry session and resolves once accepted. */
+  cancelSession(input: { readonly sessionId: string }): Promise<void>;
   send: SendFn<TState>;
   getSession: GetSessionFn;
   /**

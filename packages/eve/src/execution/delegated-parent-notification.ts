@@ -8,13 +8,15 @@
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { deserializeContext } from "#context/serialize.js";
 import type { RuntimeSubagentResultActionResult } from "#runtime/actions/types.js";
-import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter.js";
+import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter-state.js";
+import { applyEveWorkflowQueueNamespace } from "#internal/workflow/queue-namespace.js";
 
 /**
  * Resumes the parent driver's hook with a delegated subagent result.
  * No-op for root sessions.
  */
 export async function notifyDelegatedParentStep(input: {
+  readonly ignoreMissing?: boolean;
   readonly result: RuntimeSubagentResultActionResult | undefined;
   readonly serializedContext: Record<string, unknown>;
 }): Promise<void> {
@@ -36,10 +38,18 @@ export async function notifyDelegatedParentStep(input: {
     return;
   }
 
-  process.env.WORKFLOW_QUEUE_NAMESPACE = "eve";
-  const { resumeHook } = await import("#compiled/@workflow/core/runtime.js");
-  await resumeHook(parentContinuationToken, {
-    kind: "runtime-action-result",
-    results: [input.result],
-  });
+  applyEveWorkflowQueueNamespace();
+  const [{ resumeHook }, { HookNotFoundError }] = await Promise.all([
+    import("#compiled/@workflow/core/runtime.js"),
+    import("#compiled/@workflow/errors/index.js"),
+  ]);
+  try {
+    await resumeHook(parentContinuationToken, {
+      kind: "runtime-action-result",
+      results: [input.result],
+    });
+  } catch (error) {
+    if (input.ignoreMissing === true && HookNotFoundError.is(error)) return;
+    throw error;
+  }
 }

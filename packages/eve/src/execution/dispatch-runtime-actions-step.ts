@@ -19,7 +19,7 @@ import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js
 import { deserializeContext } from "#context/serialize.js";
 import {
   getPendingRuntimeActionBatch,
-  recordPendingSubagentChildToken,
+  recordPendingRuntimeActionChild,
 } from "#harness/runtime-actions.js";
 import {
   createSubagentCalledEvent,
@@ -110,9 +110,12 @@ export async function dispatchRuntimeActionsStep(input: {
           });
           const handle = await childRuntime.run(runInput);
 
-          nextSession = recordPendingSubagentChildToken({
+          nextSession = recordPendingRuntimeActionChild({
             callId: action.callId,
-            childContinuationToken,
+            child: {
+              continuationToken: childContinuationToken,
+              sessionId: handle.sessionId,
+            },
             session: nextSession,
           });
           childSessionId = handle.sessionId;
@@ -128,11 +131,17 @@ export async function dispatchRuntimeActionsStep(input: {
               remoteAgentName: action.remoteAgentName,
               registry: bundle.subagentRegistry.subagentsByNodeId,
             });
-            childSessionId = await startRemoteAgentSession({
+            const handle = await startRemoteAgentSession({
               action,
               callbackBaseUrl: input.callbackBaseUrl,
               remote: resolvedRemote,
               session,
+            });
+            childSessionId = handle.sessionId;
+            nextSession = recordPendingRuntimeActionChild({
+              callId: action.callId,
+              child: handle,
+              session: nextSession,
             });
           } catch (error) {
             logError(log, "remote agent start failed", error, {

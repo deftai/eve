@@ -280,7 +280,6 @@ export type ResolvedRuntimeRemoteAgentNode = Readonly<
       kind: "remote";
       name: string;
       outputSchema?: JsonObject;
-      path: string;
       url: string;
     }
 >;

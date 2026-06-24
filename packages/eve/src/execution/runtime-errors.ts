@@ -21,3 +21,23 @@ export function isRuntimeNoActiveSessionError(
 ): error is RuntimeNoActiveSessionError {
   return error instanceof RuntimeNoActiveSessionError;
 }
+
+/**
+ * Raised when a cancellation capability is stale or belongs to another
+ * session. Callers intentionally receive one non-disclosing classification.
+ */
+export class RuntimeCancellationConflictError extends Error {
+  readonly code = "CANCELLATION_CONFLICT" as const;
+
+  constructor() {
+    super("Cancellation capability is stale or does not match the session.");
+    this.name = "RuntimeCancellationConflictError";
+  }
+}
+
+/** Type guard for {@link RuntimeCancellationConflictError}. */
+export function isRuntimeCancellationConflictError(
+  error: unknown,
+): error is RuntimeCancellationConflictError {
+  return error instanceof RuntimeCancellationConflictError;
+}

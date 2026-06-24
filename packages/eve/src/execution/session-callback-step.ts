@@ -3,6 +3,7 @@ import { parseSessionCallback } from "#channel/session-callback.js";
 import { SessionCallbackKey } from "#context/keys.js";
 import { createLogger } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { readSerializedSessionId } from "#execution/workflow-serialized-context.js";
 
 const SESSION_CALLBACK_TIMEOUT_MS = 30_000;
 const log = createLogger("execution.session-callback");
@@ -21,11 +22,11 @@ export async function fireSessionCallbackStep(input: {
   readonly error?: unknown;
   readonly output?: unknown;
   readonly serializedContext: Record<string, unknown>;
-  readonly status: "completed" | "failed";
+  readonly status: "cancelled" | "completed" | "failed";
 }): Promise<void> {
   "use step";
 
-  const sessionId = (input.serializedContext["eve.sessionId"] as string | undefined) ?? "";
+  const sessionId = readSerializedSessionId(input.serializedContext) ?? "";
   const value = input.serializedContext[SessionCallbackKey.name];
   if (value === undefined) {
     return;
@@ -42,16 +43,23 @@ export async function fireSessionCallbackStep(input: {
             sessionId,
             subagentName: callback.subagentName,
           }
-        : {
-            callId: callback.callId,
-            error: {
-              code: "SESSION_FAILED",
-              message: toErrorMessage(input.error),
-            },
-            kind: "session.failed" as const,
-            sessionId,
-            subagentName: callback.subagentName,
-          };
+        : input.status === "cancelled"
+          ? {
+              callId: callback.callId,
+              kind: "session.cancelled" as const,
+              sessionId,
+              subagentName: callback.subagentName,
+            }
+          : {
+              callId: callback.callId,
+              error: {
+                code: "SESSION_FAILED",
+                message: toErrorMessage(input.error),
+              },
+              kind: "session.failed" as const,
+              sessionId,
+              subagentName: callback.subagentName,
+            };
 
     const response = await fetch(callback.url, {
       body: JSON.stringify(body),
@@ -66,7 +74,7 @@ export async function fireSessionCallbackStep(input: {
       signal: AbortSignal.timeout(SESSION_CALLBACK_TIMEOUT_MS),
     });
 
-    if (!response.ok) {
+    if (!response.ok && !(input.status === "cancelled" && response.status === 404)) {
       throw new Error(`Session callback failed with HTTP ${response.status}.`);
     }
   } catch (error) {

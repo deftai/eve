@@ -29,12 +29,30 @@ console.log(result.status, result.message);
 | Field       | Meaning                                                                        |
 | ----------- | ------------------------------------------------------------------------------ |
 | `message`   | Final assistant text for the turn, when one completed.                         |
-| `status`    | `"waiting"`, `"completed"`, or `"failed"`.                                     |
+| `status`    | `"waiting"`, `"completed"`, `"failed"`, or `"cancelled"`.                      |
 | `events`    | All stream events observed during the turn.                                    |
 | `sessionId` | Session ID for streaming and inspection.                                       |
 | `data`      | Structured output when the turn requested an [output schema](./output-schema). |
 
 When the stream includes `session.failed`, the turn returns `status: "failed"` rather than throwing. Transport and route errors throw `ClientError`.
+
+## Cancel work
+
+Cancel only the turn represented by a response with `MessageResponse.cancel()`. When cancellation wins, the session remains resumable and the result settles with `status: "cancelled"` after `turn.cancelled` and `session.waiting`:
+
+```ts
+const response = await session.send("Run a long analysis.");
+await response.cancel();
+const result = await response.result();
+```
+
+Cancel the complete entry session with `ClientSession.cancel()`. This clears the client's continuation cursor; the active result ends at `session.cancelled`, and the next `send()` starts a new session:
+
+```ts
+await session.cancel();
+```
+
+Both methods make a best-effort durable server-side cancellation request. A request that races hook registration or completion can return `409`. An `AbortSignal` passed to `send()` only stops the local HTTP request or stream and does not cancel server-side work.
 
 ## Send a full turn payload
 

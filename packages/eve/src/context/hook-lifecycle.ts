@@ -40,10 +40,7 @@ function buildHookContext(ctx: ContextContainer): HookContext {
   const channelAdapter = ctx.get(ChannelKey);
   const continuationToken = ctx.get(ContinuationTokenKey);
   const kind = channelAdapter !== undefined ? getAdapterKind(channelAdapter) : undefined;
-  const callbackCtx = buildCallbackContext();
-
-  return {
-    ...callbackCtx,
+  return buildCallbackContext({
     agent: {
       name: bundle.resolvedAgent.config.name ?? "agent",
       nodeId: bundle.nodeId,
@@ -52,5 +49,5 @@ function buildHookContext(ctx: ContextContainer): HookContext {
       kind,
       continuationToken,
     },
-  };
+  });
 }

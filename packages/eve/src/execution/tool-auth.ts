@@ -84,9 +84,7 @@ function buildToolContext(input: {
   readonly inlineAuthState: InlineAuthState;
 }): ToolContext {
   const { scope, justAuthorizedScopes, inlineAuthState } = input;
-  const base = buildCallbackContext();
-  return {
-    ...base,
+  return buildCallbackContext({
     async getToken(provider?: ToolAuthProvider, options?: ToolAuthOptions): Promise<TokenResult> {
       if (provider === undefined) throw missingProviderError("ctx.getToken");
       return await resolveInlineToken({
@@ -112,7 +110,7 @@ function buildToolContext(input: {
         },
       ]);
     },
-  };
+  });
 }
 
 async function resolveInlineToken(input: {

@@ -79,6 +79,12 @@ export function clearProxyInputRequestsForChild(
   return writeMap(session, next);
 }
 
+/** Removes every descendant HITL routing entry after cancellation. */
+export function clearProxyInputRequests(session: HarnessSession): HarnessSession {
+  if (session.state?.[PROXY_INPUT_REQUESTS_KEY] === undefined) return session;
+  return writeMap(session, {});
+}
+
 /**
  * Projects a {@link SubagentInputRequestHookPayload} into the
  * `(requestId, childContinuationToken)` tuples the session stores.

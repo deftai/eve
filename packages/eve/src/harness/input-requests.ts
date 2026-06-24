@@ -259,7 +259,7 @@ export function setPendingInputBatch(input: {
   return { ...input.session, state };
 }
 
-function clearPendingInputBatch(session: HarnessSession): HarnessSession {
+export function clearPendingInputBatch(session: HarnessSession): HarnessSession {
   if (session.state?.[PENDING_INPUT_BATCH_KEY] === undefined) {
     return session;
   }

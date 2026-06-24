@@ -131,6 +131,7 @@ type DiscordSessionFailedHandler = (
 /** Per-event handlers for `discordChannel({ events })`. Supplied handlers override built-in defaults per key; unspecified events keep their defaults. `session.failed` receives only `(data, channel)`; every other handler also gets the session `ctx`. */
 export interface DiscordChannelEvents {
   readonly "turn.started"?: DiscordEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: DiscordEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: DiscordEventHandler<"actions.requested">;
   readonly "action.result"?: DiscordEventHandler<"action.result">;
   readonly "message.completed"?: DiscordEventHandler<"message.completed">;
@@ -140,6 +141,7 @@ export interface DiscordChannelEvents {
   readonly "turn.completed"?: DiscordEventHandler<"turn.completed">;
   readonly "session.failed"?: DiscordSessionFailedHandler;
   readonly "session.completed"?: DiscordEventHandler<"session.completed">;
+  readonly "session.cancelled"?: DiscordEventHandler<"session.cancelled">;
   readonly "session.waiting"?: DiscordEventHandler<"session.waiting">;
   readonly "authorization.required"?: DiscordEventHandler<"authorization.required">;
   readonly "authorization.completed"?: DiscordEventHandler<"authorization.completed">;

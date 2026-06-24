@@ -20,6 +20,7 @@ import { turnWorkflowInputV0ToV1 } from "./turn-workflow-v0-to-v1.js";
 export const TURN_WORKFLOW_INPUT_VERSION = 1;
 
 export interface TurnStepInput {
+  readonly abortController?: AbortController;
   readonly input: HookPayload | undefined;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly serializedContext: Record<string, unknown>;

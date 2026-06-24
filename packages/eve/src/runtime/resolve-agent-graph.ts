@@ -356,7 +356,6 @@ async function resolveRuntimeRemoteAgent(input: {
     name: string;
     nodeId: string;
     outputSchema?: ResolvedRuntimeRemoteAgentNode["outputSchema"];
-    path: string;
     sourceId: string;
     sourceKind: "module";
     url: string;
@@ -367,7 +366,6 @@ async function resolveRuntimeRemoteAgent(input: {
     name: input.sourceRef.name,
     nodeId: toRuntimeNodeId(input.sourceRef.nodeId),
     outputSchema: input.sourceRef.outputSchema,
-    path: input.sourceRef.path,
     sourceId: input.sourceRef.sourceId,
     sourceKind: "module",
     url: input.sourceRef.url,

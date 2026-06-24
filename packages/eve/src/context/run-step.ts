@@ -4,6 +4,8 @@ import type { FrameworkContextProvider } from "#context/provider.js";
 import { connectionProvider } from "#context/providers/connection.js";
 import { sandboxProvider } from "#context/providers/sandbox.js";
 import { sessionProvider } from "#context/providers/session.js";
+import { AbortSignalKey, CancelKey } from "#context/keys.js";
+import type { CancellationScope } from "#channel/types.js";
 
 /**
  * Framework providers in dependency order.
@@ -34,6 +36,10 @@ export async function withContextScope<T>(
   ctx: ContextContainer,
   harnessSession: HarnessSession,
   callback: (session: HarnessSession) => Promise<ContextScopeResult<T>>,
+  options?: {
+    readonly abortSignal?: AbortSignal;
+    readonly cancel?: (input: { readonly scope: CancellationScope }) => never;
+  },
 ): Promise<ContextScopeResult<T>> {
   let session = harnessSession;
 
@@ -47,6 +53,13 @@ export async function withContextScope<T>(
         session = result.session;
       }
     }
+  }
+
+  if (options?.abortSignal !== undefined) {
+    ctx.setVirtualContext(AbortSignalKey, options.abortSignal);
+  }
+  if (options?.cancel !== undefined) {
+    ctx.setVirtualContext(CancelKey, options.cancel);
   }
 
   const scopeResult = await contextStorage.run(ctx, () => callback(session));
@@ -75,11 +88,20 @@ export async function runStep(
   ctx: ContextContainer,
   harnessSession: HarnessSession,
   callback: (session: HarnessSession) => Promise<StepResult>,
+  options?: {
+    readonly abortSignal?: AbortSignal;
+    readonly cancel?: (input: { readonly scope: CancellationScope }) => never;
+  },
 ): Promise<StepResult> {
-  const { result, session } = await withContextScope(ctx, harnessSession, async (enriched) => {
-    const stepResult = await callback(enriched);
-    return { result: stepResult.next, session: stepResult.session };
-  });
+  const { result, session } = await withContextScope(
+    ctx,
+    harnessSession,
+    async (enriched) => {
+      const stepResult = await callback(enriched);
+      return { result: stepResult.next, session: stepResult.session };
+    },
+    options,
+  );
 
   return { next: result, session };
 }

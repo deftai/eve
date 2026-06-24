@@ -24,7 +24,7 @@ curl -X POST http://127.0.0.1:3000/eve/v1/session \
   -d '{"message":"Summarize the latest forecast."}'
 ```
 
-eve responds right away. The JSON body carries a `sessionId` and a `continuationToken`, and the `x-eve-session-id` header names the durable session to stream.
+eve responds once the turn is accepted. The JSON body carries a `sessionId` and `continuationToken`, and the `x-eve-session-id` header names the durable session to stream. Cancellation is best effort: a request that races hook registration or turn completion can return `409`.
 
 ## Stream a session
 
@@ -58,7 +58,9 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 | `step.failed`             | A model step failed; carries `{ code, message, details? }`.                                                      |
 | `turn.completed`          | The turn finished.                                                                                               |
 | `turn.failed`             | The turn failed; carries `{ code, message, details? }`.                                                          |
+| `turn.cancelled`          | The active turn was intentionally cancelled.                                                                     |
 | `session.waiting`         | The session parked, waiting for the next input (a message, an answer).                                           |
+| `session.cancelled`       | The complete entry session was intentionally cancelled.                                                          |
 | `session.failed`          | The session failed.                                                                                              |
 | `session.completed`       | The session reached a terminal end.                                                                              |
 

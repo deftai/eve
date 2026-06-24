@@ -27,6 +27,7 @@ export type {
   AssertionSeverity,
   AutoevalsJudges,
   EveEvalContext,
+  EveEvalActiveTurn,
   EveEvalDerivedFacts,
   EveEvalJudgeConfig,
   EveEvalRunSummary,

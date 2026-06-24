@@ -8,7 +8,11 @@
 import type { RuntimeSubagentResultActionResult } from "#runtime/actions/types.js";
 import type { JsonValue } from "#shared/json.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter.js";
+import {
+  isSubagentAdapterState,
+  SUBAGENT_ADAPTER_KIND,
+} from "#execution/subagent-adapter-state.js";
+import { readSerializedChannel } from "#execution/workflow-serialized-context.js";
 
 /**
  * Builds the success-shaped {@link RuntimeSubagentResultActionResult}.
@@ -18,19 +22,17 @@ export function createDelegatedSubagentSuccessResult(
   serializedContext: Record<string, unknown>,
   output: unknown,
 ): RuntimeSubagentResultActionResult | undefined {
-  const channel = serializedContext["eve.channel"] as
-    | { kind?: string; state?: Record<string, unknown> }
-    | undefined;
+  const channel = readSerializedChannel(serializedContext);
 
-  if (channel?.kind !== SUBAGENT_ADAPTER_KIND) {
+  if (channel?.kind !== SUBAGENT_ADAPTER_KIND || !isSubagentAdapterState(channel.state)) {
     return undefined;
   }
 
   return {
-    callId: String(channel.state?.callId ?? ""),
+    callId: channel.state.callId,
     kind: "subagent-result",
     output: output as JsonValue,
-    subagentName: String(channel.state?.subagentName ?? ""),
+    subagentName: channel.state.subagentName,
   };
 }
 
@@ -51,6 +53,26 @@ export function createDelegatedSubagentErrorResult(
     output: {
       code: "SUBAGENT_EXECUTION_FAILED",
       message: toErrorMessage(error),
+    },
+  };
+}
+
+/** Cancellation-path mirror of {@link createDelegatedSubagentSuccessResult}. */
+export function createDelegatedSubagentCancellationResult(
+  serializedContext: Record<string, unknown>,
+): RuntimeSubagentResultActionResult | undefined {
+  const success = createDelegatedSubagentSuccessResult(serializedContext, "");
+
+  if (success === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...success,
+    isError: true,
+    output: {
+      code: "SUBAGENT_EXECUTION_CANCELLED",
+      message: "Delegated session was cancelled.",
     },
   };
 }

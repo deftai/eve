@@ -32,14 +32,18 @@ interface PendingRuntimeActionEventMetadata {
 /**
  * Serializable pending runtime-action batch stored on `session.state`.
  *
- * `childContinuationTokens` maps each `subagent-call` action's
- * `callId` to the deterministic child token minted by dispatch, so
- * the harness can clear proxy-input entries on result resolution
- * without re-deriving the token (keeps `harness/` runtime-agnostic).
+ * `children` records the cancellation capabilities returned by dispatch.
+ * The harness also uses the continuation token to clear proxy-input entries
+ * on result resolution without re-deriving runtime-owned identity.
  */
-interface PendingRuntimeActionBatch {
+export interface PendingRuntimeActionChild {
+  readonly continuationToken: string;
+  readonly sessionId: string;
+}
+
+export interface PendingRuntimeActionBatch {
   readonly actions: readonly RuntimeActionRequest[];
-  readonly childContinuationTokens?: Readonly<Record<string, string>>;
+  readonly children?: Readonly<Record<string, PendingRuntimeActionChild>>;
   readonly event: PendingRuntimeActionEventMetadata;
   readonly responseMessages: readonly ModelMessage[];
 }
@@ -113,13 +117,12 @@ export function setPendingRuntimeActionBatch(input: {
 }
 
 /**
- * Records the child continuation token for a dispatched subagent-call
- * so {@link resolvePendingRuntimeActions} can clear proxy-input
- * entries when the child finishes.
+ * Records one dispatched child so cancellation can follow ownership and
+ * result resolution can clear any proxy-input entries the child created.
  */
-export function recordPendingSubagentChildToken(input: {
+export function recordPendingRuntimeActionChild(input: {
   readonly callId: string;
-  readonly childContinuationToken: string;
+  readonly child: PendingRuntimeActionChild;
   readonly session: HarnessSession;
 }): HarnessSession {
   const batch = getPendingRuntimeActionBatch(input.session.state);
@@ -131,9 +134,9 @@ export function recordPendingSubagentChildToken(input: {
   const state = { ...input.session.state };
   state[PENDING_RUNTIME_ACTION_BATCH_KEY] = {
     ...batch,
-    childContinuationTokens: {
-      ...batch.childContinuationTokens,
-      [input.callId]: input.childContinuationToken,
+    children: {
+      ...batch.children,
+      [input.callId]: input.child,
     },
   } satisfies PendingRuntimeActionBatch;
 
@@ -336,16 +339,15 @@ export async function resolvePendingRuntimeActions(input: {
 
   // Clear proxy-input entries for completed children so future
   // deliveries don't route responses to a dead child.
-  const childTokens = batch.childContinuationTokens;
-  if (childTokens !== undefined) {
+  if (batch.children !== undefined) {
     for (const result of readyResults) {
       if (result.kind !== "subagent-result") {
         continue;
       }
 
-      const childToken = childTokens[result.callId];
-      if (childToken !== undefined) {
-        nextSession = clearProxyInputRequestsForChild(nextSession, childToken);
+      const child = batch.children[result.callId];
+      if (child !== undefined) {
+        nextSession = clearProxyInputRequestsForChild(nextSession, child.continuationToken);
       }
     }
   }

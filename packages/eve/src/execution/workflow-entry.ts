@@ -12,36 +12,44 @@ import type {
   RunInput,
   SessionCapabilities,
 } from "#channel/types.js";
-import { coalesceDeliveries } from "#harness/messages.js";
 import { readRootSessionId } from "#execution/eve-workflow-attributes.js";
-import { accumulateRuntimeActionResults } from "#harness/runtime-actions.js";
 import type { RunMode } from "#shared/run-mode.js";
-import type { RuntimeSubagentResultActionResult } from "#runtime/actions/types.js";
-import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
-import type { InputResponse } from "#runtime/input/types.js";
 import { notifyDelegatedParentStep } from "#execution/delegated-parent-notification.js";
 import {
+  createDelegatedSubagentCancellationResult,
   createDelegatedSubagentErrorResult,
   createDelegatedSubagentSuccessResult,
 } from "#execution/delegated-parent-result.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
-import type { TurnCompletionPayload } from "#execution/turn-workflow.js";
-import {
-  normalizeSerializableError,
-  rebuildSerializableError,
-} from "#execution/workflow-errors.js";
+import { normalizeSerializableError } from "#execution/workflow-errors.js";
 import { resolveVercelProductionCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { createSessionStep } from "#execution/create-session-step.js";
 import { dispatchCodeModeRuntimeActionsStep } from "#execution/dispatch-code-mode-runtime-actions-step.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
-import {
-  dispatchTurnStep,
-  emitTerminalSessionFailureStep,
-  routeProxiedDeliverStep,
-  runProxyInputRequestStep,
-} from "#execution/workflow-steps.js";
+import { emitTerminalSessionFailureStep } from "#execution/workflow-steps.js";
 import { fireSessionCallbackStep } from "#execution/session-callback-step.js";
+import { createSessionCancellationHookId } from "#execution/cancellation.js";
+import { finalizeCancellationStep } from "#execution/cancellation-step.js";
+import { cancelDescendantsStep } from "#execution/cancel-descendants-step.js";
+import {
+  readWorkflowEntrySerializedContext,
+  writeSerializedSessionId,
+} from "#execution/workflow-serialized-context.js";
+import {
+  assertCanPark,
+  awaitCancellationSignal,
+  createActiveTurnCancellation,
+  dispatchAndAwaitTurn,
+  raceTurnCancellation,
+  rearmActiveTurnCancellation,
+  routeDeliverForChildren,
+  waitForNextDeliver,
+  waitForPendingRuntimeActionResults,
+  type ActiveTurnCancellation,
+  type DriverCancellation,
+  type DriverDispatchOutcome,
+} from "#execution/workflow-entry-helpers.js";
 
 // workflow-entry.ts is the durable workflow body — the bundler rejects
 // node built-ins here, so `internal/logging.ts` cannot be imported.
@@ -61,6 +69,10 @@ export interface WorkflowEntryResult {
   readonly output: unknown;
 }
 
+type DriverTransition =
+  | { readonly action: NextDriverAction; readonly kind: "action" }
+  | { readonly kind: "done"; readonly result: WorkflowEntryResult };
+
 /**
  * Long-lived workflow entrypoint. Handles both root sessions and
  * delegated child sessions: root sessions expose only parent
@@ -77,23 +89,20 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
   "use workflow";
 
   const { workflowRunId: sessionId } = getWorkflowMetadata();
-  const continuationToken = (input.serializedContext["eve.continuationToken"] as string) || "";
-  const mode = input.serializedContext["eve.mode"] as RunMode;
-  const capabilities = input.serializedContext["eve.capabilities"] as
-    | SessionCapabilities
-    | undefined;
-  const serializedBundle = input.serializedContext["eve.bundle"] as {
-    source: RuntimeCompiledArtifactsSource;
-    nodeId?: string;
-  };
-
   // Seed `eve.sessionId` so the terminal failure emitter can stamp it
   // onto `session.failed` even if `createSessionStep` itself throws.
-  input.serializedContext["eve.sessionId"] = sessionId;
+  writeSerializedSessionId(input.serializedContext, sessionId);
 
   const driverWritable = getWritable<Uint8Array>();
 
   try {
+    const {
+      bundle: serializedBundle,
+      capabilities,
+      continuationToken,
+      mode,
+    } = readWorkflowEntrySerializedContext(input.serializedContext);
+
     // Derived once and reused for createSession + tag emission so the
     // chain-root id can never drift between persisted session and tags.
     const rootSessionIdFromParent = readRootSessionId(input.serializedContext);
@@ -155,7 +164,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
 async function runDriverLoop(input: {
   readonly capabilities?: SessionCapabilities;
   readonly driverWritable: WritableStream<Uint8Array>;
-  readonly initialInput: HookPayload;
+  readonly initialInput: DeliverHookPayload;
   readonly mode: RunMode;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
@@ -167,6 +176,15 @@ async function runDriverLoop(input: {
     token: `${input.sessionState.sessionId}:auth`,
   });
   const authIterator: AsyncIterator<HookPayload> = authHook[Symbol.asyncIterator]();
+  let pendingAuthNext: Promise<IteratorResult<HookPayload>> | null = null;
+  const sessionCancellationHook = createHook<void>({
+    token: createSessionCancellationHookId(input.sessionState.sessionId),
+  });
+  const sessionCancellationIterator = sessionCancellationHook[Symbol.asyncIterator]();
+  const sessionCancellation = awaitCancellationSignal(sessionCancellationIterator);
+  let activeTurnCancellation: ActiveTurnCancellation | undefined = createActiveTurnCancellation({
+    sessionId: input.sessionState.sessionId,
+  });
   // Fast descendant resumes can start the next turn before the prior
   // completion hook disposal is persisted by the Workflow SDK, so each
   // turn needs its own session-scoped token.
@@ -182,11 +200,12 @@ async function runDriverLoop(input: {
   let pendingNext: Promise<IteratorResult<HookPayload>> | null = null;
   const bufferedDeliveries: DeliverHookPayload[] = [];
 
-  const createParkHook = (nextToken: string): void => {
+  const createParkHook = (nextToken: string): Hook<HookPayload> => {
     parkToken = nextToken;
     hook = createHook<HookPayload>({ token: parkToken });
     iterator = hook[Symbol.asyncIterator]();
     pendingNext = null;
+    return hook;
   };
 
   if (input.sessionState.continuationToken) {
@@ -206,18 +225,24 @@ async function runDriverLoop(input: {
     pendingNext = null;
   };
 
+  const getAuthNextPromise = (): Promise<IteratorResult<HookPayload>> => {
+    pendingAuthNext ??= authIterator.next();
+    return pendingAuthNext;
+  };
+
+  const consumeAuthNext = (): void => {
+    pendingAuthNext = null;
+  };
+
   /**
    * Disposes the current park hook and creates a fresh one at
    * `nextToken`. Channels that re-key mid-session must coordinate
    * with their senders — in-flight deliveries to the old token after
    * this returns are silently dropped.
    */
-  const closeParkHook = async (): Promise<void> => {
-    if (iterator !== undefined) {
-      await closeHookIterator(iterator);
-    }
+  const closeParkHook = (): void => {
     if (hook !== undefined) {
-      await disposeHook(hook);
+      hook.dispose();
     }
     hook = undefined;
     iterator = undefined;
@@ -226,53 +251,43 @@ async function runDriverLoop(input: {
 
   const rekeyHook = async (nextToken: string): Promise<void> => {
     if (!nextToken || (hook !== undefined && nextToken === parkToken)) return;
-    await closeParkHook();
-    createParkHook(nextToken);
+    closeParkHook();
+    await claimHook(createParkHook(nextToken));
   };
 
-  let action: NextDriverAction = await dispatchAndAwaitTurn({
-    capabilities: input.capabilities,
-    completionToken: nextTurnCompletionToken(),
-    delivery: input.initialInput,
-    mode: input.mode,
-    parentWritable: input.driverWritable,
-    serializedContext: input.serializedContext,
-    sessionState: input.sessionState,
-  });
-
-  if (action.kind === "done") {
-    await closeHookIterator(authIterator);
-    await disposeHook(authHook);
-    await closeParkHook();
-    return await finalizeDone({
-      action,
-      driverWritable: input.driverWritable,
-    });
-  }
-
-  if (!action.sessionState.continuationToken) {
-    await closeHookIterator(authIterator);
-    await disposeHook(authHook);
-    await closeParkHook();
-    throw new Error(
-      "Cannot park: no continuation token available. The channel must " +
-        "post the first message during the initial turn (anchoring the " +
-        "session) or `send()` must be called with an explicit " +
-        "continuationToken.",
-    );
-  }
-
-  // Rekey if the first turn changed the continuation token.
-  await rekeyHook(action.sessionState.continuationToken);
+  const hooksToClaim: Hook<unknown>[] = [
+    authHook,
+    sessionCancellationHook,
+    activeTurnCancellation.hook,
+  ];
+  if (hook !== undefined) hooksToClaim.push(hook);
+  await Promise.all(hooksToClaim.map((candidate) => claimHook(candidate)));
 
   try {
+    const initialTransition = await applyTurnOutcome(
+      await dispatchAndAwaitTurn({
+        cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+        capabilities: input.capabilities,
+        completionToken: nextTurnCompletionToken(),
+        delivery: input.initialInput,
+        mode: input.mode,
+        parentWritable: input.driverWritable,
+        serializedContext: input.serializedContext,
+        sessionState: input.sessionState,
+      }),
+    );
+    if (initialTransition.kind === "done") return initialTransition.result;
+    let action = initialTransition.action;
+
     while (true) {
       switch (action.kind) {
-        case "done":
+        case "done": {
+          disposeActiveTurnCancellation();
           return await finalizeDone({
             action,
             driverWritable: input.driverWritable,
           });
+        }
 
         case "dispatch-code-mode-runtime-actions":
         case "dispatch-runtime-actions": {
@@ -290,6 +305,7 @@ async function runDriverLoop(input: {
 
           const runtimeResults = await waitForPendingRuntimeActionResults({
             bufferedDeliveries,
+            cancellation: () => raceTurnCancellation(activeTurnCancellation, sessionCancellation),
             consumeNext,
             getNextPromise,
             initialResults: dispatchResult.results,
@@ -304,20 +320,30 @@ async function runDriverLoop(input: {
             return { output: "" };
           }
 
-          action = await dispatchAndAwaitTurn({
-            capabilities: input.capabilities,
-            completionToken: nextTurnCompletionToken(),
-            delivery: {
-              kind: "runtime-action-result",
-              results: runtimeResults.results,
-            },
-            mode: input.mode,
-            parentWritable: input.driverWritable,
-            serializedContext: runtimeResults.serializedContext,
-            sessionState: runtimeResults.sessionState,
-          });
+          if (runtimeResults.kind === "cancelled") {
+            const transition = await applyTurnOutcome(runtimeResults);
+            if (transition.kind === "done") return transition.result;
+            action = transition.action;
+            break;
+          }
 
-          await rekeyHook(action.sessionState.continuationToken);
+          const transition = await applyTurnOutcome(
+            await dispatchAndAwaitTurn({
+              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+              capabilities: input.capabilities,
+              completionToken: nextTurnCompletionToken(),
+              delivery: {
+                kind: "runtime-action-result",
+                results: runtimeResults.results,
+              },
+              mode: input.mode,
+              parentWritable: input.driverWritable,
+              serializedContext: runtimeResults.serializedContext,
+              sessionState: runtimeResults.sessionState,
+            }),
+          );
+          if (transition.kind === "done") return transition.result;
+          action = transition.action;
           break;
         }
 
@@ -327,38 +353,77 @@ async function runDriverLoop(input: {
             const allPayloads: DeliverPayload[] = [];
 
             while (allPayloads.length < expected) {
-              const next = await authIterator.next();
+              const nextOrCancellation = await Promise.race([
+                raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+                getAuthNextPromise().then((next) => ({ kind: "next" as const, next })),
+              ]);
+              if (nextOrCancellation.kind === "cancelled") {
+                const transition = await applyTurnOutcome({
+                  ...nextOrCancellation,
+                  serializedContext: action.serializedContext,
+                  sessionState: action.sessionState,
+                });
+                if (transition.kind === "done") return transition.result;
+                action = transition.action;
+                break;
+              }
+              const { next } = nextOrCancellation;
+              consumeAuthNext();
               if (next.done) break;
               if (next.value.kind === "deliver") {
                 allPayloads.push(...next.value.payloads);
               }
             }
 
-            action = await dispatchAndAwaitTurn({
-              capabilities: input.capabilities,
-              completionToken: nextTurnCompletionToken(),
-              delivery: {
-                kind: "deliver",
-                payloads: allPayloads,
-              },
-              mode: input.mode,
-              parentWritable: input.driverWritable,
-              serializedContext: action.serializedContext,
-              sessionState: action.sessionState,
-            });
+            if (action.kind !== "park" || !action.authorizationNames) {
+              break;
+            }
 
-            await rekeyHook(action.sessionState.continuationToken);
+            const transition = await applyTurnOutcome(
+              await dispatchAndAwaitTurn({
+                cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+                capabilities: input.capabilities,
+                completionToken: nextTurnCompletionToken(),
+                delivery: {
+                  kind: "deliver",
+                  payloads: allPayloads,
+                },
+                mode: input.mode,
+                parentWritable: input.driverWritable,
+                serializedContext: action.serializedContext,
+                sessionState: action.sessionState,
+              }),
+            );
+            if (transition.kind === "done") return transition.result;
+            action = transition.action;
             break;
           }
 
-          const nextDeliver = await waitForNextDeliver({
-            bufferedDeliveries,
-            consumeNext,
-            getNextPromise,
-          });
+          let nextDeliver;
+          while (true) {
+            nextDeliver = await waitForNextDeliver({
+              bufferedDeliveries,
+              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+              consumeNext,
+              getNextPromise,
+            });
+            if (nextDeliver?.kind !== "cancelled" || nextDeliver.scope !== "turn") break;
+            rearmTurnCancellation();
+          }
 
           if (nextDeliver === null) {
             return { output: "" };
+          }
+
+          if (nextDeliver.kind === "cancelled") {
+            const transition = await applyTurnOutcome({
+              ...nextDeliver,
+              serializedContext: action.serializedContext,
+              sessionState: action.sessionState,
+            });
+            if (transition.kind === "done") return transition.result;
+            action = transition.action;
+            break;
           }
 
           const remainder = await routeDeliverForChildren({
@@ -373,29 +438,105 @@ async function runDriverLoop(input: {
             continue;
           }
 
-          action = await dispatchAndAwaitTurn({
-            capabilities: input.capabilities,
-            completionToken: nextTurnCompletionToken(),
-            delivery: {
-              auth: nextDeliver.auth,
-              kind: "deliver",
-              payloads: [remainder],
-            },
-            mode: input.mode,
-            parentWritable: input.driverWritable,
-            serializedContext: action.serializedContext,
-            sessionState: action.sessionState,
-          });
-
-          await rekeyHook(action.sessionState.continuationToken);
+          const transition = await applyTurnOutcome(
+            await dispatchAndAwaitTurn({
+              cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
+              capabilities: input.capabilities,
+              completionToken: nextTurnCompletionToken(),
+              delivery: {
+                auth: nextDeliver.auth,
+                kind: "deliver",
+                payloads: [remainder],
+              },
+              mode: input.mode,
+              parentWritable: input.driverWritable,
+              serializedContext: action.serializedContext,
+              sessionState: action.sessionState,
+            }),
+          );
+          if (transition.kind === "done") return transition.result;
+          action = transition.action;
           break;
         }
       }
     }
   } finally {
-    await closeParkHook();
-    await closeHookIterator(authIterator);
-    await disposeHook(authHook);
+    disposeActiveTurnCancellation();
+    closeParkHook();
+    authHook.dispose();
+    sessionCancellationHook.dispose();
+  }
+
+  function disposeActiveTurnCancellation(): void {
+    if (activeTurnCancellation === undefined) return;
+    activeTurnCancellation.hook.dispose();
+    activeTurnCancellation = undefined;
+  }
+
+  function rearmTurnCancellation(): void {
+    if (activeTurnCancellation === undefined) return;
+    activeTurnCancellation = rearmActiveTurnCancellation(activeTurnCancellation);
+  }
+
+  async function applyTurnOutcome(outcome: DriverDispatchOutcome): Promise<DriverTransition> {
+    const transition: DriverTransition =
+      outcome.kind === "cancelled"
+        ? await finalizeDriverCancellation(outcome)
+        : { action: outcome.action, kind: "action" };
+
+    if (transition.kind === "action" && transition.action.kind !== "done") {
+      assertCanPark(transition.action.sessionState);
+      await rekeyHook(transition.action.sessionState.continuationToken);
+    }
+    return transition;
+  }
+
+  async function finalizeDriverCancellation(
+    cancellation: DriverCancellation,
+  ): Promise<DriverTransition> {
+    if (cancellation.scope === "turn") {
+      rearmTurnCancellation();
+    }
+
+    if (cancellation.scope === "session") {
+      // Releasing the continuation is the reset linearization point. New work
+      // may claim the same identity while teardown remains bound to this run.
+      closeParkHook();
+    }
+
+    await cancelDescendantsStep({
+      serializedContext: cancellation.serializedContext,
+      sessionState: cancellation.sessionState,
+    });
+
+    const finalized = await finalizeCancellationStep({
+      parentWritable: input.driverWritable,
+      scope: cancellation.scope,
+      serializedContext: cancellation.serializedContext,
+      sessionState: cancellation.sessionState,
+    });
+
+    if (cancellation.scope === "session") {
+      await fireSessionCallbackStep({
+        serializedContext: finalized.serializedContext,
+        status: "cancelled",
+      });
+      await notifyDelegatedParentStep({
+        ignoreMissing: true,
+        result: createDelegatedSubagentCancellationResult(finalized.serializedContext),
+        serializedContext: finalized.serializedContext,
+      });
+      return { kind: "done", result: { output: "" } };
+    }
+
+    return {
+      action: {
+        kind: "park",
+        serializedContext: finalized.serializedContext,
+        sessionState: finalized.sessionState,
+      },
+      kind: "action",
+    };
   }
 }
 
@@ -421,280 +562,9 @@ async function finalizeDone(input: {
   return { output };
 }
 
-async function dispatchAndAwaitTurn(input: {
-  readonly capabilities?: SessionCapabilities;
-  readonly completionToken: string;
-  readonly delivery: HookPayload;
-  readonly mode: RunMode;
-  readonly parentWritable: WritableStream<Uint8Array>;
-  readonly serializedContext: Record<string, unknown>;
-  readonly sessionState: DurableSessionState;
-}): Promise<NextDriverAction> {
-  const completion = createHook<TurnCompletionPayload>({ token: input.completionToken });
-  const completionToken = completion.token;
-
-  try {
-    await dispatchTurnStep({
-      capabilities: input.capabilities,
-      completionToken,
-      delivery: input.delivery,
-      mode: input.mode,
-      parentWritable: input.parentWritable,
-      serializedContext: input.serializedContext,
-      sessionState: input.sessionState,
-    });
-
-    const payload = await awaitHookPayload(completion);
-
-    if (payload.kind === "turn-error") {
-      throw rebuildSerializableError(payload.error);
-    }
-
-    return payload.action;
-  } finally {
-    await disposeHook(completion);
+async function claimHook(hook: Hook<unknown>): Promise<void> {
+  const conflict = await hook.getConflict();
+  if (conflict !== null) {
+    throw new Error(`Workflow hook token is owned by run "${conflict.runId}".`);
   }
-}
-
-async function awaitHookPayload<T>(hook: Hook<T>): Promise<T> {
-  for await (const value of hook) {
-    return value;
-  }
-  throw new Error("Turn completion hook closed before delivering a result.");
-}
-
-interface PendingRuntimeActionResultsOutcome {
-  readonly results: readonly RuntimeSubagentResultActionResult[];
-  readonly serializedContext: Record<string, unknown>;
-  readonly sessionState: DurableSessionState;
-}
-
-async function waitForPendingRuntimeActionResults(input: {
-  readonly bufferedDeliveries: DeliverHookPayload[];
-  readonly consumeNext: () => void;
-  readonly getNextPromise: () => Promise<IteratorResult<HookPayload>>;
-  readonly initialResults?: readonly RuntimeSubagentResultActionResult[];
-  readonly parentWritable: WritableStream<Uint8Array>;
-  readonly pendingActionKeys: readonly string[];
-  readonly rekeyHook: (nextToken: string) => Promise<void>;
-  readonly serializedContext: Record<string, unknown>;
-  readonly sessionState: DurableSessionState;
-}): Promise<PendingRuntimeActionResultsOutcome | null> {
-  let currentSessionState = input.sessionState;
-  // Thread the post-proxy serialized context forward so subsequent
-  // deliveries and the post-wait `turnStep` observe adapter-state
-  // mutations (e.g. Slack's `pendingRequests` cache).
-  let currentSerializedContext = input.serializedContext;
-
-  const results = await accumulateRuntimeActionResults({
-    bufferedDeliveries: input.bufferedDeliveries,
-    async getNext() {
-      while (true) {
-        const next = await input.getNextPromise();
-        input.consumeNext();
-
-        if (next.done) {
-          return null;
-        }
-
-        const value = next.value;
-
-        if (value.kind === "deliver") {
-          // Route descendant-bound `inputResponses` down to the owning
-          // child before buffering — otherwise the response would sit
-          // in the buffer until the child completes, which it cannot
-          // do without the response (parent↔child deadlock).
-          const remainder = await routeDeliverForChildren({
-            auth: value.auth,
-            parentWritable: input.parentWritable,
-            payloads: value.payloads,
-            sessionState: currentSessionState,
-          });
-
-          if (remainder === undefined) {
-            // Fully proxied; keep waiting.
-            continue;
-          }
-
-          return {
-            kind: "deliver",
-            value: { ...value, payloads: [remainder] },
-          };
-        }
-
-        if (value.kind === "runtime-action-result") {
-          return { kind: "runtime-action-result", results: value.results };
-        }
-
-        // subagent-input-request: proxy the child's HITL through the
-        // parent's adapter, record the routing entry, keep waiting.
-        const proxyResult = await runProxyInputRequestStep({
-          hookPayload: value,
-          parentWritable: input.parentWritable,
-          serializedContext: currentSerializedContext,
-          sessionState: currentSessionState,
-        });
-        currentSessionState = proxyResult.sessionState;
-        currentSerializedContext = proxyResult.serializedContext;
-        await input.rekeyHook(currentSessionState.continuationToken);
-      }
-    },
-    initialResults: input.initialResults,
-    pendingActionKeys: input.pendingActionKeys,
-  });
-
-  if (results === null) {
-    return null;
-  }
-
-  return {
-    results: results as readonly RuntimeSubagentResultActionResult[],
-    serializedContext: currentSerializedContext,
-    sessionState: currentSessionState,
-  };
-}
-
-/**
- * Routes one inbound deliver down to descendant subagents with
- * matching proxied HITL requests. Returns the parent-local remainder
- * (or `undefined` when the entire payload was routed away).
- *
- * Short-circuits via `hasProxyInputRequests` so the common
- * no-active-descendant path skips a durable step boundary.
- */
-async function routeDeliverForChildren(input: {
-  readonly auth: DeliverHookPayload["auth"];
-  readonly parentWritable: WritableStream<Uint8Array>;
-  readonly payloads: readonly DeliverPayload[];
-  readonly sessionState: DurableSessionState;
-}): Promise<DeliverPayload | undefined> {
-  const coalesced = coalescePayloads(input.payloads);
-
-  if (!input.sessionState.hasProxyInputRequests) {
-    return coalesced;
-  }
-
-  const routed = await routeProxiedDeliverStep({
-    auth: input.auth,
-    parentWritable: input.parentWritable,
-    payload: coalesced,
-    sessionState: input.sessionState,
-  });
-
-  return routed.remainder;
-}
-
-async function waitForNextDeliver(input: {
-  readonly bufferedDeliveries: DeliverHookPayload[];
-  readonly consumeNext: () => void;
-  readonly getNextPromise: () => Promise<IteratorResult<HookPayload>>;
-}): Promise<DeliverHookPayload | null> {
-  if (input.bufferedDeliveries.length > 0) {
-    return coalesceDeliveries(input.bufferedDeliveries.splice(0));
-  }
-
-  while (true) {
-    const first = await input.getNextPromise();
-    input.consumeNext();
-
-    if (first.done) {
-      return null;
-    }
-
-    if (first.value.kind !== "deliver") {
-      continue;
-    }
-
-    let coalesced = first.value;
-
-    while (true) {
-      const ready = await takeReadyPayload(input.getNextPromise());
-
-      if (ready === NO_READY_MESSAGE) {
-        break;
-      }
-
-      input.consumeNext();
-
-      if (ready.done) {
-        break;
-      }
-
-      if (ready.value.kind !== "deliver") {
-        continue;
-      }
-
-      coalesced = coalesceDeliveries([coalesced, ready.value]);
-    }
-
-    return coalesced;
-  }
-}
-
-function coalescePayloads(payloads: readonly DeliverPayload[]): DeliverPayload {
-  if (payloads.length === 0) {
-    return {};
-  }
-
-  if (payloads.length === 1) {
-    return payloads[0] ?? {};
-  }
-
-  const merged: Record<string, unknown> = {};
-  const inputResponses: InputResponse[] = [];
-
-  for (const payload of payloads) {
-    for (const [key, value] of Object.entries(payload)) {
-      if (key === "inputResponses") {
-        continue;
-      }
-
-      if (value !== undefined) {
-        merged[key] = value;
-      }
-    }
-
-    if (payload.inputResponses !== undefined) {
-      inputResponses.push(...payload.inputResponses);
-    }
-  }
-
-  if (inputResponses.length > 0) {
-    merged.inputResponses = inputResponses;
-  }
-
-  return merged as DeliverPayload;
-}
-
-const NO_READY_MESSAGE = Symbol("no-ready-message");
-
-async function takeReadyPayload<T>(promise: Promise<T>): Promise<T | typeof NO_READY_MESSAGE> {
-  await Promise.resolve();
-  return await Promise.race([promise, Promise.resolve(NO_READY_MESSAGE)]);
-}
-
-async function closeHookIterator(iterator: AsyncIterator<HookPayload>): Promise<void> {
-  if (typeof iterator.return !== "function") {
-    return;
-  }
-
-  await iterator.return(undefined);
-}
-
-async function disposeHook(hook: {
-  dispose?: () => unknown;
-  [Symbol.dispose]?: () => unknown;
-}): Promise<void> {
-  const explicitDispose = hook.dispose;
-  if (typeof explicitDispose === "function") {
-    await explicitDispose.call(hook);
-    return;
-  }
-
-  const symbolDispose = hook[Symbol.dispose];
-  if (typeof symbolDispose !== "function") {
-    return;
-  }
-
-  await symbolDispose.call(hook);
 }

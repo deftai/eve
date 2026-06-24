@@ -62,6 +62,9 @@ import { buildTurnAttributes, readRootSessionId } from "#execution/eve-workflow-
 import { setEveAttributes } from "#runtime/attributes/emit.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
 import { createWorkflowRuntime, startWorkflowPreferLatest } from "#execution/workflow-runtime.js";
+import { createCancellationReason } from "#execution/cancellation.js";
+import { readSerializedSessionId } from "#execution/workflow-serialized-context.js";
+import { applyEveWorkflowQueueNamespace } from "#internal/workflow/queue-namespace.js";
 
 /**
  * Result of one durable harness step, consumed by the turn workflow.
@@ -104,6 +107,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   "use step";
 
   let input = rawInput;
+  const abortController = input.abortController ?? new AbortController();
+  abortController.signal.throwIfAborted();
 
   // Tag this turn run with the lineage attributes the dashboard uses to
   // roll turns up under their parent session. Emitted from inside this
@@ -256,7 +261,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const dynamicToolResolvers = bundle.resolvedAgent.dynamicToolResolvers ?? [];
 
   const emit = async (event: HandleMessageStreamEvent): Promise<HandleMessageStreamEvent> => {
+    abortController.signal.throwIfAborted();
     const toEmit = await callAdapterEventHandler(adapter, event, adapterCtx);
+    abortController.signal.throwIfAborted();
     setChannelContext(ctx, { ...adapter, state: { ...adapterCtx.state } });
     await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(toEmit)));
     return toEmit;
@@ -290,59 +297,72 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   const mode = ctx.require(ModeKey);
 
-  let stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
-    const schemaSession = resolveEffectiveOutputSchema({
-      agentOutputSchema: bundle.turnAgent.outputSchema,
-      input: resolved,
-      mode,
-      session: enrichedSession,
-    });
-    if (completedAuths) {
-      const emissionState = getHarnessEmissionState(schemaSession.state);
-      for (const { name, authorization } of completedAuths) {
-        await handleEvent(
-          createAuthorizationCompletedEvent({
-            authorization,
-            name,
-            outcome: "authorized",
-            sequence: emissionState.sequence,
-            stepIndex: emissionState.stepIndex,
-            turnId: emissionState.turnId,
-          }),
-        );
-      }
-    }
-
-    const capabilities = ctx.get(CapabilitiesKey);
-
-    const runHarnessStep = async (
-      lifecycleSession: HarnessSession,
-      stepInput: StepInput | undefined,
-    ): Promise<StepResult> => {
-      const refreshedSession = refreshSessionFromTurnAgent({
-        compactionOverrides: {
-          thresholdPercent: bundle.resolvedAgent.config.compaction?.thresholdPercent,
-        },
-        session: lifecycleSession,
-        turnAgent: bundle.turnAgent,
-      });
-
-      const step = createExecutionNodeStep({
-        capabilities,
-        createRuntime: createWorkflowRuntime,
-        handleEvent,
+  let stepResult = await runStep(
+    ctx,
+    initialSession,
+    async (enrichedSession) => {
+      const schemaSession = resolveEffectiveOutputSchema({
+        agentOutputSchema: bundle.turnAgent.outputSchema,
+        input: resolved,
         mode,
-        modelResolutionScope: {
-          moduleMap: bundle.moduleMap,
-          nodeId: bundle.nodeId,
-        },
-        node: bundle.graph.root,
+        session: enrichedSession,
       });
-      return step(refreshedSession, stepInput);
-    };
+      if (completedAuths) {
+        const emissionState = getHarnessEmissionState(schemaSession.state);
+        for (const { name, authorization } of completedAuths) {
+          await handleEvent(
+            createAuthorizationCompletedEvent({
+              authorization,
+              name,
+              outcome: "authorized",
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+            }),
+          );
+        }
+      }
 
-    return runHarnessStep(schemaSession, resolved);
-  });
+      const capabilities = ctx.get(CapabilitiesKey);
+
+      const runHarnessStep = async (
+        lifecycleSession: HarnessSession,
+        stepInput: StepInput | undefined,
+      ): Promise<StepResult> => {
+        const refreshedSession = refreshSessionFromTurnAgent({
+          compactionOverrides: {
+            thresholdPercent: bundle.resolvedAgent.config.compaction?.thresholdPercent,
+          },
+          session: lifecycleSession,
+          turnAgent: bundle.turnAgent,
+        });
+
+        const step = createExecutionNodeStep({
+          capabilities,
+          createRuntime: createWorkflowRuntime,
+          handleEvent,
+          mode,
+          modelResolutionScope: {
+            moduleMap: bundle.moduleMap,
+            nodeId: bundle.nodeId,
+          },
+          node: bundle.graph.root,
+        });
+        return step(refreshedSession, stepInput);
+      };
+
+      return runHarnessStep(schemaSession, resolved);
+    },
+    {
+      abortSignal: abortController.signal,
+      cancel({ scope }): never {
+        const reason = createCancellationReason(scope);
+        abortController.abort(reason);
+        throw reason;
+      },
+    },
+  );
+  abortController.signal.throwIfAborted();
 
   // Re-stamp the in-memory session's continuation token in case a
   // handler called `setContinuationToken(...)` (eg. Slack auto-anchor).
@@ -483,7 +503,7 @@ export async function emitTerminalSessionFailureStep(input: {
   const details = formatError(input.error);
   const code = typeof details.name === "string" ? details.name : "WORKFLOW_EXECUTION_FAILED";
   const message = typeof details.message === "string" ? details.message : String(input.error);
-  const sessionId = (input.serializedContext["eve.sessionId"] as string | undefined) ?? "";
+  const sessionId = readSerializedSessionId(input.serializedContext) ?? "";
 
   log.error("workflow loop threw — emitting terminal session.failed", {
     sessionId,
@@ -635,7 +655,7 @@ export async function routeProxiedDeliverStep(input: {
   });
 
   const { resumeHook } = await import("#compiled/@workflow/core/runtime.js");
-  process.env.WORKFLOW_QUEUE_NAMESPACE = "eve";
+  applyEveWorkflowQueueNamespace();
 
   for (const forChild of routed.forChildren) {
     await resumeHook(forChild.childContinuationToken, {
@@ -649,12 +669,8 @@ export async function routeProxiedDeliverStep(input: {
 }
 
 /** Starts a per-turn child workflow for the current driver session. */
-export async function dispatchTurnStep(
-  input: TurnWorkflowDispatchInput,
-): Promise<{ readonly runId: string }> {
+export async function dispatchTurnStep(input: TurnWorkflowDispatchInput): Promise<void> {
   "use step";
 
-  const run = await startWorkflowPreferLatest(turnWorkflow, [createTurnWorkflowInput(input)]);
-
-  return { runId: run.runId };
+  await startWorkflowPreferLatest(turnWorkflow, [createTurnWorkflowInput(input)]);
 }

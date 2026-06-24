@@ -14,7 +14,7 @@ export function createInitialSessionState(): SessionState {
  * Advances the session cursor after one streamed turn completes.
  *
  * When the boundary event is `session.waiting`, the session is preserved for
- * the next message. For `session.completed` and `session.failed`, the session
+ * the next message. For terminal boundaries, including cancellation, the session
  * resets so the next call starts a new conversation.
  */
 export function advanceSession(input: {
@@ -65,9 +65,15 @@ export function extractCompletedMessage(
  */
 export function deriveResultStatus(
   events: readonly HandleMessageStreamEvent[],
-): "completed" | "failed" | "waiting" {
+): "cancelled" | "completed" | "failed" | "waiting" {
   const boundary = findBoundaryEvent(events);
 
+  if (
+    boundary?.type === "session.cancelled" ||
+    events.some((event) => event.type === "turn.cancelled")
+  ) {
+    return "cancelled";
+  }
   if (boundary?.type === "session.waiting") return "waiting";
   if (boundary?.type === "session.failed") return "failed";
   return "completed";

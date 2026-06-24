@@ -132,6 +132,7 @@ type TelegramSessionFailedHandler = (
 /** Per-event handlers for `telegramChannel({ events })`. Each entry overrides the built-in default (handlers merge over {@link defaultEvents}). `session.failed` receives `(data, channel)`; all others also receive the {@link SessionContext}. */
 export interface TelegramChannelEvents {
   readonly "turn.started"?: TelegramEventHandler<"turn.started">;
+  readonly "turn.cancelled"?: TelegramEventHandler<"turn.cancelled">;
   readonly "actions.requested"?: TelegramEventHandler<"actions.requested">;
   readonly "action.result"?: TelegramEventHandler<"action.result">;
   readonly "message.completed"?: TelegramEventHandler<"message.completed">;
@@ -141,6 +142,7 @@ export interface TelegramChannelEvents {
   readonly "turn.completed"?: TelegramEventHandler<"turn.completed">;
   readonly "session.failed"?: TelegramSessionFailedHandler;
   readonly "session.completed"?: TelegramEventHandler<"session.completed">;
+  readonly "session.cancelled"?: TelegramEventHandler<"session.cancelled">;
   readonly "session.waiting"?: TelegramEventHandler<"session.waiting">;
   readonly "authorization.required"?: TelegramEventHandler<"authorization.required">;
   readonly "authorization.completed"?: TelegramEventHandler<"authorization.completed">;

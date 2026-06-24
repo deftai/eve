@@ -144,16 +144,22 @@ function buildRouteArgs(
     bundle.runtime,
     toCrossChannelTargets(bundle.channels),
   );
+  const cancelSession: RouteHandlerArgs["cancelSession"] = (input) =>
+    bundle.runtime.cancelSession(input);
+  const cancelTurn: RouteHandlerArgs["cancelTurn"] = (input) => bundle.runtime.cancelTurn(input);
+  const args: RouteHandlerArgs = {
+    cancelSession,
+    cancelTurn,
+    send,
+    getSession,
+    receive,
+    params,
+    waitUntil,
+    requestIp,
+  };
 
   return {
-    args: {
-      send,
-      getSession,
-      receive,
-      params,
-      waitUntil,
-      requestIp,
-    },
+    args,
     backgroundTasks,
   };
 }
