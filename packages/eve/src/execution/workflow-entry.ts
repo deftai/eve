@@ -12,7 +12,7 @@ import type {
   RunInput,
   SessionCapabilities,
 } from "#channel/types.js";
-import { readRootSessionId } from "#execution/eve-workflow-attributes.js";
+import { readChannelRequestId, readRootSessionId } from "#execution/eve-workflow-attributes.js";
 import type { RunMode } from "#shared/run-mode.js";
 import { notifyDelegatedParentStep } from "#execution/delegated-parent-notification.js";
 import {
@@ -32,6 +32,7 @@ import { fireSessionCallbackStep } from "#execution/session-callback-step.js";
 import { createSessionCancellationHookId } from "#execution/cancellation.js";
 import { finalizeCancellationStep } from "#execution/cancellation-step.js";
 import { cancelDescendantsStep } from "#execution/cancel-descendants-step.js";
+import { claimHookOwnership, closeHookIterator, disposeHook } from "#execution/hook-ownership.js";
 import {
   readWorkflowEntrySerializedContext,
   writeSerializedSessionId,
@@ -133,6 +134,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
             outputSchema: input.input.outputSchema,
           },
         ],
+        requestId: readChannelRequestId(input.serializedContext),
       },
       mode,
       serializedContext: input.serializedContext,
@@ -200,18 +202,6 @@ async function runDriverLoop(input: {
   let pendingNext: Promise<IteratorResult<HookPayload>> | null = null;
   const bufferedDeliveries: DeliverHookPayload[] = [];
 
-  const createParkHook = (nextToken: string): Hook<HookPayload> => {
-    parkToken = nextToken;
-    hook = createHook<HookPayload>({ token: parkToken });
-    iterator = hook[Symbol.asyncIterator]();
-    pendingNext = null;
-    return hook;
-  };
-
-  if (input.sessionState.continuationToken) {
-    createParkHook(input.sessionState.continuationToken);
-  }
-
   const getNextPromise = (): Promise<IteratorResult<HookPayload>> => {
     if (iterator === undefined) {
       throw new Error("Cannot wait for deliveries before a continuation token is available.");
@@ -234,36 +224,59 @@ async function runDriverLoop(input: {
     pendingAuthNext = null;
   };
 
-  /**
-   * Disposes the current park hook and creates a fresh one at
-   * `nextToken`. Channels that re-key mid-session must coordinate
-   * with their senders — in-flight deliveries to the old token after
-   * this returns are silently dropped.
-   */
-  const closeParkHook = (): void => {
-    if (hook !== undefined) {
-      hook.dispose();
-    }
+  /** Stops accepting deliveries and releases the current continuation token. */
+  const closeParkHook = async (): Promise<void> => {
+    const currentIterator = iterator;
+    const currentHook = hook;
     hook = undefined;
     iterator = undefined;
     pendingNext = null;
+
+    if (currentIterator !== undefined) {
+      try {
+        await closeHookIterator(currentIterator);
+      } catch (error) {
+        if (currentHook !== undefined) {
+          try {
+            await disposeHook(currentHook);
+          } catch {
+            // The iterator failure is authoritative; cleanup must not replace it.
+          }
+        }
+        throw error;
+      }
+    }
+    if (currentHook !== undefined) await disposeHook(currentHook);
   };
 
   const rekeyHook = async (nextToken: string): Promise<void> => {
     if (!nextToken || (hook !== undefined && nextToken === parkToken)) return;
-    closeParkHook();
-    await claimHook(createParkHook(nextToken));
+
+    const nextHook = createHook<HookPayload>({ token: nextToken });
+    await claimHookOwnership(nextHook);
+
+    try {
+      await closeParkHook();
+    } catch (error) {
+      try {
+        await disposeHook(nextHook);
+      } catch {
+        // The active hook release failure is authoritative.
+      }
+      throw error;
+    }
+
+    parkToken = nextToken;
+    hook = nextHook;
+    iterator = nextHook[Symbol.asyncIterator]();
+    pendingNext = null;
   };
 
-  const hooksToClaim: Hook<unknown>[] = [
-    authHook,
-    sessionCancellationHook,
-    activeTurnCancellation.hook,
-  ];
-  if (hook !== undefined) hooksToClaim.push(hook);
-  await Promise.all(hooksToClaim.map((candidate) => claimHook(candidate)));
-
   try {
+    if (input.sessionState.continuationToken) {
+      await rekeyHook(input.sessionState.continuationToken);
+    }
+
     const initialTransition = await applyTurnOutcome(
       await dispatchAndAwaitTurn({
         cancellation: raceTurnCancellation(activeTurnCancellation, sessionCancellation),
@@ -282,7 +295,7 @@ async function runDriverLoop(input: {
     while (true) {
       switch (action.kind) {
         case "done": {
-          disposeActiveTurnCancellation();
+          await disposeActiveTurnCancellation();
           return await finalizeDone({
             action,
             driverWritable: input.driverWritable,
@@ -447,6 +460,7 @@ async function runDriverLoop(input: {
                 auth: nextDeliver.auth,
                 kind: "deliver",
                 payloads: [remainder],
+                requestId: nextDeliver.requestId,
               },
               mode: input.mode,
               parentWritable: input.driverWritable,
@@ -461,16 +475,18 @@ async function runDriverLoop(input: {
       }
     }
   } finally {
-    disposeActiveTurnCancellation();
-    closeParkHook();
-    authHook.dispose();
-    sessionCancellationHook.dispose();
+    await disposeActiveTurnCancellation();
+    await closeParkHook();
+    await closeHookIterator(authIterator);
+    await disposeHook(authHook);
+    await disposeHook(sessionCancellationHook);
   }
 
-  function disposeActiveTurnCancellation(): void {
+  async function disposeActiveTurnCancellation(): Promise<void> {
     if (activeTurnCancellation === undefined) return;
-    activeTurnCancellation.hook.dispose();
+    const current = activeTurnCancellation;
     activeTurnCancellation = undefined;
+    await disposeHook(current.hook);
   }
 
   function rearmTurnCancellation(): void {
@@ -501,7 +517,7 @@ async function runDriverLoop(input: {
     if (cancellation.scope === "session") {
       // Releasing the continuation is the reset linearization point. New work
       // may claim the same identity while teardown remains bound to this run.
-      closeParkHook();
+      await closeParkHook();
     }
 
     await cancelDescendantsStep({
@@ -560,11 +576,4 @@ async function finalizeDone(input: {
     serializedContext,
   });
   return { output };
-}
-
-async function claimHook(hook: Hook<unknown>): Promise<void> {
-  const conflict = await hook.getConflict();
-  if (conflict !== null) {
-    throw new Error(`Workflow hook token is owned by run "${conflict.runId}".`);
-  }
 }

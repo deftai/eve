@@ -112,6 +112,8 @@ export interface DeliverPayload {
  */
 export interface DeliverHookPayload {
   readonly auth?: SessionAuthContext | null;
+  /** Inbound channel request id used only for workflow attributes. */
+  readonly requestId?: string;
   readonly kind: "deliver";
   readonly payloads: readonly DeliverPayload[];
 }
@@ -239,6 +241,8 @@ export interface RunInput {
    * leave this undefined.
    */
   readonly capabilities?: SessionCapabilities;
+  /** Inbound channel request id used to correlate workflow attributes. */
+  readonly requestId?: string;
   /**
    * Optional terminal callback. When present, the runtime posts a single
    * callback when the session completes or fails.
@@ -276,6 +280,8 @@ export interface DeliverInput {
    * this field before calling the adapter's hooks.
    */
   readonly auth?: SessionAuthContext | null;
+  /** Inbound channel request id used to correlate workflow attributes. */
+  readonly requestId?: string;
   readonly continuationToken: string;
   readonly payload: DeliverPayload;
 }

@@ -1,7 +1,7 @@
 import { deserializeContext } from "#context/serialize.js";
 import { createSessionCancellationHookId } from "#execution/cancellation.js";
 import { type DurableSessionState, readDurableSession } from "#execution/durable-session-store.js";
-import { resumeOwnedCancellationHook } from "#execution/workflow-hook.js";
+import { resumeCancellationHook } from "#execution/workflow-hook.js";
 import {
   cancelRemoteAgentSession,
   resolveRemoteAgentForAction,
@@ -51,13 +51,6 @@ export async function cancelDescendantsStep(input: {
   await Promise.allSettled(tasks);
 }
 
-async function cancelLocalChild(input: {
-  readonly continuationToken: string;
-  readonly sessionId: string;
-}): Promise<void> {
-  await resumeOwnedCancellationHook({
-    cancellationHookId: createSessionCancellationHookId(input.sessionId),
-    expectedRunId: input.sessionId,
-    ownerHookId: input.continuationToken,
-  });
+async function cancelLocalChild(input: { readonly sessionId: string }): Promise<void> {
+  await resumeCancellationHook(createSessionCancellationHookId(input.sessionId));
 }
