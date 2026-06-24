@@ -26,14 +26,17 @@ export function readCancellationScope(value: unknown): CancellationScope | undef
   return reason.scope === "turn" || reason.scope === "session" ? reason.scope : undefined;
 }
 
+/** Addresses the cancellation hook owned by one dispatched child turn workflow. */
 export function createTurnWorkflowCancellationHookId(completionToken: string): string {
   return `${completionToken}:cancel`;
 }
 
+/** Addresses the session-lifetime hook, including while the entry workflow is parked. */
 export function createSessionCancellationHookId(sessionId: string): string {
   return `${sessionId}:cancel-session`;
 }
 
+/** Addresses the current-turn hook; signals received while parked are accepted no-ops. */
 export function createActiveTurnCancellationHookId(sessionId: string): string {
   return `${sessionId}:cancel-turn`;
 }

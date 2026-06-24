@@ -110,13 +110,6 @@ async function awaitHookPayload<T>(hook: Hook<T>): Promise<T> {
   throw new Error("Turn completion hook closed before delivering a result.");
 }
 
-interface PendingRuntimeActionResultsOutcome {
-  readonly kind: "results";
-  readonly results: readonly RuntimeSubagentResultActionResult[];
-  readonly serializedContext: Record<string, unknown>;
-  readonly sessionState: DurableSessionState;
-}
-
 export async function waitForPendingRuntimeActionResults(input: {
   readonly bufferedDeliveries: DeliverHookPayload[];
   readonly cancellation: () => Promise<CancellationSignal>;
@@ -128,69 +121,76 @@ export async function waitForPendingRuntimeActionResults(input: {
   readonly rekeyHook: (nextToken: string) => Promise<void>;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
-}): Promise<PendingRuntimeActionResultsOutcome | DriverCancellation | null> {
+}): Promise<
+  | {
+      readonly kind: "results";
+      readonly results: readonly RuntimeSubagentResultActionResult[];
+      readonly serializedContext: Record<string, unknown>;
+      readonly sessionState: DurableSessionState;
+    }
+  | DriverCancellation
+  | null
+> {
   let currentSessionState = input.sessionState;
   let currentSerializedContext = input.serializedContext;
 
-  let results: readonly RuntimeSubagentResultActionResult[] | null;
-  try {
-    results = (await accumulateRuntimeActionResults({
-      bufferedDeliveries: input.bufferedDeliveries,
-      async getNext() {
-        while (true) {
-          const nextOrCancellation = await Promise.race([
-            input.cancellation(),
-            input.getNextPromise().then((next) => ({ kind: "next" as const, next })),
-          ]);
-          if (nextOrCancellation.kind === "cancelled") throw nextOrCancellation;
-          const { next } = nextOrCancellation;
-          input.consumeNext();
-          if (next.done) return null;
+  const results = await accumulateRuntimeActionResults<DeliverHookPayload, CancellationSignal>({
+    bufferedDeliveries: input.bufferedDeliveries,
+    async getNext() {
+      while (true) {
+        const nextOrCancellation = await Promise.race([
+          input.cancellation(),
+          input.getNextPromise().then((next) => ({ kind: "next" as const, next })),
+        ]);
+        if (nextOrCancellation.kind === "cancelled") {
+          return { kind: "interrupted", value: nextOrCancellation };
+        }
+        const { next } = nextOrCancellation;
+        input.consumeNext();
+        if (next.done) return null;
 
-          const value = next.value;
-          if (value.kind === "deliver") {
-            const remainder = await routeDeliverForChildren({
-              auth: value.auth,
-              parentWritable: input.parentWritable,
-              payloads: value.payloads,
-              sessionState: currentSessionState,
-            });
-            if (remainder === undefined) continue;
-            return { kind: "deliver", value: { ...value, payloads: [remainder] } };
-          }
-          if (value.kind === "runtime-action-result") {
-            return { kind: "runtime-action-result", results: value.results };
-          }
-
-          const proxyResult = await runProxyInputRequestStep({
-            hookPayload: value,
+        const value = next.value;
+        if (value.kind === "deliver") {
+          const remainder = await routeDeliverForChildren({
+            auth: value.auth,
             parentWritable: input.parentWritable,
-            serializedContext: currentSerializedContext,
+            payloads: value.payloads,
             sessionState: currentSessionState,
           });
-          currentSessionState = proxyResult.sessionState;
-          currentSerializedContext = proxyResult.serializedContext;
-          await input.rekeyHook(currentSessionState.continuationToken);
+          if (remainder === undefined) continue;
+          return { kind: "deliver", value: { ...value, payloads: [remainder] } };
         }
-      },
-      initialResults: input.initialResults,
-      pendingActionKeys: input.pendingActionKeys,
-    })) as readonly RuntimeSubagentResultActionResult[] | null;
-  } catch (error) {
-    if (isCancellationSignal(error)) {
-      return {
-        ...error,
-        serializedContext: currentSerializedContext,
-        sessionState: currentSessionState,
-      };
-    }
-    throw error;
+        if (value.kind === "runtime-action-result") {
+          return { kind: "runtime-action-result", results: value.results };
+        }
+
+        const proxyResult = await runProxyInputRequestStep({
+          hookPayload: value,
+          parentWritable: input.parentWritable,
+          serializedContext: currentSerializedContext,
+          sessionState: currentSessionState,
+        });
+        currentSessionState = proxyResult.sessionState;
+        currentSerializedContext = proxyResult.serializedContext;
+        await input.rekeyHook(currentSessionState.continuationToken);
+      }
+    },
+    initialResults: input.initialResults,
+    pendingActionKeys: input.pendingActionKeys,
+  });
+
+  if (isCancellationSignal(results)) {
+    return {
+      ...results,
+      serializedContext: currentSerializedContext,
+      sessionState: currentSessionState,
+    };
   }
 
   if (results === null) return null;
   return {
     kind: "results",
-    results,
+    results: results as readonly RuntimeSubagentResultActionResult[],
     serializedContext: currentSerializedContext,
     sessionState: currentSessionState,
   };
@@ -276,7 +276,7 @@ export async function awaitCancellationSignal(iterator: AsyncIterator<void>): Pr
   throw new Error("Cancellation hook closed before receiving a signal.");
 }
 
-export function raceTurnCancellation(
+export function raceDriverCancellation(
   active: ActiveTurnCancellation | undefined,
   sessionCancellation: Promise<void>,
 ): Promise<CancellationSignal> {
