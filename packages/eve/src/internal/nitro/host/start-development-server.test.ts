@@ -5,6 +5,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  DevelopmentServerHandle,
+  DevelopmentServerOptions,
+} from "#internal/nitro/host/types.js";
+
 const mocks = vi.hoisted(() => {
   const fsControl: {
     closingRenameError?: Error;
@@ -258,12 +263,32 @@ function seedStateRecord(
   mocks.files.set(path, `${JSON.stringify(record)}\n`);
 }
 
+/** The owned-server shape the suite asserted against before `close()` moved onto `DevelopmentServer`. */
+type StartedTestServer = DevelopmentServerHandle & { close(): Promise<void> };
+
+/**
+ * Adapts `createDevelopmentServer().start()` back into the handle-plus-`close()`
+ * shape these tests assert against, so each call exercises the real factory,
+ * `start()`, and `close()` while keeping the call sites terse.
+ */
+async function loadStartDevelopmentServer(): Promise<
+  (rootDir: string, options?: DevelopmentServerOptions) => Promise<StartedTestServer>
+> {
+  const { createDevelopmentServer } =
+    await import("#internal/nitro/host/start-development-server.js");
+
+  return async (rootDir, options) => {
+    const server = createDevelopmentServer(rootDir, options);
+    const handle = await server.start();
+    return Object.assign({ ...handle }, { close: () => server.close() });
+  };
+}
+
 async function startServer(): Promise<{
   close(): Promise<void>;
   url: string;
 }> {
-  const { startDevelopmentServer } =
-    await import("#internal/nitro/host/start-development-server.js");
+  const startDevelopmentServer = await loadStartDevelopmentServer();
 
   return await startDevelopmentServer("/tmp/eve-test");
 }
@@ -295,7 +320,7 @@ describe("normalizeDevelopmentServerClientUrl", () => {
   });
 });
 
-describe("startDevelopmentServer", () => {
+describe("createDevelopmentServer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetch.mockResolvedValue(new Response(null, { status: 200 }));
@@ -338,7 +363,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("pins local workflow queue callbacks to the active dev server URL", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     Object.assign(mocks.listenerServer, {
       url: "http://127.0.0.1:42123/",
     });
@@ -374,7 +399,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("uses Eve's default port when no port is requested", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     Object.assign(mocks.nitro.options.devServer, {
       port: 3000,
     });
@@ -391,7 +416,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("normalizes wildcard IPv6 listener URLs before exposing them to the REPL or workflow", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     Object.assign(mocks.listenerServer, {
       url: "http://[::]:2000/",
     });
@@ -406,7 +431,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("retries the next port on IPv4 loopback when the default port is occupied", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const addressInUseError = Object.assign(new Error("Address already in use"), {
       code: "EADDRINUSE",
     });
@@ -438,7 +463,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("records the active dev process and url, and removes the state on close", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
 
     const server = await startDevelopmentServer("/tmp/eve-test");
 
@@ -456,7 +481,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("attempts every cleanup step when the authored-source watcher fails to close", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const server = await startDevelopmentServer("/tmp/eve-test");
     mocks.authoredSourceWatcher.close.mockRejectedValueOnce(new Error("watcher close failed"));
 
@@ -469,7 +494,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("marks the owner non-attachable before cleanup starts", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const server = await startDevelopmentServer("/tmp/eve-test");
     mocks.authoredSourceWatcher.close.mockImplementationOnce(async () => {
       expect(readStateRecord()).toMatchObject({ kind: "closing", pid: process.pid });
@@ -479,7 +504,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("does not start cleanup when the closing state cannot be persisted", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const server = await startDevelopmentServer("/tmp/eve-test");
     mocks.fsControl.closingRenameError = Object.assign(new Error("disk full"), { code: "ENOSPC" });
 
@@ -496,7 +521,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("retains ownership when the listener fails to close", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const server = await startDevelopmentServer("/tmp/eve-test");
     mocks.devServer.close.mockRejectedValueOnce(new Error("listener close failed"));
 
@@ -511,7 +536,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("retries state release without closing server resources twice", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const server = await startDevelopmentServer("/tmp/eve-test");
     mocks.fsControl.stateRemoveError = Object.assign(new Error("state unlink failed"), {
       code: "EIO",
@@ -535,7 +560,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("closes the server when its ready state cannot be published", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fsControl.readyRenameError = Object.assign(new Error("disk full"), { code: "ENOSPC" });
 
     await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(
@@ -548,7 +573,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("reports a state-release failure during startup cleanup", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fsControl.readyRenameError = Object.assign(new Error("publish failed"), { code: "EIO" });
     mocks.fsControl.stateRemoveError = Object.assign(new Error("state unlink failed"), {
       code: "EIO",
@@ -568,7 +593,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("retains startup ownership when publication and listener cleanup both fail", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fsControl.readyRenameError = Object.assign(new Error("disk full"), { code: "ENOSPC" });
     mocks.devServer.close.mockRejectedValueOnce(new Error("listener close failed"));
 
@@ -591,7 +616,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("does not expose ready state when compatibility publication fails", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fsControl.legacyMetadataRenameError = Object.assign(new Error("disk full"), {
       code: "ENOSPC",
     });
@@ -606,7 +631,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("closes the server without deleting a successor after ownership is lost", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const successor = {
       kind: "starting",
       ownerToken: "successor",
@@ -627,7 +652,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("fails closed when the ownership record cannot be read", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fsControl.stateReadError = Object.assign(new Error("permission denied"), {
       code: "EACCES",
     });
@@ -640,7 +665,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("refuses to start when the agent already has a running dev process", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     seedStateRecord({
       kind: "ready",
       pid: process.pid,
@@ -661,7 +686,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("reuses the active server recorded for the same app root when requested", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
 
     const owner = await startDevelopmentServer("/tmp/eve-test");
     const ownerSandboxRunId = process.env.EVE_DEVELOPMENT_SANDBOX_RUN_ID;
@@ -692,8 +717,33 @@ describe("startDevelopmentServer", () => {
     expect(process.env.EVE_DEVELOPMENT_SANDBOX_RUN_ID).toBeUndefined();
   });
 
+  it("close() tears nothing down when the instance attached to an existing owner", async () => {
+    const { createDevelopmentServer } = await import("./start-development-server.js");
+
+    const owner = createDevelopmentServer("/tmp/eve-test");
+    await owner.start();
+    // A real attaching TUI is a separate process and does not inherit the
+    // owner's internally installed listener port.
+    delete process.env.PORT;
+
+    const attaching = createDevelopmentServer("/tmp/eve-test", {
+      existing: "attach-if-unconfigured",
+    });
+    const attached = await attaching.start();
+    expect(attached.kind).toBe("existing");
+
+    mocks.devServer.close.mockClear();
+    await attaching.close();
+    // The attaching instance owns nothing, so close() is a no-op: it neither
+    // closes the listener nor disturbs the owner's published state.
+    expect(mocks.devServer.close).not.toHaveBeenCalled();
+    expect(readStateRecord()).toMatchObject({ kind: "ready", pid: process.pid });
+
+    await owner.close();
+  });
+
   it("does not attach when PORT explicitly configures the endpoint", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     process.env.PORT = "2000";
     seedStateRecord({
       kind: "ready",
@@ -710,7 +760,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("rejects reuse when the requested environment port conflicts", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     process.env.PORT = "2001";
     seedStateRecord({
       kind: "ready",
@@ -727,7 +777,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("keeps a live owner when health fails and refuses attachment", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     mocks.fetch.mockResolvedValue(new Response(null, { status: 503 }));
     seedStateRecord({
       kind: "ready",
@@ -753,7 +803,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("does not probe or attach to a non-loopback URL from persisted state", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     seedStateRecord({
       kind: "ready",
       pid: process.pid,
@@ -770,7 +820,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("refuses to reuse a recorded owner that has not yet published its url", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     seedStateRecord({ kind: "starting", pid: process.pid, ownerToken: "incumbent" });
 
     await expect(
@@ -780,7 +830,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("does not reuse a server recorded under another app root", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     const otherAppRoot = "/tmp/other-eve-test";
 
     seedStateRecord(
@@ -802,7 +852,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("overwrites a stale dev server record whose process is gone", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     seedStateRecord({
       kind: "ready",
       pid: 999_999_999,
@@ -822,7 +872,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("normalizes wildcard IPv4 listener URLs before exposing them to the REPL or workflow", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     Object.assign(mocks.listenerServer, {
       url: "http://0.0.0.0:2000/",
     });
@@ -836,7 +886,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("honors the PORT environment variable when no port option is provided", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     process.env.PORT = "4321";
     Object.assign(mocks.listenerServer, {
       url: "http://127.0.0.1:4321/",
@@ -850,7 +900,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("prefers the explicit port option over the PORT environment variable", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     process.env.PORT = "4321";
 
     const server = await startDevelopmentServer("/tmp/eve-test", { port: 5000 });
@@ -861,7 +911,7 @@ describe("startDevelopmentServer", () => {
   });
 
   it("rejects when the PORT environment variable is not a valid port", async () => {
-    const { startDevelopmentServer } = await import("./start-development-server.js");
+    const startDevelopmentServer = await loadStartDevelopmentServer();
     process.env.PORT = "not-a-port";
 
     await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(

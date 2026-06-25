@@ -32,6 +32,7 @@ import {
   getInitializedDevelopmentSandboxBackendNames,
 } from "#execution/sandbox/development-run.js";
 import type {
+  DevelopmentServer,
   DevelopmentServerHandle,
   DevelopmentServerOptions,
   StartedDevelopmentServer,
@@ -392,27 +393,16 @@ async function listenForDevelopmentServer(input: {
   );
 }
 
-/**
- * Starts the development Nitro server for an eve application.
- *
- * Authored schedules are never registered with Nitro's cron scheduler in
- * dev mode. To fire one authored schedule on demand, `POST` the dev-only
- * `/eve/v1/dev/schedules/:scheduleId` route — the handler returns
- * `{ scheduleId, sessionIds }` so callers can subscribe to the existing
- * per-session stream route.
- */
-export function startDevelopmentServer(
+interface DevelopmentServerStartResult {
+  readonly handle: DevelopmentServerHandle;
+  /** Teardown for a server this process owns; undefined when attached to an existing owner. */
+  readonly close: (() => Promise<void>) | undefined;
+}
+
+async function startNitroDevelopmentServer(
   rootDir: string,
-  options?: DevelopmentServerOptions & { existing?: "reject" },
-): Promise<StartedDevelopmentServer>;
-export function startDevelopmentServer(
-  rootDir: string,
-  options?: DevelopmentServerOptions,
-): Promise<DevelopmentServerHandle>;
-export async function startDevelopmentServer(
-  rootDir: string,
-  options: DevelopmentServerOptions = {},
-): Promise<DevelopmentServerHandle> {
+  options: DevelopmentServerOptions,
+): Promise<DevelopmentServerStartResult> {
   // Marks this process tree as an `eve dev` session so runtime features
   // that must never run in production (for example auto-installing
   // optional sandbox engine packages) can gate on it.
@@ -445,9 +435,8 @@ export async function startDevelopmentServer(
       (await isEveServerHealthy(owner.url))
     ) {
       return {
-        kind: "existing",
-        appRoot: project.appRoot,
-        url: owner.url,
+        handle: { kind: "existing", appRoot: project.appRoot, url: owner.url },
+        close: undefined,
       };
     }
     throw await createDevelopmentServerAlreadyRunningError(project.appRoot, owner);
@@ -551,75 +540,74 @@ export async function startDevelopmentServer(
       | { readonly errors: readonly unknown[]; readonly listenerClosed: boolean }
       | undefined;
     let closePromise: Promise<void> | undefined;
+    const close = async (): Promise<void> => {
+      if (closePromise !== undefined) {
+        await closePromise;
+        return;
+      }
+
+      let releaseFailed = false;
+      closePromise = (async () => {
+        if (cleanupResult === undefined) {
+          const closing = await stateClaim.markClosing();
+          if (!closing.ok && closing.error.kind !== "ownership-lost") {
+            throw createDevelopmentServerStateMutationError(
+              "mark dev server as closing",
+              closing.error,
+            );
+          }
+
+          cleanupResult = await closeDevelopmentServerResources({
+            authoredSourceWatcher: authoredSourceWatcherOnClose,
+            devServer: devServerOnClose,
+            developmentSandboxRunId,
+            nitro: nitroOnClose,
+          });
+          try {
+            clearInitializedDevelopmentSandboxBackendNames(developmentSandboxRunId);
+          } finally {
+            restoreWorkflowLocalQueueEnvironmentOnClose();
+            restoreDevelopmentSandboxRunId(previousDevelopmentSandboxRunId);
+          }
+        }
+
+        const cleanupErrors = [...cleanupResult.errors];
+        if (cleanupResult.listenerClosed) {
+          try {
+            await releaseDevelopmentProcess();
+          } catch (cause) {
+            releaseFailed = true;
+            cleanupErrors.push(
+              createDevelopmentServerStateMutationError("release dev server state", {
+                kind: "io",
+                cause,
+              }),
+            );
+          }
+        }
+
+        const cleanupError = createDevelopmentServerCleanupError(cleanupErrors);
+        if (cleanupError !== undefined) {
+          throw cleanupError;
+        }
+      })();
+      try {
+        await closePromise;
+      } catch (error) {
+        // Cleanup is memoized once it completes; failing before that, or
+        // failing the state release after it, leaves the server half-closed,
+        // so drop the promise to let a later close() retry. A concurrent
+        // close() joins this same promise rather than starting its own, so
+        // nothing else can be in flight to clobber here.
+        if (cleanupResult === undefined || releaseFailed) {
+          closePromise = undefined;
+        }
+        throw error;
+      }
+    };
     return {
-      kind: "started",
-      appRoot: project.appRoot,
-      async close() {
-        if (closePromise !== undefined) {
-          await closePromise;
-          return;
-        }
-
-        let releaseFailed = false;
-        closePromise = (async () => {
-          if (cleanupResult === undefined) {
-            const closing = await stateClaim.markClosing();
-            if (!closing.ok && closing.error.kind !== "ownership-lost") {
-              throw createDevelopmentServerStateMutationError(
-                "mark dev server as closing",
-                closing.error,
-              );
-            }
-
-            cleanupResult = await closeDevelopmentServerResources({
-              authoredSourceWatcher: authoredSourceWatcherOnClose,
-              devServer: devServerOnClose,
-              developmentSandboxRunId,
-              nitro: nitroOnClose,
-            });
-            try {
-              clearInitializedDevelopmentSandboxBackendNames(developmentSandboxRunId);
-            } finally {
-              restoreWorkflowLocalQueueEnvironmentOnClose();
-              restoreDevelopmentSandboxRunId(previousDevelopmentSandboxRunId);
-            }
-          }
-
-          const cleanupErrors = [...cleanupResult.errors];
-          if (cleanupResult.listenerClosed) {
-            try {
-              await releaseDevelopmentProcess();
-            } catch (cause) {
-              releaseFailed = true;
-              cleanupErrors.push(
-                createDevelopmentServerStateMutationError("release dev server state", {
-                  kind: "io",
-                  cause,
-                }),
-              );
-            }
-          }
-
-          const cleanupError = createDevelopmentServerCleanupError(cleanupErrors);
-          if (cleanupError !== undefined) {
-            throw cleanupError;
-          }
-        })();
-        try {
-          await closePromise;
-        } catch (error) {
-          // Cleanup is memoized once it completes; failing before that, or
-          // failing the state release after it, leaves the server half-closed,
-          // so drop the promise to let a later close() retry. A concurrent
-          // close() joins this same promise rather than starting its own, so
-          // nothing else can be in flight to clobber here.
-          if (cleanupResult === undefined || releaseFailed) {
-            closePromise = undefined;
-          }
-          throw error;
-        }
-      },
-      url: serverUrl,
+      handle: { kind: "started", appRoot: project.appRoot, url: serverUrl },
+      close,
     };
   } catch (error) {
     const cleanup = await closeDevelopmentServerResources({
@@ -649,6 +637,59 @@ export async function startDevelopmentServer(
     }
     throw error;
   }
+}
+
+class NitroDevelopmentServerController implements DevelopmentServer {
+  readonly #rootDir: string;
+  readonly #options: DevelopmentServerOptions;
+  #startInvoked = false;
+  #close: (() => Promise<void>) | undefined;
+
+  constructor(rootDir: string, options: DevelopmentServerOptions) {
+    this.#rootDir = rootDir;
+    this.#options = options;
+  }
+
+  async start(): Promise<DevelopmentServerHandle> {
+    if (this.#startInvoked) {
+      throw new Error("DevelopmentServer.start() was already called.");
+    }
+    this.#startInvoked = true;
+    const { handle, close } = await startNitroDevelopmentServer(this.#rootDir, this.#options);
+    this.#close = close;
+    return handle;
+  }
+
+  async close(): Promise<void> {
+    await this.#close?.();
+  }
+}
+
+/**
+ * Creates a development server for an eve application. Call `start()` to boot an
+ * owned Nitro server or attach to a running owner, and `close()` to tear down a
+ * server this instance started — `close()` is a no-op when it attached to an
+ * existing owner or was never started.
+ *
+ * Authored schedules are never registered with Nitro's cron scheduler in dev
+ * mode. To fire one authored schedule on demand, `POST` the dev-only
+ * `/eve/v1/dev/schedules/:scheduleId` route — the handler returns
+ * `{ scheduleId, sessionIds }` so callers can subscribe to the existing
+ * per-session stream route.
+ */
+export function createDevelopmentServer(
+  rootDir: string,
+  options?: DevelopmentServerOptions & { existing?: "reject" },
+): DevelopmentServer<StartedDevelopmentServer>;
+export function createDevelopmentServer(
+  rootDir: string,
+  options?: DevelopmentServerOptions,
+): DevelopmentServer;
+export function createDevelopmentServer(
+  rootDir: string,
+  options: DevelopmentServerOptions = {},
+): DevelopmentServer {
+  return new NitroDevelopmentServerController(rootDir, options);
 }
 
 function restoreDevelopmentSandboxRunId(previous: string | undefined): void {
