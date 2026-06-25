@@ -1,4 +1,4 @@
-import type { TextStreamPart, ToolSet } from "ai";
+import { jsonSchema, type TextStreamPart, type ToolSet } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,6 +7,7 @@ import {
   type HarnessEmissionState,
   setHarnessEmissionState,
 } from "#harness/emission.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import type { HarnessEmitFn, HarnessSession } from "#harness/types.js";
 import { EMPTY_DELIVERY_SENTINEL } from "#shared/empty-delivery.js";
 
@@ -232,6 +233,57 @@ describe("emitStreamContent empty delivery", () => {
         type: "message.completed",
       }),
     );
+  });
+});
+
+describe("emitStreamContent action requests", () => {
+  it("completes pre-tool text before emitting a streamed action request", async () => {
+    const emit = createEmitStub();
+    const tools = new Map<string, HarnessToolDefinition>([
+      [
+        "delegate",
+        {
+          description: "Delegate work to a subagent.",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "delegate",
+          runtimeAction: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
+        },
+      ],
+    ]);
+
+    await emitStreamContent(
+      emit,
+      EMISSION_STATE,
+      streamOf([
+        { id: "message-1", text: "Checking the release notes.", type: "text-delta" },
+        {
+          input: { task: "research the release" },
+          toolCallId: "call-delegate",
+          toolName: "delegate",
+          type: "tool-call",
+        },
+        { finishReason: "tool-calls", type: "finish-step" },
+      ] as TextStreamPart<ToolSet>[]),
+      {
+        excludedActionToolNames: new Set(),
+        tools,
+      },
+    );
+
+    const events = vi.mocked(emit).mock.calls.map(([event]) => event);
+    expect(events.map((event) => event.type)).toEqual([
+      "message.appended",
+      "message.completed",
+      "actions.requested",
+    ]);
+    expect(events[1]).toMatchObject({
+      data: { finishReason: "tool-calls", message: "Checking the release notes." },
+      type: "message.completed",
+    });
   });
 });
 

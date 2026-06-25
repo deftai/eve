@@ -359,9 +359,10 @@ interface StreamActionEmissionOptions {
  * stream before the next LLM call. Emitting `action.result` inline keeps
  * it ahead of the message events that depend on it.
  *
- * Eligible tool-call parts emit `actions.requested` as soon as the model
- * streams them. `emitStepActions` emits only any request absent from the
- * stream, plus terminal action results and `step.completed` after the step.
+ * Eligible tool-call parts complete any preceding assistant text, then emit
+ * `actions.requested` before execution begins. `emitStepActions` emits only
+ * any request absent from the stream, plus terminal action results and
+ * `step.completed` after the step.
  */
 export async function emitStreamContent(
   emitFn: HarnessEmitFn,
@@ -398,6 +399,10 @@ export async function emitStreamContent(
   const emitActionRequest = async (action: RuntimeActionRequest): Promise<void> => {
     if (emittedActionCallIds.has(action.callId)) {
       return;
+    }
+
+    if (currentMessage.trim().length > 0) {
+      await flushCurrentMessage();
     }
 
     emittedActionCallIds.add(action.callId);
