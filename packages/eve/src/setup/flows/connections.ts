@@ -56,7 +56,7 @@ function connectionBlocker(
   authStatus: VercelAuthStatus,
   projectLinked: boolean,
 ): string | undefined {
-  return vercelAuthBlockerReason(authStatus) ?? (projectLinked ? undefined : "Run eve link first");
+  return vercelAuthBlockerReason(authStatus) ?? (projectLinked ? undefined : "Run /vc:link first");
 }
 
 function connectionRows(

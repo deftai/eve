@@ -174,7 +174,7 @@ describe("runConnectionsFlow", () => {
     });
     expect(unlinkedList.paints[0]?.find((row) => row.value === "linear")).toMatchObject({
       disabled: true,
-      disabledReason: "Run eve link first",
+      disabledReason: "Run /vc:link first",
     });
   });
 

@@ -7,6 +7,7 @@ import {
   type InstallVercelCliResult,
 } from "#setup/flows/install-vercel-cli.js";
 import { runLoginFlow, type LoginFlowResult } from "#setup/flows/login.js";
+import { runLinkFlow } from "#setup/flows/link.js";
 import { runModelFlow, type ModelProviderOutcome } from "#setup/flows/model.js";
 import { runProviderFlow, type ProviderPicker } from "#setup/flows/provider.js";
 import { openUrl } from "#setup/primitives/open-url.js";
@@ -29,6 +30,7 @@ export type TuiSetupCommand = PromptCommandExtensionName;
 export const SETUP_FLOW_CONFIG = {
   "vc:install": { title: "Install the Vercel CLI", indicator: "pulse" },
   "vc:login": { title: "Log in to Vercel", indicator: "pulse" },
+  "vc:link": { title: "Link a Vercel project", indicator: "pulse" },
   model: { title: "Configure the agent model", indicator: "pulse" },
   channels: { title: "Agent channels", indicator: "pulse" },
   connect: { title: "Agent connections", indicator: "pulse" },
@@ -59,6 +61,7 @@ export interface TuiSetupCommandInput {
 export interface TuiSetupFlows {
   runInstallVercelCliFlow: typeof runInstallVercelCliFlow;
   runLoginFlow: typeof runLoginFlow;
+  runLinkFlow: typeof runLinkFlow;
   runModelFlow: typeof runModelFlow;
   runChannelsFlow: typeof runChannelsFlow;
   runConnectionsFlow: typeof runConnectionsFlow;
@@ -159,6 +162,7 @@ async function executeSetupCommand(
   const flows: TuiSetupFlows = {
     runInstallVercelCliFlow,
     runLoginFlow,
+    runLinkFlow,
     runModelFlow,
     runChannelsFlow,
     runConnectionsFlow,
@@ -175,6 +179,21 @@ async function executeSetupCommand(
       }
       case "vc:login": {
         return loginResultMessage(await flows.runLoginFlow({ appRoot, prompter, signal }));
+      }
+      case "vc:link": {
+        const result = await flows.runLinkFlow({
+          appRoot,
+          prompter,
+          signal,
+          projectSelection: "existing-only",
+        });
+        return result.kind === "cancelled"
+          ? { message: "/vc:link cancelled.", preserveFlowDiagnostics: true }
+          : {
+              message: "Project linked.",
+              preserveFlowDiagnostics: true,
+              effect: { kind: "model-access-changed" },
+            };
       }
       case "model": {
         const pickProvider: ProviderPicker = (request) => renderer.readProviderPicker(request);
