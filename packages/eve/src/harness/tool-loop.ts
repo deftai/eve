@@ -41,13 +41,20 @@ import {
 } from "#protocol/message.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
-import { isWorkflowRuntimeActionInterrupt } from "#harness/workflow-runtime-action-state.js";
+import {
+  getWorkflowRuntimeActionInterrupts,
+  isWorkflowRuntimeActionInterrupt,
+} from "#harness/workflow-runtime-action-state.js";
 import type { InputRequest } from "#runtime/input/types.js";
 import {
   hydrateSandboxAttachments,
   stageAttachmentsToSandbox,
 } from "#harness/attachment-staging.js";
 import { applyWorkflowTool, buildWorkflowHostTools } from "#harness/workflow-sandbox.js";
+import {
+  ensureWorkflowContinuationSecurity,
+  getWorkflowContinuationSecurity,
+} from "#harness/workflow-continuation-security.js";
 import { createWorkflowLifecycle } from "#harness/workflow-lifecycle.js";
 import {
   clearPendingWorkflowInterrupt,
@@ -458,6 +465,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }
 
     session = pending.session;
+    if (config.workflow === true) {
+      session = ensureWorkflowContinuationSecurity(session);
+    }
     let messages: ModelMessage[] = pending.messages;
 
     if (stepInput.input?.context !== undefined) {
@@ -642,6 +652,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         config.workflow === true
           ? (
               await applyWorkflowTool({
+                continuationSecurity: getWorkflowContinuationSecurity(session),
                 harnessTools: config.tools,
                 lifecycle:
                   emit !== undefined
@@ -1390,7 +1401,8 @@ async function handleStepResult(input: {
   };
 
   if (config.workflow === true) {
-    const workflowInterrupt = await getWorkflowSandboxInterrupt(result);
+    const continuationSecurity = getWorkflowContinuationSecurity(baseSession);
+    const workflowInterrupt = await getWorkflowSandboxInterrupt(result, continuationSecurity);
     if (workflowInterrupt !== undefined) {
       if (!isWorkflowRuntimeActionInterrupt(workflowInterrupt)) {
         throw new Error(`Unsupported Workflow interrupt kind "${workflowInterrupt.payload.kind}".`);
@@ -1762,6 +1774,7 @@ async function continuePendingWorkflowInterrupt(input: {
           skipReplayed: true,
           tools: input.config.tools,
         });
+  const continuationSecurity = getWorkflowContinuationSecurity(input.session);
 
   let continuationOutput: unknown;
   try {
@@ -1777,17 +1790,25 @@ async function continuePendingWorkflowInterrupt(input: {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       continuationOutput = await continueWorkflowSandboxInterrupt({
+        continuationSecurity,
         interrupt: currentInterrupt,
         lifecycle,
         resolution: childResults[resultIndex]?.output,
         tools: hostTools,
       });
-      const loopUnwrapped = await unwrapWorkflowSandboxResult(continuationOutput);
+      const loopUnwrapped = await unwrapWorkflowSandboxResult(
+        continuationOutput,
+        continuationSecurity,
+      );
       if (loopUnwrapped.status !== "interrupted") break;
       if (!isWorkflowRuntimeActionInterrupt(loopUnwrapped.interrupt)) break;
       if (resultIndex + 1 >= childResults.length) break;
+      const nextInterrupt = getWorkflowRuntimeActionInterrupts(loopUnwrapped.interrupt)[0];
+      if (nextInterrupt === undefined) {
+        throw new Error("Workflow continuation contains no pending runtime-action interrupt.");
+      }
       resultIndex++;
-      currentInterrupt = loopUnwrapped.interrupt;
+      currentInterrupt = nextInterrupt;
     }
   } catch (error) {
     logError(log, "Workflow interrupt continuation failed", error);
@@ -1798,7 +1819,7 @@ async function continuePendingWorkflowInterrupt(input: {
     };
   }
 
-  const unwrapped = await unwrapWorkflowSandboxResult(continuationOutput);
+  const unwrapped = await unwrapWorkflowSandboxResult(continuationOutput, continuationSecurity);
   const finalOutput = unwrapped.status === "interrupted" ? unwrapped.interrupt : unwrapped.output;
   const baseMessages = [...input.session.history, ...pending.responseMessages];
   const replacedMessages = replaceWorkflowToolResult(
@@ -1861,13 +1882,18 @@ function parkOnWorkflowInterrupt(input: {
   readonly promptMessages: readonly ModelMessage[];
   readonly responseMessages: readonly ModelMessage[];
 }): StepResult {
+  const interrupt = getWorkflowRuntimeActionInterrupts(input.interrupt)[0];
+  if (interrupt === undefined) {
+    throw new Error("Workflow continuation contains no pending runtime-action interrupt.");
+  }
+
   const baseSession: HarnessSession = {
     ...input.baseSession,
     history: [...input.promptMessages],
   };
 
   const parkedSession = setPendingWorkflowInterrupt({
-    interrupt: input.interrupt,
+    interrupt,
     responseMessages: input.responseMessages,
     session: baseSession,
   });
