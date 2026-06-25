@@ -13,7 +13,6 @@ import type {
 const mocks = vi.hoisted(() => {
   const fsControl: {
     closingRenameError?: Error;
-    legacyMetadataRenameError?: Error;
     readyRenameError?: Error;
     stateRemoveError?: Error;
     stateReadError?: Error;
@@ -108,13 +107,6 @@ const mocks = vi.hoisted(() => {
           files.delete(path);
         }
         return;
-      }
-
-      if (
-        to.endsWith("/.eve/dev-server.json") &&
-        fsControl.legacyMetadataRenameError !== undefined
-      ) {
-        throw fsControl.legacyMetadataRenameError;
       }
 
       let parsedValue: unknown;
@@ -263,6 +255,35 @@ function seedStateRecord(
   mocks.files.set(path, `${JSON.stringify(record)}\n`);
 }
 
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  reject(error: unknown): void;
+  resolve(value: T): void;
+} {
+  let resolvePromise: ((value: T) => void) | undefined;
+  let rejectPromise: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+
+  return {
+    promise,
+    reject(error) {
+      if (rejectPromise === undefined) {
+        throw new Error("Deferred promise was not initialized.");
+      }
+      rejectPromise(error);
+    },
+    resolve(value) {
+      if (resolvePromise === undefined) {
+        throw new Error("Deferred promise was not initialized.");
+      }
+      resolvePromise(value);
+    },
+  };
+}
+
 /** The owned-server shape the suite asserted against before `close()` moved onto `DevelopmentServer`. */
 type StartedTestServer = DevelopmentServerHandle & { close(): Promise<void> };
 
@@ -325,7 +346,6 @@ describe("createDevelopmentServer", () => {
     vi.clearAllMocks();
     mocks.fetch.mockResolvedValue(new Response(null, { status: 200 }));
     mocks.fsControl.closingRenameError = undefined;
-    mocks.fsControl.legacyMetadataRenameError = undefined;
     mocks.fsControl.readyRenameError = undefined;
     mocks.fsControl.stateRemoveError = undefined;
     mocks.fsControl.stateReadError = undefined;
@@ -612,22 +632,6 @@ describe("createDevelopmentServer", () => {
       kind: "starting",
       pid: process.pid,
     });
-    expect(mocks.files.has("/tmp/eve-test/.eve/dev-server.json")).toBe(false);
-  });
-
-  it("does not expose ready state when compatibility publication fails", async () => {
-    const startDevelopmentServer = await loadStartDevelopmentServer();
-    mocks.fsControl.legacyMetadataRenameError = Object.assign(new Error("disk full"), {
-      code: "ENOSPC",
-    });
-    mocks.devServer.close.mockRejectedValueOnce(new Error("listener close failed"));
-
-    await expect(startDevelopmentServer("/tmp/eve-test")).rejects.toThrow(/cleanup also failed/i);
-
-    expect(readStateRecord()).toMatchObject({
-      kind: "starting",
-      pid: process.pid,
-    });
   });
 
   it("closes the server without deleting a successor after ownership is lost", async () => {
@@ -701,6 +705,7 @@ describe("createDevelopmentServer", () => {
     expect(attached.url).toBe(owner.url);
     expect(mocks.createApplicationNitro).toHaveBeenCalledOnce();
     expect(mocks.fetch).toHaveBeenCalledWith("http://localhost:2000/eve/v1/health", {
+      redirect: "error",
       signal: expect.any(AbortSignal),
     });
     expect(process.env.EVE_DEVELOPMENT_SANDBOX_RUN_ID).toBe(ownerSandboxRunId);
@@ -740,6 +745,54 @@ describe("createDevelopmentServer", () => {
     expect(readStateRecord()).toMatchObject({ kind: "ready", pid: process.pid });
 
     await owner.close();
+  });
+
+  it("waits for a pending start before closing an owned server", async () => {
+    const { createDevelopmentServer } = await import("./start-development-server.js");
+    const project = createDeferred<{
+      readonly agentRoot: string;
+      readonly appRoot: string;
+      readonly layout: "nested";
+    }>();
+    mocks.resolveDiscoveryProject.mockReturnValueOnce(project.promise);
+
+    const server = createDevelopmentServer("/tmp/eve-test");
+    const starting = server.start();
+    await vi.waitFor(() => expect(mocks.resolveDiscoveryProject).toHaveBeenCalledOnce());
+    const closing = server.close();
+
+    project.resolve({
+      agentRoot: "/tmp/eve-test/agent",
+      appRoot: "/tmp/eve-test",
+      layout: "nested",
+    });
+
+    await starting;
+    await closing;
+
+    expect(mocks.devServer.close).toHaveBeenCalledOnce();
+    expect(readStateRecord()).toBeUndefined();
+  });
+
+  it("waits for a failed start without rethrowing from close", async () => {
+    const { createDevelopmentServer } = await import("./start-development-server.js");
+    const project = createDeferred<{
+      readonly agentRoot: string;
+      readonly appRoot: string;
+      readonly layout: "nested";
+    }>();
+    mocks.resolveDiscoveryProject.mockReturnValueOnce(project.promise);
+
+    const server = createDevelopmentServer("/tmp/eve-test");
+    const starting = server.start();
+    await vi.waitFor(() => expect(mocks.resolveDiscoveryProject).toHaveBeenCalledOnce());
+    const closing = server.close();
+
+    project.reject(new Error("discovery failed"));
+
+    await expect(starting).rejects.toThrow("discovery failed");
+    await expect(closing).resolves.toBeUndefined();
+    expect(mocks.devServer.close).not.toHaveBeenCalled();
   });
 
   it("does not attach when PORT explicitly configures the endpoint", async () => {
@@ -791,6 +844,7 @@ describe("createDevelopmentServer", () => {
     ).rejects.toThrow(`A dev server is already running for this eve agent (pid ${process.pid}).`);
 
     expect(mocks.fetch).toHaveBeenCalledWith("http://localhost:2000/eve/v1/health", {
+      redirect: "error",
       signal: expect.any(AbortSignal),
     });
     expect(mocks.fetch).toHaveBeenCalledOnce();
@@ -802,21 +856,23 @@ describe("createDevelopmentServer", () => {
     });
   });
 
-  it("does not probe or attach to a non-loopback URL from persisted state", async () => {
+  it("does not probe or attach to a non-loopback or wildcard URL from persisted state", async () => {
     const startDevelopmentServer = await loadStartDevelopmentServer();
-    seedStateRecord({
-      kind: "ready",
-      pid: process.pid,
-      ownerToken: "forged",
-      url: "http://192.168.1.20:2000/",
-    });
+    for (const url of ["http://192.168.1.20:2000/", "http://0.0.0.0:2000/"]) {
+      seedStateRecord({
+        kind: "ready",
+        pid: process.pid,
+        ownerToken: "forged",
+        url,
+      });
 
-    await expect(
-      startDevelopmentServer("/tmp/eve-test", { existing: "attach-if-unconfigured" }),
-    ).rejects.toThrow(`A dev server is already running for this eve agent (pid ${process.pid}).`);
+      await expect(
+        startDevelopmentServer("/tmp/eve-test", { existing: "attach-if-unconfigured" }),
+      ).rejects.toThrow(`A dev server is already running for this eve agent (pid ${process.pid}).`);
 
-    expect(mocks.fetch).not.toHaveBeenCalled();
-    expect(mocks.createApplicationNitro).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
+      expect(mocks.createApplicationNitro).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses to reuse a recorded owner that has not yet published its url", async () => {

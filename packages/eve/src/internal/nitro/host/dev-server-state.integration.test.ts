@@ -150,12 +150,6 @@ describe("DevelopmentServerState", () => {
       ownerToken: expect.any(String),
       pid: process.pid,
     });
-    await expect(readFile(join(appRoot, ".eve", "dev-server.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(readFile(join(appRoot, ".eve", "dev-process.pid"), "utf8")).resolves.toBe(
-      `${process.pid}\n`,
-    );
   });
 
   it("does not publish a closing owner as ready again", async () => {
@@ -171,9 +165,6 @@ describe("DevelopmentServerState", () => {
       kind: "closing",
       ownerToken: expect.any(String),
       pid: process.pid,
-    });
-    await expect(readFile(join(appRoot, ".eve", "dev-server.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
     });
   });
 
@@ -412,118 +403,6 @@ describe("DevelopmentServerState", () => {
       },
     });
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("treats a live legacy owner as occupied during the state-file transition", async () => {
-    await mkdir(join(appRoot, ".eve"), { recursive: true });
-    await writeFile(join(appRoot, ".eve", "dev-process.pid"), `${process.pid}\n`, "utf8");
-    await writeFile(
-      join(appRoot, ".eve", "dev-server.json"),
-      `${JSON.stringify({
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-        url: "http://127.0.0.1:2000/",
-      })}\n`,
-      "utf8",
-    );
-
-    await expect(store.claim()).resolves.toEqual({
-      ok: true,
-      value: {
-        kind: "occupied",
-        owner: {
-          kind: "ready",
-          pid: process.pid,
-          url: "http://127.0.0.1:2000/",
-        },
-      },
-    });
-  });
-
-  it.each(["not-a-pid", "-1", "1.5", String(Number.MAX_SAFE_INTEGER + 1)])(
-    "ignores an invalid legacy process marker (%s)",
-    async (rawProcessId) => {
-      await mkdir(join(appRoot, ".eve"), { recursive: true });
-      await writeFile(join(appRoot, ".eve", "dev-process.pid"), `${rawProcessId}\n`, "utf8");
-
-      requireClaimed(await store.claim());
-    },
-  );
-
-  it("ignores legacy metadata when its process marker is absent", async () => {
-    await mkdir(join(appRoot, ".eve"), { recursive: true });
-    await writeFile(
-      join(appRoot, ".eve", "dev-server.json"),
-      JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:2000/" }),
-      "utf8",
-    );
-
-    requireClaimed(await store.claim());
-  });
-
-  it("ignores legacy metadata when its process marker is dead", async () => {
-    await mkdir(join(appRoot, ".eve"), { recursive: true });
-    await writeFile(join(appRoot, ".eve", "dev-process.pid"), `${DEAD_PID}\n`, "utf8");
-    await writeFile(
-      join(appRoot, ".eve", "dev-server.json"),
-      JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:2000/" }),
-      "utf8",
-    );
-
-    requireClaimed(await store.claim());
-  });
-
-  it("publishes compatibility records for Eve versions from before the transition", async () => {
-    const stateClaim = requireClaimed(await store.claim());
-    const legacyProcessIdPath = join(appRoot, ".eve", "dev-process.pid");
-    const legacyServerPath = join(appRoot, ".eve", "dev-server.json");
-
-    await expect(readFile(legacyProcessIdPath, "utf8")).resolves.toBe(`${process.pid}\n`);
-
-    await stateClaim.publish("http://127.0.0.1:2000/");
-    await expect(readFile(legacyServerPath, "utf8")).resolves.toSatisfy((raw: string) => {
-      expect(JSON.parse(raw)).toMatchObject({
-        pid: process.pid,
-        url: "http://127.0.0.1:2000/",
-      });
-      return true;
-    });
-
-    await stateClaim.release();
-    await expect(readFile(legacyProcessIdPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readFile(legacyServerPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("preserves the versioned owner when an old server later removes compatibility files", async () => {
-    await mkdir(join(appRoot, ".eve"), { recursive: true });
-    await writeFile(join(appRoot, ".eve", "dev-process.pid"), `${DEAD_PID}\n`, "utf8");
-    await writeFile(
-      join(appRoot, ".eve", "dev-server.json"),
-      `${JSON.stringify({ pid: DEAD_PID, url: "http://127.0.0.1:1000/" })}\n`,
-      "utf8",
-    );
-    const stateClaim = requireClaimed(await store.claim());
-    await stateClaim.publish("http://127.0.0.1:2000/");
-
-    await Promise.all([
-      rm(join(appRoot, ".eve", "dev-process.pid"), { force: true }),
-      rm(join(appRoot, ".eve", "dev-server.json"), { force: true }),
-    ]);
-
-    await expect(store.inspect()).resolves.toEqual({
-      ok: true,
-      value: {
-        kind: "ready",
-        pid: process.pid,
-        url: "http://127.0.0.1:2000/",
-      },
-    });
-    await expect(readRawRecord()).resolves.toMatchObject({
-      kind: "ready",
-      ownerToken: expect.any(String),
-      pid: process.pid,
-      url: "http://127.0.0.1:2000/",
-    });
   });
 
   it("fails closed when versioned state fails its persisted schema", async () => {

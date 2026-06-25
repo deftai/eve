@@ -47,6 +47,7 @@ describe("resolveSharedEveDevServer", () => {
       expect(handle.process).toBeUndefined();
       expect(process.env[EVE_BASE_URL_ENV]).toBeUndefined();
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:49152/eve/v1/health", {
+        redirect: "error",
         signal: expect.any(AbortSignal),
       });
     } finally {

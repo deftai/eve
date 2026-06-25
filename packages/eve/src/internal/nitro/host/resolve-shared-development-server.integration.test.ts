@@ -104,6 +104,21 @@ describe("resolveSharedDevelopmentServer", () => {
     });
   });
 
+  it("rejects a wildcard owner URL before probing it", async () => {
+    const appRoot = await createTempAppRoot();
+    const claim = await claimState(appRoot);
+    await claim.publish("http://0.0.0.0:49152");
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(resolveSharedDevelopmentServer({ appRoot, timeoutMs: 2_000 })).rejects.toThrow(
+      /published a non-loopback URL/u,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it("reports a failed candidate when no competing owner claimed", async () => {
     const appRoot = await createTempAppRoot();
     const child = createMockChildProcess(2_147_483_646);

@@ -9,19 +9,11 @@ import { err, ok, type Result } from "#shared/result.js";
 
 const STATE_FILE_NAME = "dev-server-state.v1.json";
 const LOCK_DIRECTORY_NAME = "dev-server-state.lock";
-const LEGACY_PROCESS_ID_FILE_NAME = "dev-process.pid";
-const LEGACY_SERVER_FILE_NAME = "dev-server.json";
 const LOCK_ACQUIRE_TIMEOUT_MS = 5_000;
 const LOCK_OWNER_FILE_NAME = "owner.json";
 const LOCK_POLL_MS = 50;
 
 const processIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const legacyProcessIdSchema = z
-  .string()
-  .trim()
-  .regex(/^\d+$/)
-  .transform(Number)
-  .pipe(processIdSchema);
 const ownerTokenSchema = z.string().min(1);
 const developmentServerLockOwnerSchema = z
   .object({
@@ -56,10 +48,6 @@ const devServerStateSchema = z.discriminatedUnion("kind", [
   readyDevServerStateSchema,
   closingDevServerStateSchema,
 ]);
-const legacyDevServerMetadataSchema = z.object({
-  pid: processIdSchema,
-  url: httpServerUrlSchema,
-});
 
 /** Persisted ownership state for one app root. */
 type PersistedDevelopmentServerState = Readonly<z.infer<typeof devServerStateSchema>>;
@@ -141,16 +129,12 @@ export class DevelopmentServerState {
   readonly #stateDir: string;
   readonly #statePath: string;
   readonly #lockPath: string;
-  readonly #legacyProcessIdPath: string;
-  readonly #legacyServerPath: string;
 
   constructor(project: { readonly appRoot: string }) {
     this.appRoot = project.appRoot;
     this.#stateDir = join(this.appRoot, ".eve");
     this.#statePath = join(this.#stateDir, STATE_FILE_NAME);
     this.#lockPath = join(this.#stateDir, LOCK_DIRECTORY_NAME);
-    this.#legacyProcessIdPath = join(this.#stateDir, LEGACY_PROCESS_ID_FILE_NAME);
-    this.#legacyServerPath = join(this.#stateDir, LEGACY_SERVER_FILE_NAME);
   }
 
   /** Returns the live owner without exposing its mutation capability. */
@@ -182,14 +166,8 @@ export class DevelopmentServerState {
           return ok({ kind: "occupied", owner: stateToOwner(loaded.state) });
         }
 
-        const legacyOwner = await this.#loadLegacyOwner();
-        if (legacyOwner !== undefined) {
-          return ok({ kind: "occupied", owner: legacyOwner });
-        }
-
-        await this.#removeLegacyState();
         const ownerToken = randomUUID();
-        await this.#writeClaimRecords({ kind: "starting", ownerToken, pid });
+        await this.#writeAtomic({ kind: "starting", ownerToken, pid });
         return ok({ kind: "claimed", claim: this.#createClaim(pid, ownerToken) });
       });
     } catch (cause) {
@@ -234,25 +212,12 @@ export class DevelopmentServerState {
           return err({ kind: "invalid-transition", from: "closing", to: "ready" });
         }
 
-        await this.#writeLegacyMetadata(loaded.state.pid, url);
-        try {
-          await this.#writeAtomic({
-            kind: "ready",
-            ownerToken,
-            pid: loaded.state.pid,
-            url,
-          });
-        } catch (cause) {
-          try {
-            await this.#removeLegacyMetadataForProcess(loaded.state.pid);
-          } catch (rollbackCause) {
-            throw new AggregateError(
-              [cause, rollbackCause],
-              "Failed to publish dev-server state and remove compatibility metadata.",
-            );
-          }
-          throw cause;
-        }
+        await this.#writeAtomic({
+          kind: "ready",
+          ownerToken,
+          pid: loaded.state.pid,
+          url,
+        });
         return ok(undefined);
       });
     } catch (cause) {
@@ -279,7 +244,6 @@ export class DevelopmentServerState {
           });
         }
 
-        await this.#removeLegacyMetadataForProcess(loaded.state.pid);
         await this.#writeAtomic({
           kind: "closing",
           ownerToken,
@@ -302,9 +266,6 @@ export class DevelopmentServerState {
       }
 
       if (loaded.kind === "ok" && loaded.state.ownerToken === ownerToken) {
-        // Remove compatibility files while the old PID marker still blocks
-        // legacy Eve processes, then relinquish the versioned claim.
-        await this.#removeLegacyStateForProcess(loaded.state.pid);
         await rm(this.#statePath, { force: true });
       }
     });
@@ -320,7 +281,7 @@ export class DevelopmentServerState {
       return stateToOwner(loaded.state);
     }
 
-    return await this.#loadLegacyOwner();
+    return undefined;
   }
 
   async #load(): Promise<
@@ -343,73 +304,8 @@ export class DevelopmentServerState {
     return state.ok ? { kind: "ok", state: state.value } : { kind: "corrupt", cause: state.error };
   }
 
-  async #loadLegacyOwner(): Promise<DevelopmentServerOwner | undefined> {
-    const [processIdRaw, metadataRaw] = await Promise.all([
-      readOptionalFile(this.#legacyProcessIdPath),
-      readOptionalFile(this.#legacyServerPath),
-    ]);
-    const processId = processIdRaw === undefined ? undefined : parseLegacyProcessId(processIdRaw);
-    if (processId === undefined || !isProcessRunning(processId)) {
-      return undefined;
-    }
-
-    const metadata = metadataRaw === undefined ? undefined : parseLegacyMetadata(metadataRaw);
-    return metadata?.pid === processId
-      ? { kind: "ready", pid: processId, url: metadata.url }
-      : { kind: "starting", pid: processId };
-  }
-
   #createCorruptStateError(cause: unknown): Error {
     return new Error(`Dev-server state at "${this.#statePath}" is malformed.`, { cause });
-  }
-
-  async #removeLegacyState(): Promise<void> {
-    await Promise.all([
-      rm(this.#legacyProcessIdPath, { force: true }),
-      rm(this.#legacyServerPath, { force: true }),
-    ]);
-  }
-
-  async #removeLegacyStateForProcess(pid: number): Promise<void> {
-    await this.#removeLegacyMetadataForProcess(pid);
-
-    const processIdRaw = await readOptionalFile(this.#legacyProcessIdPath);
-    const processId = processIdRaw === undefined ? undefined : parseLegacyProcessId(processIdRaw);
-    if (processId === pid) {
-      await rm(this.#legacyProcessIdPath, { force: true });
-    }
-  }
-
-  async #removeLegacyMetadataForProcess(pid: number): Promise<void> {
-    const metadataRaw = await readOptionalFile(this.#legacyServerPath);
-    const metadata = metadataRaw === undefined ? undefined : parseLegacyMetadata(metadataRaw);
-    if (metadata?.pid === pid) {
-      await rm(this.#legacyServerPath, { force: true });
-    }
-  }
-
-  async #writeClaimRecords(
-    state: Extract<PersistedDevelopmentServerState, { readonly kind: "starting" }>,
-  ): Promise<void> {
-    let wroteLegacyProcessId = false;
-
-    try {
-      await this.#writeTextAtomic(this.#legacyProcessIdPath, `${state.pid}\n`);
-      wroteLegacyProcessId = true;
-      await this.#writeAtomic(state);
-    } catch (error) {
-      if (wroteLegacyProcessId) {
-        await this.#removeLegacyStateForProcess(state.pid).catch(() => {});
-      }
-      throw error;
-    }
-  }
-
-  async #writeLegacyMetadata(pid: number, url: string): Promise<void> {
-    await this.#writeTextAtomic(
-      this.#legacyServerPath,
-      `${JSON.stringify({ pid, updatedAt: new Date().toISOString(), url }, null, 2)}\n`,
-    );
   }
 
   async #writeAtomic(state: PersistedDevelopmentServerState): Promise<void> {
@@ -645,26 +541,6 @@ function parseDevServerState(raw: string): Result<PersistedDevelopmentServerStat
 
   const parsed = devServerStateSchema.safeParse(value);
   return parsed.success ? ok(parsed.data) : err(parsed.error);
-}
-
-function parseLegacyMetadata(
-  raw: string,
-): Readonly<z.infer<typeof legacyDevServerMetadataSchema>> | undefined {
-  let value: unknown;
-
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-
-  const parsed = legacyDevServerMetadataSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-}
-
-function parseLegacyProcessId(raw: string): number | undefined {
-  const parsed = legacyProcessIdSchema.safeParse(raw);
-  return parsed.success ? parsed.data : undefined;
 }
 
 async function readOptionalFile(path: string): Promise<string | undefined> {

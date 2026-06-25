@@ -266,6 +266,7 @@ describe("withEve Vercel config", () => {
     const rewrites = await config.rewrites?.();
 
     expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:49152/eve/v1/health", {
+      redirect: "error",
       signal: expect.any(AbortSignal),
     });
     expect(getBeforeFiles(rewrites)).toContainEqual({

@@ -18,7 +18,7 @@ import {
 } from "#internal/nitro/host/dev-server-state.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { isEveServerHealthy } from "#shared/eve-server-health.js";
-import { isLocalDevelopmentServerUrl } from "#services/dev-client/local-host.js";
+import { isLoopbackServerUrl } from "#shared/network-address.js";
 import { resolveNitroCompiledArtifactsSource } from "#internal/nitro/routes/runtime-artifacts.js";
 import {
   pruneLocalSandboxTemplatesInBackground,
@@ -431,7 +431,7 @@ async function startNitroDevelopmentServer(
       options.existing === "attach-if-unconfigured" &&
       !hasExplicitEndpoint &&
       owner.kind === "ready" &&
-      isLocalDevelopmentServerUrl(owner.url) &&
+      isLoopbackServerUrl(owner.url) &&
       (await isEveServerHealthy(owner.url))
     ) {
       return {
@@ -639,36 +639,11 @@ async function startNitroDevelopmentServer(
   }
 }
 
-class NitroDevelopmentServerController implements DevelopmentServer {
-  readonly #rootDir: string;
-  readonly #options: DevelopmentServerOptions;
-  #startInvoked = false;
-  #close: (() => Promise<void>) | undefined;
-
-  constructor(rootDir: string, options: DevelopmentServerOptions) {
-    this.#rootDir = rootDir;
-    this.#options = options;
-  }
-
-  async start(): Promise<DevelopmentServerHandle> {
-    if (this.#startInvoked) {
-      throw new Error("DevelopmentServer.start() was already called.");
-    }
-    this.#startInvoked = true;
-    const { handle, close } = await startNitroDevelopmentServer(this.#rootDir, this.#options);
-    this.#close = close;
-    return handle;
-  }
-
-  async close(): Promise<void> {
-    await this.#close?.();
-  }
-}
-
 /**
  * Creates a development server for an eve application. Call `start()` to boot an
  * owned Nitro server or attach to a running owner, and `close()` to tear down a
- * server this instance started — `close()` is a no-op when it attached to an
+ * server this instance started. `close()` waits for an in-progress `start()`,
+ * resolves after failed-start cleanup, and is a no-op when it attached to an
  * existing owner or was never started.
  *
  * Authored schedules are never registered with Nitro's cron scheduler in dev
@@ -689,7 +664,30 @@ export function createDevelopmentServer(
   rootDir: string,
   options: DevelopmentServerOptions = {},
 ): DevelopmentServer {
-  return new NitroDevelopmentServerController(rootDir, options);
+  let startPromise: Promise<DevelopmentServerHandle> | undefined;
+  let closeStartedServer: (() => Promise<void>) | undefined;
+
+  return {
+    start(): Promise<DevelopmentServerHandle> {
+      if (startPromise !== undefined) {
+        throw new Error("DevelopmentServer.start() was already called.");
+      }
+
+      startPromise = startNitroDevelopmentServer(rootDir, options).then(({ handle, close }) => {
+        closeStartedServer = close;
+        return handle;
+      });
+      return startPromise;
+    },
+    async close(): Promise<void> {
+      if (startPromise === undefined) {
+        return;
+      }
+
+      await startPromise.catch(() => undefined);
+      await closeStartedServer?.();
+    },
+  };
 }
 
 function restoreDevelopmentSandboxRunId(previous: string | undefined): void {

@@ -18,7 +18,6 @@ const LONG_SOURCE_FILE_ALLOWLIST = new Set<string>([
   "compiler/manifest.ts",
   "harness/tool-loop.ts",
   "internal/nitro/host/create-application-nitro.ts",
-  "internal/nitro/host/start-development-server.ts",
   "protocol/message.ts",
   "public/channels/eve.ts",
   "public/channels/auth.ts",

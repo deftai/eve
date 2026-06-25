@@ -8,8 +8,8 @@ import {
   DevelopmentServerState,
   type DevelopmentServerObservation,
 } from "#internal/nitro/host/dev-server-state.js";
-import { isLocalDevelopmentServerUrl } from "#services/dev-client/local-host.js";
 import { isEveServerHealthy } from "#shared/eve-server-health.js";
+import { isLoopbackServerUrl } from "#shared/network-address.js";
 
 export const EVE_BASE_URL_ENV = "EVE_BASE_URL";
 
@@ -128,9 +128,9 @@ export async function resolveSharedDevelopmentServer(input: {
         continue;
       }
 
-      if (!isLocalDevelopmentServerUrl(observation.url)) {
+      if (!isLoopbackServerUrl(observation.url)) {
         throw new Error(
-          `Development server ${observation.pid} for "${project.appRoot}" published a non-local URL (${observation.url}); refusing to attach.`,
+          `Development server ${observation.pid} for "${project.appRoot}" published a non-loopback URL (${observation.url}); refusing to attach.`,
         );
       }
 

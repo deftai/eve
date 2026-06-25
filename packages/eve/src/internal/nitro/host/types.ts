@@ -31,8 +31,10 @@ export type DevelopmentServerHandle = StartedDevelopmentServer | ExistingDevelop
  *
  * `start()` either boots a server this process owns or attaches to a running
  * owner; the {@link DevelopmentServerHandle} result discriminates which.
- * `close()` tears down only a server this instance started — it is a no-op when
- * the instance attached to an existing owner or was never started.
+ * `close()` waits for an in-progress `start()`, then tears down only a server
+ * this instance started. It resolves after startup cleanup when `start()`
+ * fails, and is a no-op when the instance attached to an existing owner or was
+ * never started.
  */
 export interface DevelopmentServer<H extends DevelopmentServerHandle = DevelopmentServerHandle> {
   start(): Promise<H>;

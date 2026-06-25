@@ -18,7 +18,7 @@ export async function isEveServerHealthy(
 
   try {
     const healthUrl = new URL(EVE_HEALTH_ROUTE_PATH, serverUrl).toString();
-    const response = await fetch(healthUrl, { signal });
+    const response = await fetch(healthUrl, { redirect: "error", signal });
     return response.ok;
   } catch {
     return false;
