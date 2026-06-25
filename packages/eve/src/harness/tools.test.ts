@@ -1,5 +1,5 @@
 import { type JSONSchema7, jsonSchema } from "ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { always, never, once } from "#public/tools/approval/approval-helpers.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
@@ -13,6 +13,21 @@ import type { JsonObject } from "#shared/json.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { buildToolSet, buildToolSetWithProviderTools } from "#harness/tools.js";
 import type { HarnessToolMap } from "#harness/types.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
+
+// vi.mock is hoisted; define the fixture via vi.hoisted so the factory can
+// reference it before module-level code runs.
+const { TEST_SESSION } = vi.hoisted(() => ({
+  TEST_SESSION: {
+    id: "test-session",
+    auth: { current: null, initiator: null },
+    turn: { id: "test-turn", sequence: 0 },
+  } satisfies SessionContext["session"],
+}));
+
+vi.mock("#context/build-callback-context.js", () => ({
+  buildCallbackContext: () => ({ session: TEST_SESSION }),
+}));
 
 function getJsonSchema(tool: unknown): unknown {
   return (tool as { inputSchema: { jsonSchema: unknown } }).inputSchema.jsonSchema;
@@ -646,6 +661,60 @@ describe("buildToolSet", () => {
       await needsApproval?.(toolInput, {});
 
       expect(capturedInput).toEqual(toolInput);
+    });
+
+    it("passes session from the active context into needsApproval", async () => {
+      let capturedSession: unknown;
+      const tools: HarnessToolMap = new Map<string, HarnessToolDefinition>([
+        [
+          "guarded",
+          {
+            description: "A guarded tool.",
+            execute: async () => "ok",
+            inputSchema: jsonSchema({}),
+            name: "guarded",
+            needsApproval: (ctx) => {
+              capturedSession = ctx.session;
+              return false;
+            },
+          },
+        ],
+      ]);
+
+      const result = buildToolSet({ tools });
+      const needsApproval = (result.guarded as { needsApproval?: NeedsApprovalFn }).needsApproval;
+
+      await needsApproval?.({}, {});
+
+      expect(capturedSession).toEqual(TEST_SESSION);
+    });
+
+    it("skips approval when session principal matches a schedule runtime", async () => {
+      // Simulates the schedule principal check mukund described: skip approval
+      // for runs triggered by the runtime (eve:app) and require it otherwise.
+      // TEST_SESSION has auth.current === null (non-schedule), so the predicate
+      // below requires approval for it. A real schedule principal would carry
+      // principalId: "eve:app" and the predicate would return false.
+      const tools: HarnessToolMap = new Map<string, HarnessToolDefinition>([
+        [
+          "refund",
+          {
+            description: "Refund a charge.",
+            execute: async () => "ok",
+            inputSchema: jsonSchema({}),
+            name: "refund",
+            // Skip approval only for the schedule runtime principal.
+            needsApproval: ({ session }) =>
+              session.auth.current?.principalId !== "eve:app",
+          },
+        ],
+      ]);
+
+      const result = buildToolSet({ tools });
+      const needsApproval = (result.refund as { needsApproval?: NeedsApprovalFn }).needsApproval;
+
+      // TEST_SESSION has current === null (not a schedule), so approval IS needed.
+      await expect(needsApproval?.({}, {})).resolves.toBe(true);
     });
 
     it("input-aware approval skips when compound key is in approvedTools", async () => {

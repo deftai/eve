@@ -38,13 +38,34 @@ export default defineTool({
 
 By default, omitted `needsApproval` behaves like `never()`, so tool calls may execute without human approval. Require human approval or other safeguards for sensitive, irreversible, regulated, financial, healthcare, employment, housing, legal, safety-impacting, user-impacting, or external side-effecting actions.
 
-When the decision depends on the input, pass your own predicate instead of a helper. It receives `{ toolName, toolInput, approvedTools }` and returns a boolean. `toolInput` can be undefined, so guard the access. To require approval only when an amount crosses a threshold:
+When the decision depends on the input, pass your own predicate instead of a helper. It receives `{ toolName, toolInput, approvedTools, session }` and returns a boolean. `toolInput` can be undefined, so guard the access. To require approval only when an amount crosses a threshold:
 
 ```ts
 needsApproval: ({ toolInput }) => (toolInput?.amount ?? 0) > 1000,
 ```
 
 Gating a side effect on approval is also how you make non-idempotent work safe across replays: a charge or email that sits behind `always()` can't fire from a re-run step without a fresh human decision.
+
+### Skipping approval for schedules
+
+`session.auth.current` identifies who triggered the run. Schedule-initiated sessions carry `principalId: "eve:app"` and `principalType: "runtime"`. Use this to skip approval for automated runs while still prompting when a person triggers the same tool:
+
+```ts title="agent/tools/refund_charge.ts"
+import { defineTool } from "eve/tools";
+import { z } from "zod";
+
+export default defineTool({
+  description: "Refund a charge.",
+  inputSchema: z.object({ chargeId: z.string(), amount: z.number() }),
+  needsApproval: ({ session }) =>
+    session.auth.current?.principalId !== "eve:app",
+  async execute(input) {
+    return refund(input);
+  },
+});
+```
+
+`session` in `needsApproval` has the same shape as `ctx.session` in `execute`: `id`, `auth`, `turn`, and an optional `parent`. Skipping approval on scheduled runs means any non-idempotent side effect will re-fire if a step replays, so pair this pattern with idempotency keys or `once()` where needed.
 
 ## Questions
 

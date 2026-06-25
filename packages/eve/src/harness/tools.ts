@@ -19,6 +19,7 @@ import {
 import { stashToolInterrupt } from "#harness/tool-interrupts.js";
 import { withToolOutputSerializationError } from "#harness/tool-output-serialization.js";
 import { isCodeModeToolExecutionOptions } from "#runtime/framework-tools/code-mode-connection-auth.js";
+import { buildCallbackContext } from "#context/build-callback-context.js";
 
 type ToolModelOutputValue =
   | { readonly type: "json"; readonly value: JSONValue }
@@ -296,9 +297,13 @@ function buildNeedsApprovalFn(
     if (definition.needsApproval === undefined) return false;
 
     const toolInputRecord = isObject(toolInput) ? toolInput : undefined;
+    // buildCallbackContext reads the ALS scope that is active when the
+    // approval predicate fires, so session is always current.
+    const { session } = buildCallbackContext();
 
     return definition.needsApproval({
       approvedTools: input.approvedTools ?? new Set(),
+      session,
       toolInput: toolInputRecord,
       toolName: definition.name,
     });

@@ -6,7 +6,7 @@ import { defineTool } from "#public/definitions/tool.js";
 
 vi.mock("#context/build-callback-context.js", () => ({
   buildCallbackContext: () => ({
-    session: { id: "test", auth: { current: null, initiator: null }, turn: {} },
+    session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
   }),
 }));
 
@@ -880,6 +880,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(
       tools[0]!.needsApproval!({
         approvedTools: new Set(),
+        session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
         toolInput: undefined,
         toolName: "risky",
       }),
@@ -916,12 +917,14 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(
       tools[0]!.needsApproval!({
         approvedTools: new Set(),
+        session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
         toolInput: { draftId: "draft_123" },
         toolName: "guarded",
       }),
     ).toBe(true);
     expect(approvalFn).toHaveBeenCalledExactlyOnceWith({
       approvedTools: new Set(),
+      session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
       toolInput: { draftId: "draft_123" },
       toolName: "guarded",
     });

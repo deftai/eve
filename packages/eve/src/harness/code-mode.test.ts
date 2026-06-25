@@ -1,5 +1,5 @@
 import { jsonSchema, tool } from "ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { applySandboxToolSet, buildSandboxHostTools } from "#harness/code-mode.js";
 import { CODE_MODE_SURFACE, WORKFLOW_SURFACE } from "#harness/sandbox-surface.js";
@@ -10,6 +10,12 @@ import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { buildToolSet } from "#harness/tools.js";
 import type { HarnessToolMap } from "#harness/types.js";
 import { isCodeModeEnvEnabled, resolveCodeModeEnabled } from "#shared/code-mode.js";
+
+vi.mock("#context/build-callback-context.js", () => ({
+  buildCallbackContext: () => ({
+    session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
+  }),
+}));
 
 describe("resolveCodeModeEnabled", () => {
   it("reads the EVE_EXPERIMENTAL_CODE_MODE backstop", () => {

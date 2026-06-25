@@ -1,5 +1,11 @@
 import { jsonSchema, type ModelMessage } from "ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("#context/build-callback-context.js", () => ({
+  buildCallbackContext: () => ({
+    session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
+  }),
+}));
 
 import { once } from "#public/tools/approval/approval-helpers.js";
 import type { InputRequest } from "#runtime/input/types.js";

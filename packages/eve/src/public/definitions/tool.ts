@@ -27,9 +27,13 @@ type ApprovalContextInput<TInput> = unknown extends TInput ? Record<string, unkn
  * already approved at least once in the current session. `toolName` is the
  * runtime name of the tool being evaluated. `toolInput` is the raw input the
  * model passed, available for input-aware decisions (e.g. per-connection scoping).
+ * `session` mirrors the same session metadata available in `execute` via
+ * {@link ToolContext} — use it to gate approval on the principal, turn, or
+ * parent session (e.g. skip approval for schedule-triggered runs).
  */
 export interface NeedsApprovalContext<TInput = Record<string, unknown>> {
   readonly approvedTools: ReadonlySet<string>;
+  readonly session: SessionContext["session"];
   readonly toolInput?: ApprovalToolInput<TInput>;
   readonly toolName: string;
 }

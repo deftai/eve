@@ -64,6 +64,12 @@ vi.mock("./instrumentation-config.js", () => ({
   getInstrumentationConfig: (...args: unknown[]) => mockGetInstrumentationConfig(...args),
 }));
 
+vi.mock("#context/build-callback-context.js", () => ({
+  buildCallbackContext: () => ({
+    session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
+  }),
+}));
+
 vi.mock("./compaction.js", () => ({
   compactMessages: vi.fn(),
   estimateTokens: vi.fn().mockReturnValue(5000),
@@ -620,6 +626,7 @@ describe("createToolLoopHarness", () => {
     await expect(dynamicTool.needsApproval?.({ line: "victoria" })).resolves.toBe(true);
     expect(needsApproval).toHaveBeenCalledExactlyOnceWith({
       approvedTools: new Set(),
+      session: { id: "test", auth: { current: null, initiator: null }, turn: { id: "test-turn", sequence: 0 } },
       toolInput: { line: "victoria" },
       toolName: "tfl__getLineStatus",
     });
