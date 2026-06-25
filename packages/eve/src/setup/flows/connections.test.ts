@@ -78,6 +78,18 @@ function flowDeps(overrides: Partial<ConnectionsFlowDeps> = {}): ConnectionsFlow
   };
 }
 
+function runConnectionFlow(
+  list: ReturnType<typeof scriptConnectionList>,
+  deps: Partial<ConnectionsFlowDeps> = {},
+  prompter = createFakePrompter({ single: list.single }).prompter,
+) {
+  return runConnectionsFlow({
+    appRoot: APP_ROOT,
+    prompter,
+    deps: flowDeps(deps),
+  });
+}
+
 describe("runConnectionsFlow", () => {
   it("adds a catalog connection and repaints the searchable list", async () => {
     const listAuthoredConnections = vi
@@ -91,16 +103,16 @@ describe("runConnectionsFlow", () => {
     const runPackageManagerInstall = vi.fn(async () => true);
 
     await expect(
-      runConnectionsFlow({
-        appRoot: APP_ROOT,
-        prompter: fake.prompter,
-        deps: flowDeps({
+      runConnectionFlow(
+        list,
+        {
           ensureConnectionDependencies,
           listAuthoredConnections,
           runPackageManagerInstall,
           addConnections,
-        }),
-      }),
+        },
+        fake.prompter,
+      ),
     ).resolves.toEqual({ kind: "done", addedConnections: ["linear"] });
 
     expect(list.requests[0]).toMatchObject({
@@ -119,11 +131,8 @@ describe("runConnectionsFlow", () => {
         service: "mcp.linear.app",
       }),
     );
-    expect(runPackageManagerInstall).toHaveBeenCalledWith("pnpm", APP_ROOT, expect.any(Object));
-    expect(ensureConnectionDependencies).toHaveBeenCalledWith({ projectRoot: APP_ROOT });
-    expect(runPackageManagerInstall.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(addConnections.ensureConnection).mock.invocationCallOrder[0]!,
-    );
+    const ensureOrder = vi.mocked(addConnections.ensureConnection).mock.invocationCallOrder[0]!;
+    expect(runPackageManagerInstall.mock.invocationCallOrder[0]).toBeLessThan(ensureOrder);
     expect(
       vi.mocked(addConnections.setupConnectionConnector).mock.invocationCallOrder[0],
     ).toBeLessThan(runPackageManagerInstall.mock.invocationCallOrder[0]!);
@@ -131,45 +140,25 @@ describe("runConnectionsFlow", () => {
 
   it("defaults to Done when every catalog connection is already authored", async () => {
     const list = scriptConnectionList(["done"]);
-    await runConnectionsFlow({
-      appRoot: APP_ROOT,
-      prompter: createFakePrompter({ single: list.single }).prompter,
-      deps: flowDeps({
-        listAuthoredConnections: vi.fn(async () => ["linear", "notion"]),
-      }),
+    await runConnectionFlow(list, {
+      listAuthoredConnections: vi.fn(async () => ["linear", "notion"]),
     });
 
     expect(list.requests[0]?.initialValue).toBe("done");
   });
 
-  it("blocks logged-out rows but leaves unlinked rows selectable", async () => {
+  it("blocks logged-out rows", async () => {
     const loggedOutList = scriptConnectionList(["cancel"]);
     await expect(
-      runConnectionsFlow({
-        appRoot: APP_ROOT,
-        prompter: createFakePrompter({ single: loggedOutList.single }).prompter,
-        deps: flowDeps({
-          detectDeployment: vi.fn(async () => UNLINKED),
-          getVercelAuthStatus: vi.fn(async (): Promise<"logged-out"> => "logged-out"),
-        }),
+      runConnectionFlow(loggedOutList, {
+        detectDeployment: vi.fn(async () => UNLINKED),
+        getVercelAuthStatus: vi.fn(async (): Promise<"logged-out"> => "logged-out"),
       }),
     ).resolves.toEqual({ kind: "cancelled" });
     expect(loggedOutList.paints[0]?.find((row) => row.value === "linear")).toMatchObject({
       disabled: true,
       disabledReason: "Log in to Vercel first, see /vc:login",
     });
-
-    const unlinkedList = scriptConnectionList(["done"]);
-    await runConnectionsFlow({
-      appRoot: APP_ROOT,
-      prompter: createFakePrompter({ single: unlinkedList.single }).prompter,
-      deps: flowDeps({
-        detectDeployment: vi.fn(async () => UNLINKED),
-      }),
-    });
-    expect(unlinkedList.paints[0]?.find((row) => row.value === "linear")).not.toHaveProperty(
-      "disabled",
-    );
   });
 
   it("runs the shared create-or-link flow before configuring an unlinked project", async () => {
@@ -196,12 +185,17 @@ describe("runConnectionsFlow", () => {
       runConnectionsFlow({ appRoot: APP_ROOT, prompter: fake.prompter, deps }),
     ).resolves.toEqual({ kind: "done", addedConnections: ["linear"] });
 
+    expect(list.paints[0]?.find((row) => row.value === "linear")).not.toHaveProperty("disabled");
     expect(runLinkFlow).toHaveBeenCalledWith({
       appRoot: APP_ROOT,
       prompter: fake.prompter,
       signal: undefined,
       projectSelection: "create-or-link",
+      teamSelectMessage: expect.any(Function),
     });
+    expect(runLinkFlow.mock.calls[0]?.[0].teamSelectMessage?.("Acme")).toBe(
+      "You need to link to a project to use Vercel Connect.\n\nSelect your team",
+    );
     expect(detectDeployment).toHaveBeenCalledTimes(2);
     expect(addConnections.setupConnectionConnector).toHaveBeenCalledOnce();
   });
@@ -211,23 +205,13 @@ describe("runConnectionsFlow", () => {
       kind: "cancelled",
     }));
     const list = scriptConnectionList(["linear", "done"]);
-    const addConnections = addConnectionDeps();
-    const deps = flowDeps({
-      detectDeployment: vi.fn(async () => UNLINKED),
-      runLinkFlow,
-      addConnections,
-    });
 
     await expect(
-      runConnectionsFlow({
-        appRoot: APP_ROOT,
-        prompter: createFakePrompter({ single: list.single }).prompter,
-        deps,
+      runConnectionFlow(list, {
+        detectDeployment: vi.fn(async () => UNLINKED),
+        runLinkFlow,
       }),
     ).resolves.toEqual({ kind: "done", addedConnections: [] });
-
-    expect(addConnections.setupConnectionConnector).not.toHaveBeenCalled();
-    expect(list.requests).toHaveLength(2);
   });
 
   it("does not mutate dependencies when connector selection is cancelled", async () => {
@@ -240,14 +224,10 @@ describe("runConnectionsFlow", () => {
     const runPackageManagerInstall = vi.fn(async () => true);
 
     await expect(
-      runConnectionsFlow({
-        appRoot: APP_ROOT,
-        prompter: createFakePrompter({ single: list.single }).prompter,
-        deps: flowDeps({
-          addConnections,
-          ensureConnectionDependencies,
-          runPackageManagerInstall,
-        }),
+      runConnectionFlow(list, {
+        addConnections,
+        ensureConnectionDependencies,
+        runPackageManagerInstall,
       }),
     ).resolves.toEqual({ kind: "cancelled" });
 

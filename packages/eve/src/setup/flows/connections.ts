@@ -190,6 +190,8 @@ export async function runConnectionsFlow(input: {
         prompter,
         signal,
         projectSelection: "create-or-link",
+        teamSelectMessage: () =>
+          "You need to link to a project to use Vercel Connect.\n\nSelect your team",
       });
       if (link.kind === "cancelled") {
         if (signal?.aborted) return { kind: "cancelled" };
