@@ -340,7 +340,6 @@ const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
     description: z.string().optional(),
     experimental: z
       .object({
-        codeMode: z.boolean().optional(),
         workflow: compiledAgentWorkflowDefinitionSchema.optional(),
       })
       .strict()
@@ -348,6 +347,9 @@ const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
     model: compiledRuntimeModelReferenceSchema,
     name: z.string(),
     outputSchema: jsonObjectSchema.optional(),
+    reasoning: z
+      .enum(["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"])
+      .optional(),
     source: moduleSourceRefSchema.optional(),
   })
   .strict();
@@ -680,7 +682,6 @@ export function createCompiledAgentNodeManifest(input: {
         input.config.experimental === undefined
           ? undefined
           : {
-              codeMode: input.config.experimental.codeMode,
               workflow:
                 input.config.experimental.workflow === undefined
                   ? undefined
@@ -691,6 +692,7 @@ export function createCompiledAgentNodeManifest(input: {
       model: cloneCompiledRuntimeModelReference(input.config.model),
       name: input.config.name,
       outputSchema: input.config.outputSchema,
+      reasoning: input.config.reasoning,
       source:
         input.config.source === undefined
           ? undefined
