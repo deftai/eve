@@ -39,10 +39,7 @@ import {
   createRuntimeToolResultFromValue,
 } from "#harness/action-result-helpers.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
-import type {
-  RuntimeToolCallActionRequest,
-  RuntimeToolResultActionResult,
-} from "#runtime/actions/types.js";
+import type { RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
 import { isAuthorizationSignal, isPendingAuthorizationToolOutput } from "#harness/authorization.js";
 import { contextStorage } from "#context/container.js";
 import { readToolInterrupt } from "#harness/tool-interrupts.js";
@@ -343,6 +340,13 @@ interface StreamActionEmissionOptions {
 }
 
 /**
+ * Provider streams do not mark the end of a parallel tool-call wave. Waiting
+ * one task coalesces queued sibling calls, but does not hold the UI until a
+ * provider result completes.
+ */
+const PROVIDER_ACTION_BATCH_TICK_MS = 0;
+
+/**
  * Consumes the AI SDK `fullStream` and emits real-time text and reasoning
  * events.
  *
@@ -357,9 +361,9 @@ interface StreamActionEmissionOptions {
  * complete action batch is emitted by `onLanguageModelCallEnd`, after parsing
  * the model response and before client-side execution begins.
  *
- * Provider-executed calls and results can interleave in the same stream.
- * Collecting them until the stream completes lets clients render the full
- * parallel call batch before any individual result is surfaced.
+ * Provider-executed calls and results can interleave in the same stream. A
+ * short task-boundary buffer groups a provider's immediately queued calls,
+ * then emits them while the provider is still awaiting results.
  */
 export async function emitStreamContent(
   emitFn: HarnessEmitFn,
@@ -372,8 +376,12 @@ export async function emitStreamContent(
   let finishReason: AssistantStepFinishReason = "stop";
   let streamError: Error | undefined;
   const toolCallIdsSeenInStream = new Set<string>();
+  const providerToolCallIdsSeen = new Set<string>();
   const providerActions = new Map<string, RuntimeToolCallActionRequest>();
-  const providerResults: RuntimeToolResultActionResult[] = [];
+  let providerActionFlush: Promise<void> = Promise.resolve();
+  let providerActionFlushError: unknown;
+  let providerActionFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  let resolveProviderActionFlushTimer: (() => void) | undefined;
   const handledInlineToolResultCallIds = new Set<string>();
   const inlineAuthorizationResults: TypedToolResult<ToolSet>[] = [];
   const inlineToolResultParts: InlineToolResultPart[] = [];
@@ -394,14 +402,71 @@ export async function emitStreamContent(
     currentMessage = "";
   };
 
+  const emitProviderActions = async (): Promise<void> => {
+    if (providerActions.size === 0) {
+      return;
+    }
+
+    const actions = [...providerActions.values()];
+    providerActions.clear();
+    await emitFn(
+      createActionsRequestedEvent({
+        actions,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  };
+
+  const scheduleProviderActionFlush = (): void => {
+    if (providerActionFlushTimer !== undefined) {
+      return;
+    }
+
+    let resolveTimer: (() => void) | undefined;
+    const timerElapsed = new Promise<void>((resolve) => {
+      resolveTimer = resolve;
+    });
+    resolveProviderActionFlushTimer = resolveTimer;
+    providerActionFlushTimer = setTimeout(() => {
+      providerActionFlushTimer = undefined;
+      resolveProviderActionFlushTimer = undefined;
+      resolveTimer?.();
+    }, PROVIDER_ACTION_BATCH_TICK_MS);
+    providerActionFlush = providerActionFlush
+      .then(() => timerElapsed)
+      .then(emitProviderActions)
+      .catch((error: unknown) => {
+        providerActionFlushError ??= error;
+      });
+  };
+
+  const flushProviderActions = async (): Promise<void> => {
+    if (providerActionFlushTimer !== undefined) {
+      clearTimeout(providerActionFlushTimer);
+      providerActionFlushTimer = undefined;
+      const resolveTimer = resolveProviderActionFlushTimer;
+      resolveProviderActionFlushTimer = undefined;
+      resolveTimer?.();
+    }
+
+    await providerActionFlush;
+    if (providerActionFlushError !== undefined) {
+      throw providerActionFlushError;
+    }
+    await emitProviderActions();
+  };
+
   const collectProviderToolCall = async (toolCall: {
     readonly input?: unknown;
     readonly toolCallId: string;
     readonly toolName: string;
   }): Promise<void> => {
-    if (providerActions.has(toolCall.toolCallId)) {
+    if (providerToolCallIdsSeen.has(toolCall.toolCallId)) {
       return;
     }
+    providerToolCallIdsSeen.add(toolCall.toolCallId);
 
     if (currentMessage.trim().length > 0) {
       await flushCurrentMessage();
@@ -416,32 +481,7 @@ export async function emitStreamContent(
       kind: "tool-call",
       toolName: toolCall.toolName,
     });
-  };
-
-  const emitCollectedProviderToolEvents = async (): Promise<void> => {
-    if (providerActions.size === 0) {
-      return;
-    }
-
-    await emitFn(
-      createActionsRequestedEvent({
-        actions: [...providerActions.values()],
-        sequence: state.sequence,
-        stepIndex: state.stepIndex,
-        turnId: state.turnId,
-      }),
-    );
-
-    for (const result of providerResults) {
-      await emitFn(
-        createActionResultEvent({
-          result,
-          sequence: state.sequence,
-          stepIndex: state.stepIndex,
-          turnId: state.turnId,
-        }),
-      );
-    }
+    scheduleProviderActionFlush();
   };
 
   const observeStreamToolCall = async (toolCall: TypedToolCall<ToolSet>): Promise<void> => {
@@ -466,6 +506,7 @@ export async function emitStreamContent(
 
     switch (part.type) {
       case "reasoning-delta":
+        await flushProviderActions();
         currentReasoning += part.text;
         await emitFn(
           createReasoningAppendedEvent({
@@ -478,6 +519,7 @@ export async function emitStreamContent(
         );
         break;
       case "text-delta":
+        await flushProviderActions();
         // Flush accumulated reasoning before text begins.
         if (currentReasoning.trim().length > 0) {
           await emitFn(
@@ -507,6 +549,7 @@ export async function emitStreamContent(
         if (toolCall.providerExecuted === true) {
           await collectProviderToolCall(toolCall);
         } else {
+          await flushProviderActions();
           await observeStreamToolCall(toolCall);
         }
         break;
@@ -519,7 +562,15 @@ export async function emitStreamContent(
             toolCallId: inlineToolResult.toolCallId,
             toolName: inlineToolResult.toolName,
           });
-          providerResults.push(createRuntimeToolResultFromStepResult(inlineToolResult));
+          await flushProviderActions();
+          await emitFn(
+            createActionResultEvent({
+              result: createRuntimeToolResultFromStepResult(inlineToolResult),
+              sequence: state.sequence,
+              stepIndex: state.stepIndex,
+              turnId: state.turnId,
+            }),
+          );
           // Provider-executed results are already kept in the provider-owned
           // assistant response shape. Do not synthesize local `role: "tool"`
           // history for them; just surface the normal action result above.
@@ -534,6 +585,7 @@ export async function emitStreamContent(
         if (toolCallIdsSeenInStream.has(part.toolCallId)) {
           break;
         }
+        await flushProviderActions();
         await flushCurrentMessage();
         if (isInlineAuthorizationToolResult(inlineToolResult)) {
           // Approval-resume auth: route to the park detector via
@@ -570,12 +622,18 @@ export async function emitStreamContent(
         const toolError = part as TypedToolError<ToolSet>;
         if (toolError.providerExecuted === true) {
           await collectProviderToolCall(toolError);
-          providerResults.push(
-            createRuntimeToolResultFromValue({
-              callId: toolError.toolCallId,
-              isError: true,
-              output: toError(toolError.error),
-              toolName: toolError.toolName,
+          await flushProviderActions();
+          await emitFn(
+            createActionResultEvent({
+              result: createRuntimeToolResultFromValue({
+                callId: toolError.toolCallId,
+                isError: true,
+                output: toError(toolError.error),
+                toolName: toolError.toolName,
+              }),
+              sequence: state.sequence,
+              stepIndex: state.stepIndex,
+              turnId: state.turnId,
             }),
           );
         }
@@ -583,6 +641,7 @@ export async function emitStreamContent(
       }
       case "finish-step":
         finishReason = normalizeAssistantStepFinishReason(part.finishReason);
+        await flushProviderActions();
         break;
       case "error":
         // `part.error` is typed as `unknown` — AI SDK providers emit
@@ -597,11 +656,11 @@ export async function emitStreamContent(
     }
   }
 
+  await flushProviderActions();
+
   if (streamError !== undefined) {
     throw streamError;
   }
-
-  await emitCollectedProviderToolEvents();
 
   // Flush remaining reasoning.
   if (currentReasoning.trim().length > 0) {

@@ -179,6 +179,43 @@ describe("TerminalRenderer (inline scrollback)", () => {
     expect(snapshot).toContain("It's 73°F in SF.");
   });
 
+  it("renders a concurrent tool batch before any result arrives", async () => {
+    const { screen, renderer } = makeRenderer(120, 50);
+    let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;
+    const rendering = renderer.renderStream(
+      {
+        events: new ReadableStream<AgentTUIStreamEvent>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      },
+      { submittedPrompt: "search the tri-state area", continueSession: true },
+    );
+
+    const controller = streamController;
+    expect(controller).toBeDefined();
+    controller?.enqueue({ type: "step-start" });
+    for (let index = 1; index <= 10; index += 1) {
+      controller?.enqueue({
+        type: "tool-call",
+        toolCallId: `search-${index}`,
+        toolName: "web_search",
+        input: { query: `tri-state-${index}` },
+      });
+    }
+
+    await screen.waitForText("tri-state-10");
+
+    const snapshot = screen.snapshot();
+    expect(snapshot.match(/web_search/g)).toHaveLength(10);
+    expect(snapshot).not.toContain("✓ web_search");
+
+    controller?.close();
+    await rendering;
+    renderer.shutdown();
+  });
+
   it("omits the interrupt hint while waiting for the first stream event", async () => {
     const { screen, renderer } = makeRenderer();
     let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;

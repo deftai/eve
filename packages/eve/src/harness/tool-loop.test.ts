@@ -4107,7 +4107,8 @@ describe("createToolLoopHarness", () => {
       ],
       finishReason: "stop",
       fullStreamParts: [
-        ...providerSearches.flatMap(({ call, result }) => [call, result]),
+        ...providerToolCalls,
+        ...providerToolResults,
         { id: "text-1", text: "The searches are complete.", type: "text-delta" },
         { finishReason: "stop", type: "finish-step" },
       ],
