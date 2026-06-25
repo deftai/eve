@@ -2,7 +2,6 @@ import { jsonSchema, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import { createToolLoopHarness } from "#harness/tool-loop.js";
 import type { HarnessSession, ToolLoopHarnessConfig } from "#harness/types.js";
 
@@ -58,11 +57,8 @@ function createSession(): HarnessSession {
 
 describe("batched tool execution", () => {
   it("starts ten independent web searches before any search is allowed to finish", async () => {
-    const events: HandleMessageStreamEvent[] = [];
     const releaseSearches = createDeferred();
     const startedLocations = new Set<string>();
-    const expectedCallIds = TRISTATE_LOCATIONS.map((_, index) => `call-weather-${index}`);
-    let actionBatchesAtFirstExecution: readonly (readonly string[])[] | undefined;
 
     const model = new MockLanguageModelV4({
       doStream: async () => ({
@@ -96,9 +92,7 @@ describe("batched tool execution", () => {
       }),
     });
     const config: ToolLoopHarnessConfig = {
-      handleEvent: async (event) => {
-        events.push(event);
-      },
+      handleEvent: async () => {},
       mode: "conversation",
       resolveModel: async () => model,
       tools: new Map([
@@ -107,12 +101,6 @@ describe("batched tool execution", () => {
           {
             description: "Searches weather for one location.",
             execute: async (input) => {
-              if (startedLocations.size === 0) {
-                actionBatchesAtFirstExecution = events
-                  .filter((event) => event.type === "actions.requested")
-                  .map((event) => event.data.actions.map((action) => action.callId));
-              }
-
               const location = (input as { readonly location: string }).location;
               startedLocations.add(location);
               await releaseSearches.promise;
@@ -138,7 +126,6 @@ describe("batched tool execution", () => {
       await vi.waitFor(() => expect(startedLocations).toEqual(new Set(TRISTATE_LOCATIONS)), {
         timeout: 1_000,
       });
-      expect(actionBatchesAtFirstExecution).toEqual([expectedCallIds]);
     } finally {
       releaseSearches.resolve();
       await run;

@@ -288,7 +288,6 @@ async function* createMockFullStream(
 }
 
 type MockAgentSettings = {
-  onLanguageModelCallEnd?: (event: { content: readonly unknown[] }) => Promise<void> | void;
   onStepFinish?: (step: unknown) => Promise<void> | void;
   output?: unknown;
   prepareStep?: (input: unknown) => Promise<unknown> | unknown;
@@ -304,7 +303,7 @@ function setupMockAgent(result: Record<string, unknown>): void {
     this: Record<string, unknown>,
     settings: MockAgentSettings,
   ) {
-    const { onLanguageModelCallEnd, onStepFinish, prepareStep } = settings;
+    const { onStepFinish, prepareStep } = settings;
 
     this.generate = vi.fn().mockImplementation(async (options: { messages: unknown[] }) => {
       if (prepareStep) {
@@ -331,13 +330,6 @@ function setupMockAgent(result: Record<string, unknown>): void {
         });
       }
       const mockResult = createMockStreamResult(result);
-      if (onLanguageModelCallEnd) {
-        const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
-        const content = Array.isArray(result.content)
-          ? [...toolCalls, ...result.content]
-          : toolCalls;
-        void Promise.resolve().then(() => onLanguageModelCallEnd({ content }));
-      }
       // Schedule onStepFinish to fire after a microtask so the stream
       // can start being consumed first by emitStreamContent.
       if (onStepFinish) {
@@ -3231,7 +3223,7 @@ describe("createToolLoopHarness", () => {
     ]);
   });
 
-  it("emits one stable parallel batch when streamed tool results interleave with later tool calls", async () => {
+  it("emits each streamed tool call before its later result", async () => {
     setupMockAgent({
       finishReason: "stop",
       fullStreamParts: [
@@ -3365,6 +3357,7 @@ describe("createToolLoopHarness", () => {
       "step.started",
       "message.completed",
       "actions.requested",
+      "actions.requested",
       "message.completed",
       "action.result",
       "action.result",
@@ -3377,7 +3370,7 @@ describe("createToolLoopHarness", () => {
       events
         .filter((event) => event.type === "actions.requested")
         .map((event) => event.data.actions.map((action) => action.callId)),
-    ).toEqual([["call-1", "call-2"]]);
+    ).toEqual([["call-1"], ["call-2"]]);
   });
 
   it("emits stream content before step actions", async () => {
@@ -4457,7 +4450,7 @@ describe("createToolLoopHarness", () => {
     ]);
   });
 
-  it("keeps the same parallel batch when tool calls arrive before results and preserves result arrival order", async () => {
+  it("emits parallel tool calls incrementally while preserving existing result order", async () => {
     setupMockAgent({
       finishReason: "stop",
       fullStreamParts: [
@@ -4588,7 +4581,7 @@ describe("createToolLoopHarness", () => {
       events
         .filter((event) => event.type === "actions.requested")
         .map((event) => event.data.actions.map((action) => action.callId)),
-    ).toEqual([["call-1", "call-2"]]);
+    ).toEqual([["call-1"], ["call-2"]]);
 
     expect(
       events
@@ -4597,7 +4590,7 @@ describe("createToolLoopHarness", () => {
     ).toEqual(["call-1", "call-2"]);
   });
 
-  it("emits one stable action batch per assistant message when a turn contains multiple tool groups", async () => {
+  it("emits each tool call as it streams across multiple assistant groups", async () => {
     setupMockAgent({
       finishReason: "stop",
       response: {
@@ -4712,6 +4705,7 @@ describe("createToolLoopHarness", () => {
       "message.received",
       "step.started",
       "message.completed",
+      "actions.requested",
       "message.completed",
       "actions.requested",
       "message.completed",
@@ -4726,7 +4720,7 @@ describe("createToolLoopHarness", () => {
       events
         .filter((event) => event.type === "actions.requested")
         .map((event) => event.data.actions.map((action) => action.callId)),
-    ).toEqual([["call-1", "call-2"]]);
+    ).toEqual([["call-1"], ["call-2"]]);
   });
 
   it("emits input.requested for tool approval requests and parks without persisting unresolved messages", async () => {
@@ -4814,11 +4808,28 @@ describe("createToolLoopHarness", () => {
       "message.received",
       "step.started",
       "message.completed",
+      "actions.requested",
       "step.completed",
       "input.requested",
       "turn.completed",
       "session.waiting",
     ]);
+    expect(events.find((event) => event.type === "actions.requested")).toEqual({
+      data: {
+        actions: [
+          {
+            callId: "call-1",
+            input: { command: "rm -rf /tmp/demo" },
+            kind: "tool-call",
+            toolName: "bash",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn_0",
+      },
+      type: "actions.requested",
+    });
     expect(events.find((event) => event.type === "input.requested")).toEqual({
       data: {
         requests: [

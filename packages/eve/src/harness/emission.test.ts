@@ -8,7 +8,6 @@ import {
   setHarnessEmissionState,
 } from "#harness/emission.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
-import { createStreamActionBatch } from "#harness/stream-actions.js";
 import type { HarnessEmitFn, HarnessSession } from "#harness/types.js";
 import { EMPTY_DELIVERY_SENTINEL } from "#shared/empty-delivery.js";
 
@@ -238,28 +237,6 @@ describe("emitStreamContent empty delivery", () => {
 });
 
 describe("emitStreamContent action requests", () => {
-  it("does not wait for a local action batch when a model call has only provider tools", async () => {
-    const emit = createEmitStub();
-    const actionBatch = createStreamActionBatch({
-      emitFn: emit,
-      excludedActionToolNames: new Set(),
-      state: EMISSION_STATE,
-      tools: new Map(),
-    });
-
-    await actionBatch.onLanguageModelCallEnd([
-      {
-        input: { query: "weather New York" },
-        providerExecuted: true,
-        toolCallId: "search-new-york",
-        toolName: "web_search",
-        type: "tool-call",
-      },
-    ]);
-
-    expect(emit).not.toHaveBeenCalled();
-  });
-
   it("emits a provider action batch before any provider result arrives", async () => {
     const events: Parameters<HarnessEmitFn>[0][] = [];
     const emit: HarnessEmitFn = async (event) => {
@@ -311,7 +288,7 @@ describe("emitStreamContent action requests", () => {
     }
   });
 
-  it("completes pre-tool text before emitting a model-call action batch", async () => {
+  it("completes pre-tool text before emitting a streamed action request", async () => {
     const emit = createEmitStub();
     const tools = new Map<string, HarnessToolDefinition>([
       [
@@ -329,34 +306,24 @@ describe("emitStreamContent action requests", () => {
       ],
     ]);
 
-    const actionBatch = createStreamActionBatch({
-      emitFn: emit,
-      excludedActionToolNames: new Set(),
-      state: EMISSION_STATE,
-      tools,
-    });
-    const toolCall = {
-      input: { task: "research the release" },
-      toolCallId: "call-delegate",
-      toolName: "delegate",
-      type: "tool-call" as const,
-    };
-    const modelCallEnded = actionBatch.onLanguageModelCallEnd([toolCall]);
-
     await emitStreamContent(
       emit,
       EMISSION_STATE,
       streamOf([
         { id: "message-1", text: "Checking the release notes.", type: "text-delta" },
-        toolCall,
+        {
+          input: { task: "research the release" },
+          toolCallId: "call-delegate",
+          toolName: "delegate",
+          type: "tool-call",
+        },
         { finishReason: "tool-calls", type: "finish-step" },
       ] as TextStreamPart<ToolSet>[]),
       {
-        actionBatch,
         excludedActionToolNames: new Set(),
+        tools,
       },
     );
-    await modelCallEnded;
 
     const events = vi.mocked(emit).mock.calls.map(([event]) => event);
     expect(events.map((event) => event.type)).toEqual([

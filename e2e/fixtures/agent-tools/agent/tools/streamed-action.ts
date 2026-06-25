@@ -7,7 +7,7 @@ function delay(ms: number): Promise<void> {
 
 export default defineTool({
   description:
-    "Test-only tool: records when local execution begins, then waits before returning. Only call when the user explicitly asks to use `streamed-action`.",
+    "Test-only tool: records when local execution begins and ends, waiting before it returns. Only call when the user explicitly asks to use `streamed-action`.",
   inputSchema: z.object({
     label: z.string(),
   }),
@@ -15,6 +15,6 @@ export default defineTool({
     const executionStartedAt = Date.now();
     await delay(500);
 
-    return { executionStartedAt, label: input.label };
+    return { executionCompletedAt: Date.now(), executionStartedAt, label: input.label };
   },
 });

@@ -1,10 +1,6 @@
-import type { ContentPart, ToolSet, TypedToolCall } from "ai";
-
-import { extractToolApprovalInputRequests } from "#harness/input-extraction.js";
-import { createRuntimeActionRequestFromToolCall } from "#harness/runtime-actions.js";
 import { createActionsRequestedEvent } from "#protocol/message.js";
-import type { RuntimeActionRequest } from "#runtime/actions/types.js";
-import type { HarnessEmitFn, HarnessToolMap } from "#harness/types.js";
+import type { RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
+import type { HarnessEmitFn } from "#harness/types.js";
 
 interface ActionEventCoordinates {
   readonly sequence: number;
@@ -12,53 +8,38 @@ interface ActionEventCoordinates {
   readonly turnId: string;
 }
 
-/**
- * Coordinates one assistant message's local tool-call events.
- *
- * The stream observes individual tool calls as their arguments finish, while
- * `onLanguageModelCallEnd` receives the complete parsed model response before
- * the SDK starts any client-side executors. Waiting for both gives clients one
- * stable parallel batch without delaying pre-tool narration.
- */
-export interface StreamActionBatch {
-  readonly emittedActionCallIds: ReadonlySet<string>;
-  observeToolCall(toolCall: TypedToolCall<ToolSet>): Promise<void>;
-  onLanguageModelCallEnd(content: readonly ContentPart<ToolSet>[]): Promise<void>;
+/** Coordinates provider-managed tool calls that share one streamed response. */
+export interface ProviderStreamActionBatch {
+  flush(): Promise<void>;
+  observe(action: RuntimeToolCallActionRequest): void;
 }
 
-/** Creates the action batch for one streamed model call. */
-export function createStreamActionBatch(input: {
+/**
+ * Provider streams do not mark the end of a parallel tool-call wave. Waiting
+ * one task coalesces queued sibling calls, but does not hold the UI until a
+ * provider result completes.
+ */
+const PROVIDER_ACTION_BATCH_TICK_MS = 0;
+
+/** Creates the action batch for provider-managed streamed tool calls. */
+export function createProviderStreamActionBatch(input: {
   readonly emitFn: HarnessEmitFn;
-  readonly excludedActionToolNames: ReadonlySet<string>;
   readonly state: ActionEventCoordinates;
-  readonly tools: HarnessToolMap;
-}): StreamActionBatch {
-  const observedToolCallIds = new Set<string>();
-  const emittedActionCallIds = new Set<string>();
-  let actions: readonly RuntimeActionRequest[] | undefined;
-  let emission: Promise<void> | undefined;
-  let resolveEmission!: () => void;
-  let rejectEmission!: (error: unknown) => void;
-  const emitted = new Promise<void>((resolve, reject) => {
-    resolveEmission = resolve;
-    rejectEmission = reject;
-  });
+}): ProviderStreamActionBatch {
+  const pendingActions = new Map<string, RuntimeToolCallActionRequest>();
+  let actionFlush: Promise<void> = Promise.resolve();
+  let actionFlushError: unknown;
+  let actionFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  let resolveActionFlushTimer: (() => void) | undefined;
 
-  const tryEmitBatch = (): Promise<void> | undefined => {
-    if (actions === undefined || actions.length === 0) {
-      return undefined;
-    }
-    if (emission !== undefined) {
-      return emission;
-    }
-    if (!actions.every((action) => observedToolCallIds.has(action.callId))) {
-      return undefined;
+  const emitPendingActions = async (): Promise<void> => {
+    if (pendingActions.size === 0) {
+      return;
     }
 
-    for (const action of actions) {
-      emittedActionCallIds.add(action.callId);
-    }
-    emission = input.emitFn(
+    const actions = [...pendingActions.values()];
+    pendingActions.clear();
+    await input.emitFn(
       createActionsRequestedEvent({
         actions,
         sequence: input.state.sequence,
@@ -66,63 +47,50 @@ export function createStreamActionBatch(input: {
         turnId: input.state.turnId,
       }),
     );
-    void emission.then(resolveEmission, rejectEmission);
-    return emission;
+  };
+
+  const scheduleFlush = (): void => {
+    if (actionFlushTimer !== undefined) {
+      return;
+    }
+
+    let resolveTimer: (() => void) | undefined;
+    const timerElapsed = new Promise<void>((resolve) => {
+      resolveTimer = resolve;
+    });
+    resolveActionFlushTimer = resolveTimer;
+    actionFlushTimer = setTimeout(() => {
+      actionFlushTimer = undefined;
+      resolveActionFlushTimer = undefined;
+      resolveTimer?.();
+    }, PROVIDER_ACTION_BATCH_TICK_MS);
+    actionFlush = actionFlush
+      .then(() => timerElapsed)
+      .then(emitPendingActions)
+      .catch((error: unknown) => {
+        actionFlushError ??= error;
+      });
   };
 
   return {
-    emittedActionCallIds,
-    async observeToolCall(toolCall) {
-      observedToolCallIds.add(toolCall.toolCallId);
-      await tryEmitBatch();
+    observe(action) {
+      pendingActions.set(action.callId, action);
+      scheduleFlush();
     },
-    async onLanguageModelCallEnd(content) {
-      if (actions !== undefined) {
-        return;
+    async flush() {
+      if (actionFlushTimer !== undefined) {
+        clearTimeout(actionFlushTimer);
+        actionFlushTimer = undefined;
+        const resolveTimer = resolveActionFlushTimer;
+        resolveActionFlushTimer = undefined;
+        resolveTimer?.();
       }
 
-      const approvalCallIds = new Set(
-        extractToolApprovalInputRequests({ content }).map((request) => request.action.callId),
-      );
-      const actionCallIds = new Set<string>();
-      const requestedActions: RuntimeActionRequest[] = [];
-      for (const part of content) {
-        if (
-          part.type !== "tool-call" ||
-          part.invalid === true ||
-          part.providerExecuted === true ||
-          approvalCallIds.has(part.toolCallId) ||
-          input.excludedActionToolNames.has(part.toolName)
-        ) {
-          continue;
-        }
-
-        try {
-          const action = createRuntimeActionRequestFromToolCall({
-            toolCall: part,
-            tools: input.tools,
-          });
-          if (actionCallIds.has(action.callId)) {
-            continue;
-          }
-          actionCallIds.add(action.callId);
-          requestedActions.push(action);
-        } catch (error) {
-          // A malformed tool call is marked invalid by the SDK before it can
-          // execute. Leave its recovery to that path instead of failing the
-          // entire step while projecting UI events.
-          if (error instanceof TypeError) {
-            continue;
-          }
-          throw error;
-        }
+      await actionFlush;
+      if (actionFlushError !== undefined) {
+        throw actionFlushError;
       }
-
-      actions = requestedActions;
-      if (actions.length === 0) {
-        return;
-      }
-      await (tryEmitBatch() ?? emitted);
+      await emitPendingActions();
     },
   };
 }
