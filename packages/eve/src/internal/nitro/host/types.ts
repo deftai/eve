@@ -9,11 +9,10 @@ import type { DevBootProgressReporter } from "#internal/dev-boot-progress.js";
  */
 export type NitroBuildSurface = "all" | "app" | "flow";
 
-/** A Nitro development server started and owned by the current process. */
+/** Outcome of starting a Nitro development server the current process owns. */
 export interface StartedDevelopmentServer {
   readonly kind: "started";
   readonly appRoot: string;
-  close(): Promise<void>;
   readonly url: string;
 }
 
@@ -24,8 +23,21 @@ export interface ExistingDevelopmentServer {
   readonly url: string;
 }
 
-/** Result of resolving a development server for an app root. */
+/** Result of starting a development server for an app root. */
 export type DevelopmentServerHandle = StartedDevelopmentServer | ExistingDevelopmentServer;
+
+/**
+ * Lifecycle for one in-process Nitro development server.
+ *
+ * `start()` either boots a server this process owns or attaches to a running
+ * owner; the {@link DevelopmentServerHandle} result discriminates which.
+ * `close()` tears down only a server this instance started — it is a no-op when
+ * the instance attached to an existing owner or was never started.
+ */
+export interface DevelopmentServer<H extends DevelopmentServerHandle = DevelopmentServerHandle> {
+  start(): Promise<H>;
+  close(): Promise<void>;
+}
 
 export interface DevelopmentServerOptions {
   readonly existing?: "attach-if-unconfigured" | "reject";

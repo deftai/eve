@@ -110,8 +110,8 @@ export function isProcessRunning(pid: number): boolean {
  * Coordinates the one development server allowed to write an app root's
  * generated `.eve` artifacts.
  *
- * Any process that enters `startDevelopmentServer()` is eligible to own the
- * root. Today that includes direct `eve dev` and local `eve eval` processes,
+ * Any process that calls `createDevelopmentServer().start()` is eligible to own
+ * the root. Today that includes direct `eve dev` and local `eve eval` processes,
  * plus the `eve dev` children started by Next.js, Nuxt, or SvelteKit adapters.
  * They can start in separate operating-system processes, so `claim()`,
  * `publish()`, `markClosing()`, and `release()` use a filesystem lock around
