@@ -38,12 +38,21 @@ import {
   createRuntimeToolResultFromStepResult,
   createRuntimeToolResultFromValue,
 } from "#harness/action-result-helpers.js";
-import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
-import type { RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
+import {
+  createRuntimeActionRequestFromToolCall,
+  resolveToolCallInputObject,
+} from "#harness/runtime-actions.js";
+import type { RuntimeActionRequest, RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
 import { isAuthorizationSignal, isPendingAuthorizationToolOutput } from "#harness/authorization.js";
 import { contextStorage } from "#context/container.js";
 import { readToolInterrupt } from "#harness/tool-interrupts.js";
-import type { HarnessEmitFn, HarnessSession, SessionStateMap, StepInput } from "#harness/types.js";
+import type {
+  HarnessEmitFn,
+  HarnessSession,
+  HarnessToolMap,
+  SessionStateMap,
+  StepInput,
+} from "#harness/types.js";
 
 // ---------------------------------------------------------------------------
 // Emission state
@@ -328,9 +337,15 @@ export function normalizeAssistantStepFinishReason(
  * as plain `action.result` events.
  */
 interface EmittedStreamContent {
+  readonly emittedActionCallIds: ReadonlySet<string>;
   readonly handledInlineToolResultCallIds: ReadonlySet<string>;
   readonly inlineAuthorizationResults: readonly TypedToolResult<ToolSet>[];
   readonly inlineToolResultParts: readonly InlineToolResultPart[];
+}
+
+interface StreamActionEmissionOptions {
+  readonly excludedActionToolNames: ReadonlySet<string>;
+  readonly tools: HarnessToolMap;
 }
 
 /**
@@ -344,21 +359,22 @@ interface EmittedStreamContent {
  * stream before the next LLM call. Emitting `action.result` inline keeps
  * it ahead of the message events that depend on it.
  *
- * Tool-call, tool-approval-request, and non-resumed tool-result events
- * are still emitted by `emitStepActions` from the `onStepFinish`
- * callback so the existing single-step batch ordering is preserved.
+ * Eligible tool-call parts emit `actions.requested` as soon as the model
+ * streams them. `emitStepActions` emits only any request absent from the
+ * stream, plus terminal action results and `step.completed` after the step.
  */
 export async function emitStreamContent(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
   fullStream: AsyncIterable<TextStreamPart<ToolSet>>,
+  options?: StreamActionEmissionOptions,
 ): Promise<EmittedStreamContent> {
   let currentReasoning = "";
   let currentMessage = "";
   let finishReason: AssistantStepFinishReason = "stop";
   let streamError: Error | undefined;
   const toolCallIdsSeenInStream = new Set<string>();
-  const emittedProviderToolCallIds = new Set<string>();
+  const emittedActionCallIds = new Set<string>();
   const handledInlineToolResultCallIds = new Set<string>();
   const inlineAuthorizationResults: TypedToolResult<ToolSet>[] = [];
   const inlineToolResultParts: InlineToolResultPart[] = [];
@@ -379,16 +395,27 @@ export async function emitStreamContent(
     currentMessage = "";
   };
 
+  const emitActionRequest = async (action: RuntimeActionRequest): Promise<void> => {
+    if (emittedActionCallIds.has(action.callId)) {
+      return;
+    }
+
+    emittedActionCallIds.add(action.callId);
+    await emitFn(
+      createActionsRequestedEvent({
+        actions: [action],
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  };
+
   const emitProviderToolCall = async (toolCall: {
     readonly input?: unknown;
     readonly toolCallId: string;
     readonly toolName: string;
   }): Promise<void> => {
-    if (emittedProviderToolCallIds.has(toolCall.toolCallId)) {
-      return;
-    }
-
-    emittedProviderToolCallIds.add(toolCall.toolCallId);
     const action = {
       callId: toolCall.toolCallId,
       input: resolveToolCallInputObject(toolCall.input, {
@@ -398,14 +425,34 @@ export async function emitStreamContent(
       kind: "tool-call",
       toolName: toolCall.toolName,
     } satisfies RuntimeToolCallActionRequest;
-    await emitFn(
-      createActionsRequestedEvent({
-        actions: [action],
-        sequence: state.sequence,
-        stepIndex: state.stepIndex,
-        turnId: state.turnId,
-      }),
-    );
+    await emitActionRequest(action);
+  };
+
+  const emitStreamToolCall = async (toolCall: TypedToolCall<ToolSet>): Promise<void> => {
+    if (
+      options === undefined ||
+      toolCall.invalid === true ||
+      options.excludedActionToolNames.has(toolCall.toolName)
+    ) {
+      return;
+    }
+
+    try {
+      await emitActionRequest(
+        createRuntimeActionRequestFromToolCall({
+          toolCall,
+          tools: options.tools,
+        }),
+      );
+    } catch (error) {
+      // A stream part can carry malformed arguments before the AI SDK marks
+      // the final step call invalid. Leave it to that invalid-call path rather
+      // than failing the entire model step while projecting a UI event.
+      if (error instanceof TypeError) {
+        return;
+      }
+      throw error;
+    }
   };
 
   for await (const part of fullStream) {
@@ -455,6 +502,8 @@ export async function emitStreamContent(
         toolCallIdsSeenInStream.add(toolCall.toolCallId);
         if (toolCall.providerExecuted === true) {
           await emitProviderToolCall(toolCall);
+        } else {
+          await emitStreamToolCall(toolCall);
         }
         break;
       }
@@ -596,7 +645,12 @@ export async function emitStreamContent(
     );
   }
 
-  return { handledInlineToolResultCallIds, inlineAuthorizationResults, inlineToolResultParts };
+  return {
+    emittedActionCallIds,
+    handledInlineToolResultCallIds,
+    inlineAuthorizationResults,
+    inlineToolResultParts,
+  };
 }
 
 function isInlineAuthorizationToolResult(toolResult: TypedToolResult<ToolSet>): boolean {

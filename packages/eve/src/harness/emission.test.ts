@@ -1,4 +1,4 @@
-import type { TextStreamPart, ToolSet } from "ai";
+import { jsonSchema, type TextStreamPart, type ToolSet } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,6 +7,7 @@ import {
   type HarnessEmissionState,
   setHarnessEmissionState,
 } from "#harness/emission.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import type { HarnessEmitFn, HarnessSession } from "#harness/types.js";
 import { EMPTY_DELIVERY_SENTINEL } from "#shared/empty-delivery.js";
 
@@ -232,6 +233,72 @@ describe("emitStreamContent empty delivery", () => {
         type: "message.completed",
       }),
     );
+  });
+});
+
+describe("emitStreamContent action requests", () => {
+  it("emits a runtime action when its tool-call stream part arrives", async () => {
+    const emit = createEmitStub();
+    let releaseFinish!: () => void;
+    const finishReady = new Promise<void>((resolve) => {
+      releaseFinish = resolve;
+    });
+    const tools = new Map<string, HarnessToolDefinition>([
+      [
+        "delegate",
+        {
+          description: "Delegate work to a subagent.",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "delegate",
+          runtimeAction: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
+        },
+      ],
+    ]);
+    async function* controlledStream(): AsyncIterable<TextStreamPart<ToolSet>> {
+      yield {
+        input: { task: "research the release" },
+        toolCallId: "call-delegate",
+        toolName: "delegate",
+        type: "tool-call",
+      } as TextStreamPart<ToolSet>;
+      await finishReady;
+      yield { finishReason: "tool-calls", type: "finish-step" } as TextStreamPart<ToolSet>;
+    }
+
+    const run = emitStreamContent(emit, EMISSION_STATE, controlledStream(), {
+      excludedActionToolNames: new Set(),
+      tools,
+    });
+
+    try {
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(emit).mock.calls[0]?.[0]).toEqual({
+        data: {
+          actions: [
+            {
+              callId: "call-delegate",
+              description: "Delegate work to a subagent.",
+              input: { task: "research the release" },
+              kind: "subagent-call",
+              name: "delegate",
+              nodeId: "subagents/researcher",
+              subagentName: "researcher",
+            },
+          ],
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        },
+        type: "actions.requested",
+      });
+    } finally {
+      releaseFinish();
+      await run;
+    }
   });
 });
 

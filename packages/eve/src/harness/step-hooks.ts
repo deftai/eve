@@ -199,6 +199,7 @@ export async function emitStepActions(
   state: HarnessEmissionState,
   step: HarnessStepResult,
   options: {
+    readonly emittedActionCallIds?: ReadonlySet<string>;
     readonly excludedActionToolNames: ReadonlySet<string>;
     readonly handledInlineToolResultCallIds?: ReadonlySet<string>;
     readonly tools: ToolLoopHarnessConfig["tools"];
@@ -219,12 +220,17 @@ export async function emitStepActions(
       .map((toolCall) => toolCall.toolCallId),
   ]);
 
-  const isExcluded = (toolCallId: string, toolName: string): boolean =>
+  const isBaseExcluded = (toolCallId: string, toolName: string): boolean =>
     excludedCallIds.has(toolCallId) || options.excludedActionToolNames.has(toolName);
 
-  // actions.requested
+  // Calls observed from fullStream already emitted actions.requested. Keep
+  // their terminal results below, but do not repeat the request event.
   const actions = (step.toolCalls as TypedToolCall<ToolSet>[])
-    .filter((tc) => !isExcluded(tc.toolCallId, tc.toolName))
+    .filter(
+      (toolCall) =>
+        !isBaseExcluded(toolCall.toolCallId, toolCall.toolName) &&
+        options.emittedActionCallIds?.has(toolCall.toolCallId) !== true,
+    )
     .map((toolCall) =>
       createRuntimeActionRequestFromToolCall({
         toolCall,
@@ -252,7 +258,7 @@ export async function emitStepActions(
   );
 
   for (const result of reconcileToolResults(step)) {
-    if (isExcluded(result.callId, result.toolName)) {
+    if (isBaseExcluded(result.callId, result.toolName)) {
       continue;
     }
 
