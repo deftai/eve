@@ -28,6 +28,7 @@ import {
 import { withSpinner } from "../with-spinner.js";
 
 import { prompterSink } from "./in-project.js";
+import { runLinkFlow } from "./link.js";
 
 export const CONNECTIONS_PROMPT_MESSAGE =
   "Select an MCP server to add to your agent through Vercel Connect";
@@ -41,6 +42,7 @@ export interface ConnectionsFlowDeps {
   detectDeployment: typeof detectDeployment;
   detectPackageManager: typeof detectPackageManager;
   getVercelAuthStatus: typeof getVercelAuthStatus;
+  runLinkFlow: typeof runLinkFlow;
   ensureConnectionDependencies: typeof ensureConnectionDependencies;
   listAuthoredConnections: typeof listAuthoredConnections;
   runPackageManagerInstall: typeof runPackageManagerInstall;
@@ -52,19 +54,11 @@ export type ConnectionsFlowResult =
   | { kind: "cancelled" }
   | { kind: "failed"; addedConnections: readonly string[]; message: string };
 
-function connectionBlocker(
-  authStatus: VercelAuthStatus,
-  projectLinked: boolean,
-): string | undefined {
-  return vercelAuthBlockerReason(authStatus) ?? (projectLinked ? undefined : "Run /vc:link first");
-}
-
 function connectionRows(
   authored: ReadonlySet<string>,
   authStatus: VercelAuthStatus,
-  projectLinked: boolean,
 ): SelectOption<string>[] {
-  const blocker = connectionBlocker(authStatus, projectLinked);
+  const blocker = vercelAuthBlockerReason(authStatus);
   const rows: SelectOption<string>[] = USER_AUTH_CONNECTIONS.map((entry) => {
     if (authored.has(entry.slug)) {
       return {
@@ -92,10 +86,9 @@ function connectionRows(
 async function pickConnection(input: {
   authored: ReadonlySet<string>;
   authStatus: VercelAuthStatus;
-  projectLinked: boolean;
   prompter: Prompter;
 }): Promise<string | undefined> {
-  const options = connectionRows(input.authored, input.authStatus, input.projectLinked);
+  const options = connectionRows(input.authored, input.authStatus);
   const request: SingleSelectOptions<string> = {
     message: CONNECTIONS_PROMPT_MESSAGE,
     options,
@@ -139,7 +132,7 @@ async function installConnectionDependencies(input: {
   }
 }
 
-/** Runs the searchable `/connect` task list and existing connection setup boxes. */
+/** Runs `/connect`, linking a project on first selection when needed. */
 export async function runConnectionsFlow(input: {
   appRoot: string;
   prompter: Prompter;
@@ -153,6 +146,7 @@ export async function runConnectionsFlow(input: {
     ensureConnectionDependencies,
     getVercelAuthStatus,
     listAuthoredConnections,
+    runLinkFlow,
     runPackageManagerInstall,
     ...input.deps,
   };
@@ -181,7 +175,6 @@ export async function runConnectionsFlow(input: {
     const selected = await pickConnection({
       authored,
       authStatus,
-      projectLinked: isProjectResolved(state.project),
       prompter,
     });
     if (selected === undefined || selected === "done") {
@@ -190,6 +183,26 @@ export async function runConnectionsFlow(input: {
         : { kind: "done", addedConnections: added };
     }
     if (authored.has(selected) || !USER_AUTH_CONNECTION_SLUGS.has(selected)) continue;
+
+    if (!isProjectResolved(state.project)) {
+      const link = await deps.runLinkFlow({
+        appRoot,
+        prompter,
+        signal,
+        projectSelection: "create-or-link",
+      });
+      if (link.kind === "cancelled") {
+        if (signal?.aborted) return { kind: "cancelled" };
+        continue;
+      }
+
+      const deploymentAfterLink = await withSpinner(prompter, "Checking the project…", () =>
+        deps.detectDeployment(appRoot, { signal }),
+      );
+      const project = projectResolutionFromDeployment(deploymentAfterLink);
+      if (!isProjectResolved(project)) throw new Error("Project link was not found after linking.");
+      state = { ...state, project };
+    }
 
     const boxes: AnySetupBox<SetupState>[] = [
       selectConnections({ asker: interactiveAsker(prompter), presetConnections: [selected] }),

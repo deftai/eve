@@ -14,6 +14,7 @@ import {
 
 const APP_ROOT = "/app/agent";
 const LINKED: DeploymentInfo = { state: "linked", projectId: "prj_1", orgId: "org_1" };
+const UNLINKED: DeploymentInfo = { state: "unlinked" };
 
 function scriptConnectionList(picks: ReadonlyArray<PrompterValue | "cancel">) {
   const queue = [...picks];
@@ -70,6 +71,7 @@ function flowDeps(overrides: Partial<ConnectionsFlowDeps> = {}): ConnectionsFlow
       async () => "authenticated",
     ),
     listAuthoredConnections: vi.fn(async () => []),
+    runLinkFlow: vi.fn<ConnectionsFlowDeps["runLinkFlow"]>(async () => ({ kind: "done" })),
     runPackageManagerInstall: vi.fn(async () => true),
     addConnections: addConnectionDeps(),
     ...overrides,
@@ -140,20 +142,15 @@ describe("runConnectionsFlow", () => {
     expect(list.requests[0]?.initialValue).toBe("done");
   });
 
-  it("points blocked rows at login or eve link and treats Esc as cancellation", async () => {
+  it("blocks logged-out rows but leaves unlinked rows selectable", async () => {
     const loggedOutList = scriptConnectionList(["cancel"]);
-    const loggedOut = createFakePrompter({ single: loggedOutList.single });
     await expect(
       runConnectionsFlow({
         appRoot: APP_ROOT,
-        prompter: loggedOut.prompter,
+        prompter: createFakePrompter({ single: loggedOutList.single }).prompter,
         deps: flowDeps({
-          detectDeployment: vi.fn<ConnectionsFlowDeps["detectDeployment"]>(async () => ({
-            state: "unlinked",
-          })),
-          getVercelAuthStatus: vi.fn<ConnectionsFlowDeps["getVercelAuthStatus"]>(
-            async () => "logged-out",
-          ),
+          detectDeployment: vi.fn(async () => UNLINKED),
+          getVercelAuthStatus: vi.fn(async (): Promise<"logged-out"> => "logged-out"),
         }),
       }),
     ).resolves.toEqual({ kind: "cancelled" });
@@ -167,15 +164,70 @@ describe("runConnectionsFlow", () => {
       appRoot: APP_ROOT,
       prompter: createFakePrompter({ single: unlinkedList.single }).prompter,
       deps: flowDeps({
-        detectDeployment: vi.fn<ConnectionsFlowDeps["detectDeployment"]>(async () => ({
-          state: "unlinked",
-        })),
+        detectDeployment: vi.fn(async () => UNLINKED),
       }),
     });
-    expect(unlinkedList.paints[0]?.find((row) => row.value === "linear")).toMatchObject({
-      disabled: true,
-      disabledReason: "Run /vc:link first",
+    expect(unlinkedList.paints[0]?.find((row) => row.value === "linear")).not.toHaveProperty(
+      "disabled",
+    );
+  });
+
+  it("runs the shared create-or-link flow before configuring an unlinked project", async () => {
+    const detectDeployment = vi
+      .fn<ConnectionsFlowDeps["detectDeployment"]>()
+      .mockResolvedValueOnce({ state: "unlinked" })
+      .mockResolvedValueOnce(LINKED);
+    const runLinkFlow = vi.fn<ConnectionsFlowDeps["runLinkFlow"]>(async () => ({ kind: "done" }));
+    const listAuthoredConnections = vi
+      .fn(async () => [] as string[])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(["linear"]);
+    const list = scriptConnectionList(["linear", "done"]);
+    const fake = createFakePrompter({ single: list.single });
+    const addConnections = addConnectionDeps();
+    const deps = flowDeps({
+      detectDeployment,
+      listAuthoredConnections,
+      runLinkFlow,
+      addConnections,
     });
+
+    await expect(
+      runConnectionsFlow({ appRoot: APP_ROOT, prompter: fake.prompter, deps }),
+    ).resolves.toEqual({ kind: "done", addedConnections: ["linear"] });
+
+    expect(runLinkFlow).toHaveBeenCalledWith({
+      appRoot: APP_ROOT,
+      prompter: fake.prompter,
+      signal: undefined,
+      projectSelection: "create-or-link",
+    });
+    expect(detectDeployment).toHaveBeenCalledTimes(2);
+    expect(addConnections.setupConnectionConnector).toHaveBeenCalledOnce();
+  });
+
+  it("returns to the connection list when project linking is cancelled", async () => {
+    const runLinkFlow = vi.fn<ConnectionsFlowDeps["runLinkFlow"]>(async () => ({
+      kind: "cancelled",
+    }));
+    const list = scriptConnectionList(["linear", "done"]);
+    const addConnections = addConnectionDeps();
+    const deps = flowDeps({
+      detectDeployment: vi.fn(async () => UNLINKED),
+      runLinkFlow,
+      addConnections,
+    });
+
+    await expect(
+      runConnectionsFlow({
+        appRoot: APP_ROOT,
+        prompter: createFakePrompter({ single: list.single }).prompter,
+        deps,
+      }),
+    ).resolves.toEqual({ kind: "done", addedConnections: [] });
+
+    expect(addConnections.setupConnectionConnector).not.toHaveBeenCalled();
+    expect(list.requests).toHaveLength(2);
   });
 
   it("does not mutate dependencies when connector selection is cancelled", async () => {

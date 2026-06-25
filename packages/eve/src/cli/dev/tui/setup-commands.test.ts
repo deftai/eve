@@ -54,7 +54,6 @@ function fakeFlows(overrides: Partial<TuiSetupFlows> = {}): TuiSetupFlows {
       kind: "installed",
     })),
     runLoginFlow: vi.fn<TuiSetupFlows["runLoginFlow"]>(async () => ({ kind: "logged-in" })),
-    runLinkFlow: vi.fn<TuiSetupFlows["runLinkFlow"]>(async () => ({ kind: "done" })),
     runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
       kind: "done",
       modelMessage: "Model changed to openai/gpt-5.5. Live on your next prompt.",
@@ -76,7 +75,7 @@ function fakeFlows(overrides: Partial<TuiSetupFlows> = {}): TuiSetupFlows {
 }
 
 function run(input: {
-  command: "vc:install" | "vc:login" | "vc:link" | "model" | "channels" | "connect" | "deploy";
+  command: "vc:install" | "vc:login" | "model" | "channels" | "connect" | "deploy";
   flows: TuiSetupFlows;
   renderer?: TuiSetupCommandRenderer;
   initialModelStep?: "provider";
@@ -104,38 +103,10 @@ describe("runTuiSetupCommand", () => {
     ).toEqual({
       "vc:install": "pulse",
       "vc:login": "pulse",
-      "vc:link": "pulse",
       model: "pulse",
       channels: "pulse",
       connect: "pulse",
       deploy: "spinner",
-    });
-  });
-
-  it("links an existing Vercel project from the TUI", async () => {
-    const flows = fakeFlows();
-
-    await expect(run({ command: "vc:link", flows })).resolves.toEqual({
-      message: "Project linked.",
-      preserveFlowDiagnostics: true,
-      effect: { kind: "model-access-changed" },
-    });
-    expect(flows.runLinkFlow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appRoot: APP_ROOT,
-        projectSelection: "existing-only",
-      }),
-    );
-  });
-
-  it("reports a cancelled Vercel project link", async () => {
-    const flows = fakeFlows({
-      runLinkFlow: vi.fn<TuiSetupFlows["runLinkFlow"]>(async () => ({ kind: "cancelled" })),
-    });
-
-    await expect(run({ command: "vc:link", flows })).resolves.toEqual({
-      message: "/vc:link cancelled.",
-      preserveFlowDiagnostics: true,
     });
   });
 
@@ -366,6 +337,7 @@ describe("runTuiSetupCommand", () => {
     await expect(run({ command: "connect", flows })).resolves.toEqual({
       message: "Connections added: linear, notion.",
       preserveFlowDiagnostics: true,
+      effect: { kind: "model-access-changed" },
     });
     expect(flows.runConnectionsFlow).toHaveBeenCalledWith(
       expect.objectContaining({ appRoot: APP_ROOT }),
@@ -376,6 +348,7 @@ describe("runTuiSetupCommand", () => {
     await expect(run({ command: "connect", flows: fakeFlows() })).resolves.toEqual({
       message: "No connections added.",
       preserveFlowDiagnostics: true,
+      effect: { kind: "model-access-changed" },
     });
     await expect(
       run({
@@ -384,7 +357,11 @@ describe("runTuiSetupCommand", () => {
           runConnectionsFlow: async () => ({ kind: "cancelled" }),
         }),
       }),
-    ).resolves.toEqual({ message: "/connect cancelled.", preserveFlowDiagnostics: true });
+    ).resolves.toEqual({
+      message: "/connect cancelled.",
+      preserveFlowDiagnostics: true,
+      effect: { kind: "model-access-changed" },
+    });
     await expect(
       run({
         command: "connect",
@@ -399,6 +376,7 @@ describe("runTuiSetupCommand", () => {
     ).resolves.toEqual({
       message: "Connection files changed, but /connect failed: install failed",
       preserveFlowDiagnostics: true,
+      effect: { kind: "model-access-changed" },
     });
   });
 

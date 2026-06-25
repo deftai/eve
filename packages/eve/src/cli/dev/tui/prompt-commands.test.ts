@@ -45,11 +45,6 @@ describe("parsePromptCommand", () => {
       name: "vc:login",
       argument: "",
     });
-    expect(parsePromptCommand("/vc:link")).toEqual({
-      type: "extension",
-      name: "vc:link",
-      argument: "",
-    });
     expect(parsePromptCommand("/channels")).toEqual({
       type: "extension",
       name: "channels",
@@ -108,7 +103,6 @@ describe("promptCommandsFor", () => {
     expect(names).toContain("deploy");
     expect(names).toContain("vc:install");
     expect(names).toContain("vc:login");
-    expect(names).toContain("vc:link");
     expect(names).not.toContain("vc:auth");
   });
 
@@ -116,7 +110,6 @@ describe("promptCommandsFor", () => {
     const names = promptCommandsFor("remote").map((command) => command.name);
     expect(names).toContain("vc:install");
     expect(names).toContain("vc:login");
-    expect(names).not.toContain("vc:link");
     expect(names).not.toContain("vc:auth");
     expect(names).not.toContain("model");
     expect(names).not.toContain("channels");

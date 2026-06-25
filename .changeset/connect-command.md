@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Add searchable `/connect` and `/vc:link` flows to the local dev TUI. `/connect` scaffolds an MCP connection and resolves its Vercel Connect connector; `/vc:link` selects and links an existing Vercel project without leaving the TUI.
+Add a searchable `/connect` flow to the local dev TUI. It scaffolds an MCP connection, resolves its Vercel Connect connector, and reuses the model setup flow to create or link a Vercel project when needed.
