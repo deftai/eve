@@ -1,6 +1,6 @@
 ---
 issue: https://github.com/vercel/eve/issues/216
-last_updated: "2026-06-23"
+last_updated: "2026-06-25"
 status: proposed
 ---
 
@@ -21,6 +21,24 @@ Cancellation has two explicit scopes:
 Slash commands are one consumer of a general cancellation API. The same semantics must be available
 to the eve HTTP channel, TypeScript client, custom channels, higher-level channel handlers, session
 callbacks, and evals.
+
+## Implementation guardrails
+
+- A raced hook may exist only inside a workflow that is guaranteed to terminate. Workflow replay
+  does not reliably support a hook race in a non-terminating workflow, so `workflowEntry` must not
+  own the cancellation hook or race. The terminating root `turnWorkflow` owns both.
+- The channel `continuationToken` is not fresh per turn. It is the channel-owned session resume
+  identity and may remain unchanged across every turn. Its cancellation hook token is a
+  deterministic channel-owned variation, such as `${continuationToken}:cancel`, so channels such as
+  Twilio can target cancellation without first receiving a token from an eve response.
+- A later root turn may reclaim the same deterministic cancellation hook token only after the prior
+  turn's hook disposal has completed. If Workflow does not make that dispose-before-reclaim ordering
+  deterministic, eve must upstream the required guarantee rather than replace the channel-owned
+  token with a workflow-generated identity.
+- Only the root `turnWorkflow` in a cancellation tree creates and owns an `AbortController`, races
+  its cancellation hook, and passes the controller's serializable `AbortSignal` through the full
+  turn execution. A `turnWorkflow` entered through a subagent or recursive agent call accepts the
+  inherited signal, creates no controller, and races no cancellation hook of its own.
 
 ## Authoring API
 
@@ -44,13 +62,13 @@ The route authenticates first, then verifies that the capability belongs to `:se
 bodies return `400`; stale or mismatched capabilities return a non-disclosing `409`; accepted
 cancellation returns `202`.
 
-Every request that starts a turn returns a fresh `cancelToken` alongside `sessionId` and the current
-`continuationToken`. A cancel token is valid only for that active turn. It cannot cancel the entry
-session or a later turn.
+Every request that starts a turn returns the deterministic `cancelToken` alongside `sessionId` and
+the current `continuationToken`. The token addresses whichever turn currently owns the derived hook
+for that continuation; it does not cancel the entry session.
 
 ### TypeScript client
 
-- `MessageResponse.cancel()` cancels the turn represented by that response.
+- `MessageResponse.cancel()` cancels the currently active turn for that response's continuation.
 - `ClientSession.cancel()` cancels the current entry session.
 - Both use the client's normal auth, headers, redirects, and error handling.
 - Session cancellation clears the client's resumable cursor so a later send cannot accidentally
@@ -62,7 +80,8 @@ session or a later turn.
 
 Custom `defineChannel` route handlers receive separate operations to:
 
-- cancel a turn using its session id and turn cancel token;
+- cancel the active turn using its session id and channel-local continuation token, with the
+  operation deriving the deterministic cancel token;
 - cancel a session using its channel-local continuation token;
 - restart a session with replacement input after the old session releases its identity.
 
@@ -91,7 +110,8 @@ created by custom channels as well as the built-in eve channel.
 
 ### Turn cancellation
 
-The cancel token is minted per turn and bound to `(sessionId, turnId)`.
+The cancel token is derived deterministically from the channel continuation token. While a root turn
+is active, its cancellation hook binds that token to `(sessionId, turnId)`.
 
 ```text
 TURN START
@@ -101,27 +121,29 @@ ClientSession.send()
     `-- eve channel / runtime
         |-- resume entry session S1 through continuation C1
         |-- start turn T7
-        |-- bind cancel token K7 -> (S1, T7)
-        `-- return { sessionId: S1, continuationToken: C1, cancelToken: K7 }
-            `-- MessageResponse stores K7
+        |-- derive cancel token KC from C1
+        |-- bind cancel hook KC -> (S1, T7)
+        `-- return { sessionId: S1, continuationToken: C1, cancelToken: KC }
+            `-- MessageResponse stores KC
 
 TURN CANCEL
 
 MessageResponse.cancel()
 `-- POST /eve/v1/session/S1/cancel
-    `-- { scope: "turn", cancelToken: K7 }
+    `-- { scope: "turn", cancelToken: KC }
         `-- eve channel / runtime
             |-- authenticate the request
-            |-- resolve K7 -> (S1, T7)
+            |-- resolve KC -> (S1, T7)
             |-- verify the URL session is S1
             |-- durably accept cancellation and return 202
             |-- cancel T7 and its descendants
-            |-- retire K7 when T7 settles
+            |-- dispose KC when T7 settles
             `-- keep C1 -> S1 and emit session.waiting
 ```
 
-When T7 completes, fails, or is cancelled, K7 becomes stale. The next turn receives a new token K8.
-K7 can never cancel K8 or session S1.
+When T7 completes, fails, or is cancelled, its KC hook is disposed. A later turn for C1 may reclaim
+KC only after that disposal is deterministic. KC therefore means “cancel the active turn for C1,”
+not “cancel only T7”; holders must not treat it as an immutable historical-turn capability.
 
 ### Session cancellation
 
