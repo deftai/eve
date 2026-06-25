@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { AuthKey, SessionIdKey } from "#context/keys.js";
@@ -15,42 +15,10 @@ function requiredError(): Error {
   return error;
 }
 
-afterEach(() => vi.unstubAllEnvs());
-
 describe("Vercel sandbox route auth", () => {
-  it("rejects the removed credential map and function policy APIs", () => {
-    expect(() =>
-      extractVercelCredentialBrokering({
-        credentials: {},
-        networkPolicy: "deny-all",
-      } as never),
-    ).toThrow(/separate `credentials` map was removed/);
-    expect(() =>
-      extractVercelCredentialBrokering({ networkPolicy: () => "deny-all" } as never),
-    ).toThrow(/function-form `networkPolicy` was removed/);
-  });
-
-  it("requires an explicit backend resolution mode", () => {
-    expect(() =>
-      extractVercelCredentialBrokering({
-        networkPolicy: {
-          allow: {
-            "api.example.com": [
-              {
-                auth: { getToken: async () => ({ token: "secret" }) },
-                transform: () => [],
-              },
-            ],
-          },
-        },
-      }),
-    ).toThrow(/`credentialResolution` is required/);
-  });
-
-  it("inherits eager mode and builds native transforms", async () => {
+  it("resolves authenticated rules and builds native firewall transforms", async () => {
     const getToken = vi.fn(async () => ({ token: "secret" }));
     const { brokering } = extractVercelCredentialBrokering({
-      credentialResolution: "eager",
       networkPolicy: {
         allow: {
           "api.example.com": [
@@ -66,7 +34,6 @@ describe("Vercel sandbox route auth", () => {
       },
     });
 
-    expect(brokering?.eagerRuleIds).toEqual(["r0-0"]);
     expect(brokering?.clearedPolicy).toEqual({ allow: {}, subnets: undefined });
     await expect(resolveVercelCredentialPolicy(brokering!, "session")).resolves.toMatchObject({
       policy: {
@@ -81,32 +48,24 @@ describe("Vercel sandbox route auth", () => {
       },
     });
     expect(getToken).toHaveBeenCalledOnce();
+    expect(getToken).toHaveBeenCalledWith(
+      expect.objectContaining({ connection: { url: "https://api.example.com" } }),
+    );
   });
 
-  it("supports per-rule overrides and mixed native rules", () => {
+  it("preserves native rules while managed credentials are cleared", () => {
     const { brokering } = extractVercelCredentialBrokering({
-      authProxyBaseUrl: "https://eve.example.com",
-      credentialResolution: "on-request",
       networkPolicy: {
         allow: {
           "public.example.com": [],
           "api.example.com": [
             { match: { method: ["GET"] }, transform: [] },
-            {
-              auth: { getToken: async () => ({ token: "eager" }) },
-              credentialResolution: "eager",
-              transform: () => [],
-            },
-            {
-              auth: { getToken: async () => ({ token: "lazy" }) },
-              transform: () => [],
-            },
+            { auth: { getToken: async () => ({ token: "secret" }) }, transform: () => [] },
           ],
         },
       },
     });
 
-    expect(brokering?.eagerRuleIds).toEqual(["r1-1"]);
     expect(brokering?.clearedPolicy).toEqual({
       allow: {
         "public.example.com": [],
@@ -114,43 +73,37 @@ describe("Vercel sandbox route auth", () => {
       },
       subnets: undefined,
     });
-    expect(brokering?.buildPolicy(new Map(), "eve-sandbox:name")).toEqual({
-      allow: {
-        "public.example.com": [],
-        "api.example.com": [
-          { match: { method: ["GET"] }, transform: [] },
-          {
-            forwardURL: "https://eve.example.com/eve/v1/sandbox/egress/r1-2/eve-sandbox%3Aname",
-          },
-        ],
-      },
-      subnets: undefined,
-    });
   });
 
-  it("does not resolve an unused on-request rule", () => {
-    const getToken = vi.fn(async () => ({ token: "unused" }));
+  it("leaves a managed route closed when a non-interactive credential is unavailable", async () => {
     const { brokering } = extractVercelCredentialBrokering({
-      authProxyBaseUrl: "https://eve.example.com",
-      credentialResolution: "on-request",
       networkPolicy: {
         allow: {
-          "api.example.com": [{ auth: { getToken }, transform: () => [] }],
+          "api.example.com": [
+            {
+              auth: {
+                getToken: async () => {
+                  throw new Error("provider unavailable");
+                },
+              },
+              transform: () => [],
+            },
+          ],
         },
       },
     });
 
-    expect(brokering?.eagerRuleIds).toEqual([]);
-    expect(getToken).not.toHaveBeenCalled();
+    await expect(resolveVercelCredentialPolicy(brokering!, "sandbox")).resolves.toEqual({
+      policy: { allow: {}, subnets: undefined },
+      unresolvedRuleIds: ["r0-0"],
+    });
   });
 
-  it("uses the public auth proxy origin for on-request authorization callbacks", async () => {
+  it("parks interactive authorization through the normal callback lifecycle", async () => {
     const startAuthorization = vi.fn(async () => ({
       challenge: { url: "https://provider.example/authorize" },
     }));
     const { brokering } = extractVercelCredentialBrokering({
-      authProxyBaseUrl: "https://public.example.com",
-      credentialResolution: "on-request",
       networkPolicy: {
         allow: {
           "api.example.com": [
@@ -171,7 +124,7 @@ describe("Vercel sandbox route auth", () => {
     });
     const context = new ContextContainer();
     context.set(SessionIdKey, "session");
-    context.set(CallbackBaseUrlKey, "https://protected-preview.example.com");
+    context.set(CallbackBaseUrlKey, "https://app.example.com");
     context.set(AuthKey, {
       attributes: {},
       authenticator: "test",
@@ -183,144 +136,20 @@ describe("Vercel sandbox route auth", () => {
     const error = await contextStorage.run(
       context,
       async () =>
-        await resolveVercelCredentialPolicy(brokering!, "sandbox", ["r0-0"]).catch(
-          (caught) => caught,
-        ),
+        await resolveVercelCredentialPolicy(brokering!, "sandbox").catch((value) => value),
     );
 
     expect(isSandboxAuthorizationInterrupt(error)).toBe(true);
-    if (!isSandboxAuthorizationInterrupt(error)) throw error;
-    expect(error.signal.challenges[0]?.hookUrl).toBe(
-      "https://public.example.com/eve/v1/connections/sandbox%3Asandbox%3Ar0-0/callback/session%3Aauth",
-    );
     expect(startAuthorization).toHaveBeenCalledWith(
       expect.objectContaining({
         callbackUrl:
-          "https://public.example.com/eve/v1/connections/sandbox%3Asandbox%3Ar0-0/callback/session%3Aauth",
+          "https://app.example.com/eve/v1/connections/sandbox%3Asandbox%3Ar0-0/callback/session%3Aauth",
       }),
     );
-  });
-
-  it("reports demanded rules whose credentials remain unavailable", async () => {
-    const { brokering } = extractVercelCredentialBrokering({
-      credentialResolution: "eager",
-      networkPolicy: {
-        allow: {
-          "api.example.com": [
-            {
-              auth: {
-                getToken: async () => {
-                  throw new Error("provider unavailable");
-                },
-              },
-              transform: () => [],
-            },
-          ],
-        },
-      },
-    });
-
-    await expect(resolveVercelCredentialPolicy(brokering!, "sandbox")).resolves.toMatchObject({
-      unresolvedRuleIds: ["r0-0"],
-    });
-  });
-
-  it("prefers the stable production URL for hosted callbacks", () => {
-    vi.stubEnv("VERCEL_URL", "preview.example.vercel.app");
-    vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "production.example.vercel.app");
-    const { brokering } = extractVercelCredentialBrokering({
-      credentialResolution: "on-request",
-      networkPolicy: {
-        allow: {
-          "api.example.com": [
-            {
-              auth: { getToken: async () => ({ token: "fake" }) },
-              transform: () => [],
-            },
-          ],
-        },
-      },
-    });
-
-    expect(brokering?.clearedPolicy).toEqual({
-      allow: {},
-      subnets: undefined,
-    });
-    expect(brokering?.buildPolicy(new Map(), "sandbox-name")).toEqual({
-      allow: {
-        "api.example.com": [
-          {
-            forwardURL:
-              "https://production.example.vercel.app/eve/v1/sandbox/egress/r0-0/sandbox-name",
-          },
-        ],
-      },
-      subnets: undefined,
-    });
-  });
-
-  it("rejects authored forwardURL alongside managed auth", () => {
-    expect(() =>
-      extractVercelCredentialBrokering({
-        authProxyBaseUrl: "https://eve.example.com",
-        credentialResolution: "on-request",
-        networkPolicy: {
-          allow: {
-            "api.example.com": [
-              { forwardURL: "https://author.example.com" },
-              { auth: { getToken: async () => ({ token: "secret" }) }, transform: () => [] },
-            ],
-          },
-        },
-      }),
-    ).toThrow(/authored `forwardURL`/);
-  });
-
-  it("parks eager interactive authorization through the callback lifecycle", async () => {
-    const { brokering } = extractVercelCredentialBrokering({
-      credentialResolution: "eager",
-      networkPolicy: {
-        allow: {
-          "api.example.com": [
-            {
-              auth: {
-                completeAuthorization: async () => ({ token: "secret" }),
-                getToken: async () => {
-                  throw requiredError();
-                },
-                principalType: "user",
-                startAuthorization: async () => ({
-                  challenge: { url: "https://example.com/auth" },
-                }),
-              },
-              transform: () => [],
-            },
-          ],
-        },
-      },
-    });
-    const context = new ContextContainer();
-    context.set(SessionIdKey, "session");
-    context.set(CallbackBaseUrlKey, "https://app.example");
-    context.set(AuthKey, {
-      attributes: {},
-      authenticator: "test",
-      issuer: "test",
-      principalId: "user-1",
-      principalType: "user",
-    });
-
-    const error = await contextStorage.run(
-      context,
-      async () =>
-        await resolveVercelCredentialPolicy(brokering!, "sandbox").catch((caught) => caught),
-    );
-    expect(isSandboxAuthorizationInterrupt(error)).toBe(true);
   });
 
   it("propagates a terminal missing-principal authorization failure", async () => {
     const { brokering } = extractVercelCredentialBrokering({
-      credentialResolution: "eager",
       networkPolicy: {
         allow: {
           "api.example.com": [

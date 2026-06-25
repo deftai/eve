@@ -123,61 +123,6 @@ afterEach(() => {
 });
 
 describe("createVercelSandbox", () => {
-  it("activates name-qualified on-request triggers without resolving unused credentials", async () => {
-    const getToken = vi.fn(async () => ({ token: "unused" }));
-    const sessionSandbox = createMockSandbox({ name: "session-key" });
-    const sandboxModule = {
-      Sandbox: {
-        create: vi.fn(),
-        get: vi.fn().mockResolvedValue(sessionSandbox),
-      },
-    };
-    const backend = createTestVercelSandbox({
-      createOptions: {
-        authProxyBaseUrl: "https://eve.example.com",
-        credentialResolution: "on-request",
-        networkPolicy: {
-          allow: {
-            "api.example.com": [
-              {
-                auth: { getToken },
-                transform: ({ token }) => [
-                  {
-                    headers: { authorization: `Bearer ${token}` },
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      },
-      loadSandboxModule: async () => sandboxModule as never,
-    });
-
-    await backend.create({
-      runtimeContext: { appRoot: "/tmp/test-app-root" },
-      sessionKey: "session-key",
-      templateKey: null,
-    });
-
-    expect(sessionSandbox.update).toHaveBeenNthCalledWith(1, {
-      networkPolicy: { allow: {}, subnets: undefined },
-    });
-    expect(sessionSandbox.update).toHaveBeenNthCalledWith(2, {
-      networkPolicy: {
-        allow: {
-          "api.example.com": [
-            {
-              forwardURL: "https://eve.example.com/eve/v1/sandbox/egress/r0-0/session-key",
-            },
-          ],
-        },
-        subnets: undefined,
-      },
-    });
-    expect(getToken).not.toHaveBeenCalled();
-  });
-
   it("activates eager route credentials and clears them on dispose", async () => {
     const sessionSandbox = createMockSandbox({ name: "session-key" });
     const sandboxModule = {
@@ -188,7 +133,6 @@ describe("createVercelSandbox", () => {
     };
     const backend = createTestVercelSandbox({
       createOptions: {
-        credentialResolution: "eager",
         networkPolicy: {
           allow: {
             "api.example.com": [
@@ -1803,7 +1747,6 @@ describe("vercel (public factory)", () => {
 
   it("accepts route-level authenticated rules", () => {
     vercel({
-      credentialResolution: "eager",
       networkPolicy: {
         allow: {
           "api.example.com": [

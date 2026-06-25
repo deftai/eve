@@ -3,7 +3,6 @@ export type {
   VercelSandboxAuthNetworkPolicyRule,
   VercelSandboxBootstrapUseOptions,
   VercelSandboxCreateOptions,
-  VercelSandboxCredentialResolution,
   VercelSandboxNetworkPolicy,
   VercelSandboxNetworkPolicyRule,
   VercelSandboxSessionUseOptions,

@@ -44,13 +44,9 @@ type VercelSandboxAuthorCreateOptions<T> = T extends unknown
  * snapshot, force a template rebuild (e.g. by changing the sandbox
  * definition so its template key changes).
  */
-/** When Eve resolves credentials attached to Vercel egress rules. */
-export type VercelSandboxCredentialResolution = "eager" | "on-request";
-
 /** An Eve-managed authenticated Vercel firewall rule. */
 export interface VercelSandboxAuthNetworkPolicyRule {
   readonly auth: ConnectionAuthDefinition;
-  readonly credentialResolution?: VercelSandboxCredentialResolution;
   readonly match?: NetworkPolicyMatch;
   readonly transform: (token: TokenResult) => NetworkTransformer[];
 }
@@ -82,17 +78,6 @@ export type VercelSandboxCreateOptions = VercelSandboxCreateOptionsWithAuth<Verc
 
 type VercelSandboxCreateOptionsWithAuth<T> = T extends unknown
   ? Omit<VercelSandboxAuthorCreateOptions<T>, "networkPolicy"> & {
-      /**
-       * Default resolution mode for authenticated rules. Required when any
-       * policy rule declares `auth`.
-       */
-      readonly credentialResolution?: VercelSandboxCredentialResolution;
-      /**
-       * Public HTTPS origin used by on-request rules and their interactive
-       * authorization callbacks. Required locally; hosted Vercel deployments
-       * derive their public origin from the environment.
-       */
-      readonly authProxyBaseUrl?: string;
       /** Static policy whose individual rules may declare `auth`. */
       readonly networkPolicy?: VercelSandboxNetworkPolicy;
     }
