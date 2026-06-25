@@ -59,20 +59,17 @@ Expose one authenticated route:
 The body is a strict union with no default scope:
 
 ```json
-{ "scope": "turn", "cancelToken": "<active-turn capability>" }
+{ "scope": "turn", "continuationToken": "<current continuation capability>" }
 ```
 
 ```json
 { "scope": "session", "continuationToken": "<current session capability>" }
 ```
 
-The route authenticates first, then verifies that the capability belongs to `:sessionId`. Invalid
-bodies return `400`; stale or mismatched capabilities return a non-disclosing `409`; accepted
-cancellation returns `202`.
-
-Every request that starts a turn returns the deterministic `cancelToken` alongside `sessionId` and
-the current `continuationToken`. The token addresses whichever turn currently owns the derived hook
-for that continuation; it does not cancel the entry session.
+The route authenticates first. Invalid bodies return `400`; a stale continuation or one with no
+active turn returns a non-disclosing `409`; accepted cancellation returns `202`. The continuation
+token addresses whichever turn currently owns its deterministic derived hook; no separate cancel
+token is returned.
 
 ### TypeScript client
 
@@ -131,14 +128,14 @@ ClientSession.send()
         |-- start turn T7
         |-- derive cancel token KC from C1
         |-- bind cancel hook KC -> (S1, T7)
-        `-- return { sessionId: S1, continuationToken: C1, cancelToken: KC }
-            `-- MessageResponse stores KC
+        `-- return { sessionId: S1, continuationToken: C1 }
+            `-- MessageResponse stores C1
 
 TURN CANCEL
 
 MessageResponse.cancel()
 `-- POST /eve/v1/session/S1/cancel
-    `-- { scope: "turn", cancelToken: KC }
+    `-- { scope: "turn", continuationToken: C1 }
         `-- eve channel / runtime
             |-- authenticate the request
             |-- resolve KC -> (S1, T7)

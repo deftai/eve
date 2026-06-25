@@ -9,7 +9,10 @@ import {
   turnWorkflowReference,
   workflowEntryReference,
 } from "#execution/workflow-runtime.js";
-import { isRuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import {
+  isRuntimeNoActiveSessionError,
+  isRuntimeNoActiveTurnError,
+} from "#execution/runtime-errors.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 
@@ -62,6 +65,28 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     await expect(runtime.cancelTurn("test:active-session")).resolves.toBeUndefined();
 
     expect(resumeHookMock).toHaveBeenCalledWith("test:active-session:cancel", {});
+  });
+
+  it("normalizes `HookNotFoundError` into `RuntimeNoActiveTurnError`", async () => {
+    const { HookNotFoundError } = await import("#compiled/@workflow/errors/index.js");
+    resumeHookMock.mockRejectedValue(new HookNotFoundError("test:no-active-turn:cancel"));
+    const runtime = createWorkflowRuntime({
+      compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource,
+    });
+
+    await expect(runtime.cancelTurn("test:no-active-turn")).rejects.toSatisfy(
+      isRuntimeNoActiveTurnError,
+    );
+  });
+
+  it("re-throws unexpected cancellation errors", async () => {
+    const failure = new Error("transient backing-store outage");
+    resumeHookMock.mockRejectedValue(failure);
+    const runtime = createWorkflowRuntime({
+      compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource,
+    });
+
+    await expect(runtime.cancelTurn("test:active-session")).rejects.toBe(failure);
   });
 });
 

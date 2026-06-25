@@ -87,6 +87,20 @@ The follow-up reuses the same durable session: same history, same state.
 
 For deterministic ordering, send one follow-up at a time and wait for the next `session.waiting` event before sending another message to the same session. See [message delivery and queueing](./execution-model-and-durability#message-delivery-and-queueing) for the current runtime contract.
 
+## Cancel the active turn
+
+Use the current continuation token to cancel active work without ending the session:
+
+```bash
+curl -X POST http://127.0.0.1:3000/eve/v1/session/<sessionId>/cancel \
+  -H 'content-type: application/json' \
+  -d '{"scope":"turn","continuationToken":"<token>"}'
+```
+
+Accepted cancellation returns `202`. A stale token or a continuation with no active turn returns
+`409`. The stream emits `turn.cancelled` followed by `session.waiting`, and the same session can
+accept a later follow-up.
+
 ## Reconnect and rewind
 
 The stream is durable. Every event is recorded before a step completes, so the whole stream is replayable. Pass `startIndex` to reconnect by event count and pick up where you dropped off, or rewind to the start:

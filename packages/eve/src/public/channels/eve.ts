@@ -4,6 +4,7 @@ import type { SessionAuthContext, SessionCallback } from "#channel/types.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
 import { createLogger, logError } from "#internal/logging.js";
+import { isRuntimeNoActiveTurnError } from "#execution/runtime-errors.js";
 import {
   EVE_MESSAGE_STREAM_CONTENT_TYPE,
   EVE_MESSAGE_STREAM_FORMAT,
@@ -261,6 +262,42 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         );
       }),
 
+      POST("/eve/v1/session/:sessionId/cancel", async (req, { cancelTurn }) => {
+        const authResult = await routeAuth(req, input.auth);
+        if (authResult instanceof Response) return authResult;
+
+        let payload: unknown;
+        try {
+          payload = await req.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON body.", ok: false }, { status: 400 });
+        }
+
+        if (payload === null || typeof payload !== "object") {
+          return Response.json({ error: "Expected a JSON object.", ok: false }, { status: 400 });
+        }
+
+        const body = parseTurnCancelBody(payload as Record<string, unknown>);
+        if (body instanceof Response) return body;
+
+        try {
+          await cancelTurn(body.continuationToken);
+        } catch (error) {
+          if (isRuntimeNoActiveTurnError(error)) {
+            return Response.json({ error: "No active turn.", ok: false }, { status: 409 });
+          }
+          throw error;
+        }
+
+        return Response.json(
+          { ok: true },
+          {
+            headers: { "cache-control": "no-store" },
+            status: 202,
+          },
+        );
+      }),
+
       GET("/eve/v1/session/:sessionId/stream", async (req, { getSession, params }) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
@@ -397,6 +434,34 @@ interface ParsedContinueBody {
   inputResponses?: readonly InputResponse[];
   context?: readonly string[];
   outputSchema?: JsonObject;
+}
+
+interface ParsedTurnCancelBody {
+  continuationToken: string;
+  scope: "turn";
+}
+
+function parseTurnCancelBody(payload: Record<string, unknown>): ParsedTurnCancelBody | Response {
+  const keys = Object.keys(payload);
+  if (keys.length !== 2 || !keys.includes("continuationToken") || !keys.includes("scope")) {
+    return Response.json(
+      { error: "Expected only 'scope' and 'continuationToken' fields.", ok: false },
+      { status: 400 },
+    );
+  }
+
+  if (payload.scope !== "turn") {
+    return Response.json({ error: "Expected 'scope' to be 'turn'.", ok: false }, { status: 400 });
+  }
+
+  if (typeof payload.continuationToken !== "string" || payload.continuationToken.length === 0) {
+    return Response.json(
+      { error: "Missing or empty 'continuationToken' field.", ok: false },
+      { status: 400 },
+    );
+  }
+
+  return { continuationToken: payload.continuationToken, scope: "turn" };
 }
 
 function parseContinueBody(payload: Record<string, unknown>): ParsedContinueBody | Response {

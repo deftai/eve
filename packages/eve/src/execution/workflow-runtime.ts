@@ -32,7 +32,10 @@ import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import { buildRunContext } from "#execution/runtime-context.js";
 import { parseNdjsonStream } from "#execution/ndjson-stream.js";
-import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import {
+  RuntimeNoActiveSessionError,
+  RuntimeNoActiveTurnError,
+} from "#execution/runtime-errors.js";
 
 const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
@@ -95,7 +98,14 @@ export function createWorkflowRuntime(config: {
 }): Runtime {
   return {
     async cancelTurn(continuationToken: string): Promise<void> {
-      await resumeHook(`${continuationToken}:cancel`, {});
+      try {
+        await resumeHook(`${continuationToken}:cancel`, {});
+      } catch (error) {
+        if (HookNotFoundError.is(error)) {
+          throw new RuntimeNoActiveTurnError(continuationToken);
+        }
+        throw error;
+      }
     },
 
     async run(input: RunInput): Promise<RunHandle> {

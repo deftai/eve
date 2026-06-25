@@ -19,6 +19,7 @@ import {
   type Session as RuntimeSession,
 } from "#context/keys.js";
 import { createMessageCompletedEvent } from "#protocol/message.js";
+import { RuntimeNoActiveTurnError } from "#execution/runtime-errors.js";
 
 /**
  * Unit coverage for the inbound HTTP route's message-body parser and
@@ -119,6 +120,40 @@ function createEveContinueHandler(input: EveChannelInput) {
       return (continueRoute as any).handler(req, args);
     },
   };
+}
+
+function createEveCancelHandler(input: EveChannelInput) {
+  const channel = eveChannel(input);
+  const cancelRoute = channel.routes.find(
+    (r) => r.method === "POST" && r.path === "/eve/v1/session/:sessionId/cancel",
+  );
+  if (!cancelRoute) throw new Error("No cancel POST route found");
+
+  const cancelTurn = vi.fn<RouteHandlerArgs["cancelTurn"]>().mockResolvedValue(undefined);
+
+  return {
+    cancelTurn,
+    async fetch(req: Request) {
+      const args: RouteHandlerArgs = {
+        cancelTurn,
+        getSession: vi.fn(),
+        params: { sessionId: "test-session-id" },
+        receive: vi.fn() as any,
+        requestIp: "127.0.0.1",
+        send: vi.fn(),
+        waitUntil: () => undefined,
+      };
+      return (cancelRoute as any).handler(req, args);
+    },
+  };
+}
+
+function createEveCancelRequest(body: unknown): Request {
+  return new Request("https://example.com/eve/v1/session/test-session-id/cancel", {
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
 }
 
 function filePartBody(
@@ -369,6 +404,60 @@ describe("eveChannel — onMessage", () => {
     expect(payload.context).toBeUndefined();
     const options = handler.send.mock.calls[0]?.[1] as SendOptions;
     expect(options.auth).toEqual(ACCEPTED_AUTH);
+  });
+});
+
+describe("eveChannel — cancel turn", () => {
+  it("accepts cancellation for an active continuation", async () => {
+    const handler = createEveCancelHandler({ auth: none() });
+
+    const response = await handler.fetch(
+      createEveCancelRequest({ scope: "turn", continuationToken: "eve:test" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(handler.cancelTurn).toHaveBeenCalledWith("eve:test");
+    await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
+  it("returns 409 when no active turn owns the continuation", async () => {
+    const handler = createEveCancelHandler({ auth: none() });
+    handler.cancelTurn.mockRejectedValue(new RuntimeNoActiveTurnError("eve:stale"));
+
+    const response = await handler.fetch(
+      createEveCancelRequest({ scope: "turn", continuationToken: "eve:stale" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "No active turn.", ok: false });
+  });
+
+  it.each([
+    { continuationToken: "eve:test" },
+    { scope: "session", continuationToken: "eve:test" },
+    { scope: "turn" },
+    { scope: "turn", continuationToken: "eve:test", extra: true },
+  ])("rejects malformed cancellation body %#", async (body) => {
+    const handler = createEveCancelHandler({ auth: none() });
+
+    const response = await handler.fetch(createEveCancelRequest(body));
+
+    expect(response.status).toBe(400);
+    expect(handler.cancelTurn).not.toHaveBeenCalled();
+  });
+
+  it("authenticates before parsing the cancellation body", async () => {
+    const handler = createEveCancelHandler({ auth: [] });
+    const request = new Request("https://example.com/eve/v1/session/test-session-id/cancel", {
+      body: "not-json",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+
+    const response = await handler.fetch(request);
+
+    expect(response.status).toBe(401);
+    expect(handler.cancelTurn).not.toHaveBeenCalled();
   });
 });
 
