@@ -294,6 +294,96 @@ describe("workflowEntry integration", () => {
     });
   });
 
+  it("reuses a stable continuation after a follow-up arrives during active work", async () => {
+    let releaseTool!: () => void;
+    let signalToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      signalToolStarted = resolve;
+    });
+    const toolRelease = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    const holdTurnTool: ResolvedToolDefinition = {
+      description: "Hold the current turn until the test releases it.",
+      async execute() {
+        signalToolStarted();
+        await toolRelease;
+        return { status: "released" };
+      },
+      inputSchema: {
+        additionalProperties: false,
+        properties: {},
+        type: "object",
+      },
+      logicalPath: "tools/hold_turn.ts",
+      name: "hold_turn",
+      sourceId: "tools/hold_turn.ts",
+      sourceKind: "module",
+    };
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-immediate-continuation-reuse" },
+      tools: [holdTurnTool],
+    });
+    const manifestTool = runtime.manifest.tools.find((tool) => tool.name === holdTurnTool.name);
+    if (manifestTool === undefined) {
+      throw new Error("Expected hold_turn to be present in the test manifest.");
+    }
+    runtime.moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]!.modules[manifestTool.sourceId] = {
+      default: { execute: holdTurnTool.execute },
+    };
+    const continuationToken = "http:workflow-entry-immediate-continuation-reuse";
+
+    await runtime.run(async () => {
+      const run = await start(workflowEntry, [
+        {
+          input: { message: "Use hold_turn before replying." },
+          serializedContext: buildSerializedContext({
+            channelKind: "http",
+            continuationToken,
+            mode: "conversation",
+          }),
+        },
+      ]);
+      const stream = captureTurnEvents(run);
+
+      try {
+        await withTimeout(toolStarted, "hold_turn execution");
+        await waitForHook({ runId: run.runId }, { token: continuationToken });
+
+        const workflowRuntime = createWorkflowRuntime({
+          compiledArtifactsSource: createBundledRuntimeCompiledArtifactsSource(),
+        });
+        await expect(
+          workflowRuntime.deliver({
+            auth: null,
+            continuationToken,
+            payload: { message: "follow up queued while the first turn is active" },
+          }),
+        ).resolves.toEqual({ sessionId: run.runId });
+
+        releaseTool();
+
+        const firstTurn = await stream.nextTurn();
+        const secondTurn = await stream.nextTurn();
+
+        expect(firstTurn.at(-1)?.type).toBe("session.waiting");
+        expect(secondTurn.at(-1)?.type).toBe("session.waiting");
+        expect(
+          secondTurn.some(
+            (event) =>
+              event.type === "message.completed" &&
+              event.data.message?.includes("follow up queued while the first turn is active") ===
+                true,
+          ),
+        ).toBe(true);
+      } finally {
+        releaseTool();
+        stream.dispose();
+        await run.cancel();
+      }
+    });
+  });
+
   it("fails a competing continuation owner before its first turn", async () => {
     const runtime = createTestRuntime({ agent: { name: "workflow-entry-hook-owner" } });
     const continuationToken = "http:workflow-entry-hook-owner";

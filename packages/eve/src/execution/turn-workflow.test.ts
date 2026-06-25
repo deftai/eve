@@ -9,11 +9,27 @@ import {
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { turnStep } from "#execution/workflow-steps.js";
 
+interface CancelHookControl {
+  readonly dispose: ReturnType<typeof vi.fn>;
+  resolve(value?: unknown): void;
+}
+
+let cancelHookControl: CancelHookControl | undefined;
 const resumeHookMock = vi.fn();
 const createHookMock = vi.fn((options?: { readonly token?: string }) => {
-  const pending = new Promise<never>(() => undefined);
+  let resolvePending!: (value: unknown) => void;
+  const pending = new Promise<unknown>((resolve) => {
+    resolvePending = resolve;
+  });
+  const dispose = vi.fn();
+  cancelHookControl = {
+    dispose,
+    resolve(value = undefined) {
+      resolvePending(value);
+    },
+  };
   return {
-    dispose: vi.fn(),
+    dispose,
     getConflict: vi.fn().mockResolvedValue(null),
     then: pending.then.bind(pending),
     token: options?.token ?? "cancel-token",
@@ -34,6 +50,7 @@ vi.mock("./workflow-steps.js", () => ({
 
 describe("turnWorkflow", () => {
   afterEach(() => {
+    cancelHookControl = undefined;
     vi.clearAllMocks();
     resumeHookMock.mockReset();
   });
@@ -66,6 +83,65 @@ describe("turnWorkflow", () => {
       },
       kind: "turn-result",
     });
+  });
+
+  it("aborts the active turn and waits for it to settle before disposing the hook", async () => {
+    const sessionState = createSessionState();
+    type TurnStepResult = Awaited<ReturnType<typeof turnStep>>;
+    let resolveTurnStep!: (result: TurnStepResult) => void;
+    const turnStepResult = new Promise<TurnStepResult>((resolve) => {
+      resolveTurnStep = resolve;
+    });
+    let abortSignal: AbortSignal | undefined;
+    vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
+      abortSignal = stepInput.abortSignal;
+      return await turnStepResult;
+    });
+
+    const { input } = createInput({ sessionState });
+    const workflow = turnWorkflow(input);
+
+    await vi.waitFor(() => {
+      expect(turnStep).toHaveBeenCalledTimes(1);
+      expect(abortSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    const hook = cancelHookControl;
+    if (hook === undefined || abortSignal === undefined) {
+      throw new Error("Expected the root turn to create a cancel hook and abort signal.");
+    }
+
+    expect(createHookMock).toHaveBeenCalledWith({ token: "http:test:cancel" });
+    expect(abortSignal.aborted).toBe(false);
+
+    let workflowSettled = false;
+    void workflow.then(
+      () => {
+        workflowSettled = true;
+      },
+      () => {
+        workflowSettled = true;
+      },
+    );
+
+    hook.resolve();
+
+    await vi.waitFor(() => {
+      expect(abortSignal?.aborted).toBe(true);
+    });
+    await Promise.resolve();
+    expect(workflowSettled).toBe(false);
+    expect(hook.dispose).not.toHaveBeenCalled();
+
+    resolveTurnStep({
+      action: "done",
+      output: "cancel settled",
+      serializedContext: { state: "done" },
+      sessionState,
+    });
+
+    await expect(workflow).resolves.toBeUndefined();
+    expect(hook.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("migrates a pre-version (unversioned) input and runs the first turn step", async () => {
