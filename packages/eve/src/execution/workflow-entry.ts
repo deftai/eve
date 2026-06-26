@@ -31,7 +31,7 @@ import {
   normalizeSerializableError,
   rebuildSerializableError,
 } from "#execution/workflow-errors.js";
-import { resolveVercelProductionCallbackBaseUrl } from "#execution/workflow-callback-url.js";
+import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { createSessionStep } from "#execution/create-session-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
@@ -297,7 +297,7 @@ async function runDriverLoop(input: {
               : dispatchRuntimeActionsStep;
 
           const dispatchResult = await dispatchStep({
-            callbackBaseUrl: resolveVercelProductionCallbackBaseUrl() ?? getWorkflowMetadata().url,
+            callbackBaseUrl: resolveWorkflowCallbackBaseUrl(getWorkflowMetadata().url),
             parentWritable: input.driverWritable,
             serializedContext: action.serializedContext,
             sessionState: action.sessionState,
