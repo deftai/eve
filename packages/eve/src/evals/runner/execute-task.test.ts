@@ -133,6 +133,44 @@ describe("executeTask", () => {
     expect(server.posts[0]?.body).toEqual({ message: "case prompt" });
   });
 
+  it("cancels an active turn and records its cancellation boundary", async () => {
+    const server = createScriptedServer([
+      {
+        sessionId: "session_1",
+        events: [turnStarted("turn_1"), turnCancelled("turn_1"), sessionWaiting()],
+      },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(server.fetch);
+
+    const { result } = await executeTask({
+      client: new Client({ host: target.url }),
+      target,
+      evaluation: createTestEval(async (t) => {
+        const activeTurn = await t.startTurn("run until cancelled");
+
+        expect(activeTurn.sessionId).toBe("session_1");
+        await activeTurn.cancel();
+
+        const cancelledTurn = await activeTurn.result();
+        expect(cancelledTurn.status).toBe("waiting");
+        expect(cancelledTurn.events.map((event) => event.type)).toEqual([
+          "turn.started",
+          "turn.cancelled",
+          "session.waiting",
+        ]);
+      }, "turn-cancellation"),
+    });
+
+    expect(result.status).toBe("waiting");
+    expect(server.cancellations).toEqual([
+      {
+        body: { continuationToken: "eve:session_1", scope: "turn" },
+        method: "POST",
+        url: "https://eve.test/eve/v1/session/session_1/cancel",
+      },
+    ]);
+  });
+
   it("captures independent sessions created by newSession", async () => {
     const server = createScriptedServer([
       {
@@ -430,6 +468,7 @@ function createScriptedServer(
   const pendingTurns = [...turns];
   const streamQueues = new Map<string, HandleMessageStreamEvent[][]>();
   const posts: Array<{ body: unknown; method: string; url: string }> = [];
+  const cancellations: Array<{ body: unknown; method: string; url: string }> = [];
 
   for (const stream of options.streams ?? []) {
     const queue = streamQueues.get(stream.sessionId) ?? [];
@@ -438,6 +477,7 @@ function createScriptedServer(
   }
 
   return {
+    cancellations,
     posts,
     async fetch(request: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url =
@@ -445,6 +485,11 @@ function createScriptedServer(
       const method = init?.method ?? "GET";
 
       if (method === "POST") {
+        if (new URL(url).pathname.endsWith("/cancel")) {
+          cancellations.push({ body: JSON.parse(String(init?.body)), method, url });
+          return Response.json({ ok: true }, { status: 202 });
+        }
+
         const next = pendingTurns.shift();
         if (next === undefined) {
           return Response.json({ error: "No scripted turn.", ok: false }, { status: 500 });
@@ -496,6 +541,10 @@ function turnStarted(turnId: string): HandleMessageStreamEvent {
 
 function turnCompleted(turnId: string): HandleMessageStreamEvent {
   return { data: { sequence: 3, turnId }, type: "turn.completed" };
+}
+
+function turnCancelled(turnId: string): HandleMessageStreamEvent {
+  return { data: { sequence: 3, turnId }, type: "turn.cancelled" };
 }
 
 function sessionWaiting(): HandleMessageStreamEvent {

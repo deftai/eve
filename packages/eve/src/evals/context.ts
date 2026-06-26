@@ -60,6 +60,10 @@ export function createEvalContext(deps: {
       lastPrompt = promptText(input);
       return primary().send(input);
     },
+    startTurn: (input) => {
+      lastPrompt = promptText(input);
+      return primary().startTurn(input);
+    },
     sendFile: (text, filePath, mediaType) => {
       lastPrompt = text;
       return primary().sendFile(text, filePath, mediaType);

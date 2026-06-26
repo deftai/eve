@@ -867,6 +867,123 @@ describe("workflowEntry integration", () => {
     }
   });
 
+  it("settles cancellation when the remote turn already completed", async () => {
+    let signalRemoteStarted!: () => void;
+    let signalRemoteConflict!: () => void;
+    const remoteStarted = new Promise<void>((resolve) => {
+      signalRemoteStarted = resolve;
+    });
+    const remoteConflict = new Promise<void>((resolve) => {
+      signalRemoteConflict = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url === "https://completed-remote.example.com/eve/v1/session") {
+        signalRemoteStarted();
+        return Response.json(
+          {
+            continuationToken: "eve:completed-remote-turn",
+            sessionId: "completed-remote-session",
+          },
+          {
+            headers: { "x-eve-session-id": "completed-remote-session" },
+            status: 202,
+          },
+        );
+      }
+
+      if (
+        url ===
+        "https://completed-remote.example.com/eve/v1/session/completed-remote-session/cancel"
+      ) {
+        signalRemoteConflict();
+        return Response.json({ error: "turn already completed" }, { status: 409 });
+      }
+
+      throw new Error(`Unexpected completed remote request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-completed-remote-cancellation" },
+    });
+    const remoteSourceId = "subagents/completed_remote.ts";
+    runtime.manifest.remoteAgents.push({
+      description: "Runs a remote completion-race probe.",
+      entryPath: `${runtime.manifest.agentRoot}/${remoteSourceId}`,
+      logicalPath: remoteSourceId,
+      name: "completed_remote",
+      nodeId: remoteSourceId,
+      path: "/eve/v1/session",
+      rootPath: runtime.manifest.agentRoot,
+      sourceId: remoteSourceId,
+      sourceKind: "module",
+      url: "https://completed-remote.example.com",
+    });
+    runtime.moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]!.modules[remoteSourceId] = {
+      default: {
+        description: "Runs a remote completion-race probe.",
+        kind: "remote",
+        path: "/eve/v1/session",
+        url: "https://completed-remote.example.com",
+      },
+    };
+    const continuationToken = "http:workflow-entry-completed-remote-cancellation";
+
+    try {
+      await runtime.run(async () => {
+        const run = await start(workflowEntry, [
+          {
+            input: {
+              message:
+                'Use completed_remote with message "Complete concurrently with cancellation."',
+            },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              continuationToken,
+              mode: "conversation",
+            }),
+          },
+        ]);
+        const stream = captureEvents(run);
+
+        try {
+          await withTimeout(remoteStarted, "completed remote subagent creation");
+          await resumeHook(`${continuationToken}:cancel`, {});
+          await withTimeout(remoteConflict, "completed remote cancellation conflict");
+
+          const cancelledTurn = await stream.nextUntil(
+            "cancelled completed-remote parent turn",
+            (event) => event.type === "session.waiting",
+          );
+          const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+          expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+          expect(cancelledTypes).not.toContain("step.failed");
+          expect(cancelledTypes).not.toContain("turn.failed");
+          expect(cancelledTypes).not.toContain("session.failed");
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://completed-remote.example.com/eve/v1/session/completed-remote-session/cancel",
+            expect.objectContaining({
+              body: JSON.stringify({
+                continuationToken: "eve:completed-remote-turn",
+                scope: "turn",
+              }),
+              method: "POST",
+            }),
+          );
+          await expect(run.status).resolves.toBe("running");
+        } finally {
+          stream.dispose();
+          await run.cancel();
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cascades cancellation through a local subagent to its remote descendant", async () => {
     let signalRemoteStarted!: () => void;
     let signalRemoteCancelled!: () => void;

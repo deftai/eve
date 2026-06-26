@@ -50,6 +50,7 @@ export type {
   EveEvalTaskResult,
   EveEvalToolCall,
   EveEvalTurn,
+  EveEvalTurnHandle,
   EveEvalVerdict,
   JudgeContext,
   JudgeOpts,

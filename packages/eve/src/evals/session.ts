@@ -3,8 +3,9 @@ import { basename, extname } from "node:path";
 
 import { createTextWithFileContent } from "#client/file-parts.js";
 import type { Client } from "#client/client.js";
+import type { MessageResponse } from "#client/message-response.js";
 import type { ClientSession } from "#client/session.js";
-import type { SendTurnInput, SendTurnPayload, SessionState } from "#client/types.js";
+import type { MessageResult, SendTurnInput, SendTurnPayload, SessionState } from "#client/types.js";
 import type { HandleMessageStreamEvent, TurnFailureStreamEvent } from "#protocol/message.js";
 import { isCurrentTurnBoundaryEvent, isTurnFailureEvent } from "#protocol/message.js";
 import {
@@ -27,6 +28,7 @@ import type {
   EveEvalSessionResult,
   EveEvalToolCall,
   EveEvalTurn,
+  EveEvalTurnHandle,
 } from "#evals/types.js";
 import type { EveEvalInputRequestMatchOptions, EveEvalToolCallMatchOptions } from "#evals/match.js";
 
@@ -151,15 +153,14 @@ export class EvalSessionDriver implements EveEvalSession {
   }
 
   async send(input: SendTurnInput): Promise<EveEvalTurn> {
+    return await (await this.startTurn(input)).result();
+  }
+
+  async startTurn(input: SendTurnInput): Promise<EveEvalTurnHandle> {
     const response = await this.#session.send(attachSignal(input, this.#signal));
-    const result = await response.result();
-    return this.#recordTurn({
-      data: result.data,
-      events: result.events,
-      inputRequests: result.inputRequests,
-      message: result.message,
-      sessionId: result.sessionId,
-      status: result.status,
+    return new EvalTurnHandle({
+      recordTurn: (result) => this.#recordTurn(result),
+      response,
     });
   }
 
@@ -263,6 +264,35 @@ export class EvalSessionDriver implements EveEvalSession {
 }
 
 interface EvalTurn extends EveEvalAssertions, EveEvalOutputAssertions {}
+
+class EvalTurnHandle implements EveEvalTurnHandle {
+  readonly sessionId: string;
+  readonly #recordTurn: (result: MessageResult) => EveEvalTurn;
+  readonly #response: MessageResponse;
+  #result: Promise<EveEvalTurn> | undefined;
+
+  constructor(input: {
+    readonly recordTurn: (result: MessageResult) => EveEvalTurn;
+    readonly response: MessageResponse;
+  }) {
+    this.#recordTurn = input.recordTurn;
+    this.#response = input.response;
+    this.sessionId = input.response.sessionId;
+  }
+
+  async cancel(): Promise<void> {
+    await this.#response.cancel();
+  }
+
+  result(): Promise<EveEvalTurn> {
+    this.#result ??= this.#readResult();
+    return this.#result;
+  }
+
+  async #readResult(): Promise<EveEvalTurn> {
+    return this.#recordTurn(await this.#response.result());
+  }
+}
 
 class EvalTurn implements EveEvalTurn {
   readonly data: unknown;

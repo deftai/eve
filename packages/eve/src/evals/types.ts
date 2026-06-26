@@ -230,6 +230,8 @@ export interface EveEvalSessionDriver {
   respondAll(optionId: string): Promise<EveEvalTurn>;
   /** Send one turn through this session. */
   send(input: SendTurnInput): Promise<EveEvalTurn>;
+  /** Start one turn without waiting for its event boundary. */
+  startTurn(input: SendTurnInput): Promise<EveEvalTurnHandle>;
   /** Send one text turn with a local file attached as a data URL. */
   sendFile(text: string, filePath: string, mediaType?: string): Promise<EveEvalTurn>;
 }
@@ -255,6 +257,16 @@ export interface EveEvalTurn extends EveEvalAssertions, EveEvalOutputAssertions 
     options?: Omit<EveEvalToolCallMatchOptions, "count">,
   ): EveEvalToolCall;
   expectOk(): this;
+}
+
+/** A running eval turn that can be cancelled before its event stream settles. */
+export interface EveEvalTurnHandle {
+  /** eve session id assigned when the turn was accepted. */
+  readonly sessionId: string;
+  /** Request server-side cancellation of this active turn. */
+  cancel(): Promise<void>;
+  /** Wait for the turn boundary and record the turn in the eval session. */
+  result(): Promise<EveEvalTurn>;
 }
 
 // ---------------------------------------------------------------------------
