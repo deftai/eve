@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getRun, getWorld, resumeHook, start } from "#internal/workflow/runtime.js";
 
 import { captureTurnEvents, filterEventsByType } from "#internal/testing/events.js";
@@ -618,6 +618,125 @@ describe("workflowEntry integration", () => {
         await run.cancel();
       }
     });
+  });
+
+  it("cancels a blocking remote subagent and settles its parent turn", async () => {
+    let signalRemoteStarted!: () => void;
+    let signalRemoteCancelled!: () => void;
+    const remoteStarted = new Promise<void>((resolve) => {
+      signalRemoteStarted = resolve;
+    });
+    const remoteCancelled = new Promise<void>((resolve) => {
+      signalRemoteCancelled = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url === "https://remote.example.com/eve/v1/session") {
+        signalRemoteStarted();
+        return Response.json(
+          {
+            continuationToken: "eve:remote-turn",
+            sessionId: "remote-session",
+          },
+          {
+            headers: { "x-eve-session-id": "remote-session" },
+            status: 202,
+          },
+        );
+      }
+
+      if (url === "https://remote.example.com/eve/v1/session/remote-session/cancel") {
+        signalRemoteCancelled();
+        return Response.json({ ok: true }, { status: 202 });
+      }
+
+      throw new Error(`Unexpected remote request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-remote-subagent-cancellation" },
+    });
+    const remoteSourceId = "subagents/blocking_remote.ts";
+    runtime.manifest.remoteAgents.push({
+      description: "Runs a blocking remote cancellation probe.",
+      entryPath: `${runtime.manifest.agentRoot}/${remoteSourceId}`,
+      logicalPath: remoteSourceId,
+      name: "blocking_remote",
+      nodeId: remoteSourceId,
+      path: "/eve/v1/session",
+      rootPath: runtime.manifest.agentRoot,
+      sourceId: remoteSourceId,
+      sourceKind: "module",
+      url: "https://remote.example.com",
+    });
+    runtime.moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]!.modules[remoteSourceId] = {
+      default: {
+        description: "Runs a blocking remote cancellation probe.",
+        kind: "remote",
+        path: "/eve/v1/session",
+        url: "https://remote.example.com",
+      },
+    };
+    const continuationToken = "http:workflow-entry-remote-subagent-cancellation";
+
+    try {
+      await runtime.run(async () => {
+        const run = await start(workflowEntry, [
+          {
+            input: {
+              message: 'Use blocking_remote with message "Wait until cancelled before replying."',
+            },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              continuationToken,
+              mode: "conversation",
+            }),
+          },
+        ]);
+        const stream = captureEvents(run);
+
+        try {
+          const initialEvents = await stream.nextUntil(
+            "remote subagent dispatch",
+            (event) => event.type === "subagent.called",
+          );
+          await withTimeout(remoteStarted, "blocking remote subagent creation");
+          await resumeHook(`${continuationToken}:cancel`, {});
+          await withTimeout(remoteCancelled, "blocking remote subagent cancellation request");
+
+          const cancelledTurn = [
+            ...initialEvents,
+            ...(await stream.nextUntil(
+              "cancelled remote parent turn",
+              (event) => event.type === "session.waiting",
+            )),
+          ];
+          const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+          expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+          expect(cancelledTypes).not.toContain("turn.failed");
+          expect(cancelledTypes).not.toContain("session.failed");
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://remote.example.com/eve/v1/session/remote-session/cancel",
+            expect.objectContaining({
+              body: JSON.stringify({
+                continuationToken: "eve:remote-turn",
+                scope: "turn",
+              }),
+              method: "POST",
+            }),
+          );
+          await expect(run.status).resolves.toBe("running");
+        } finally {
+          stream.dispose();
+          await run.cancel();
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it.skip("reclaims the cancel hook for an immediate follow-up turn", async () => {

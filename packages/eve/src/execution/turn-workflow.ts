@@ -61,6 +61,9 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
   const nextDeliveryRequestId = (): string =>
     `${inbox.token}:delivery:${String(deliveryRequestSeq++)}`;
   const bufferedDeliveries: DeliverHookPayload[] = [];
+  let activeDispatchTransition:
+    | Promise<Awaited<ReturnType<typeof dispatchRuntimeActionsStep>>>
+    | undefined;
   let nextStepInput = input.stepInput.input;
   let ownsInbox = false;
 
@@ -120,15 +123,28 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
               result.action === "dispatch-workflow-runtime-actions"
                 ? dispatchWorkflowRuntimeActionsStep
                 : dispatchRuntimeActionsStep;
-            const dispatchResult = await dispatch({
-              abortSignal,
-              callbackBaseUrl: resolveWorkflowCallbackBaseUrl(getWorkflowMetadata().url),
-              parentContinuationToken: inbox.token,
-              parentWritable: cursor.parentWritable,
-              serializedContext: cursor.serializedContext,
-              sessionState: cursor.sessionState,
-            });
-            await cursor.adopt(dispatchResult);
+            const dispatchTransition = (async () => {
+              const dispatchResult = await dispatch({
+                abortSignal,
+                callbackBaseUrl: resolveWorkflowCallbackBaseUrl(getWorkflowMetadata().url),
+                parentContinuationToken: inbox.token,
+                parentWritable: cursor.parentWritable,
+                serializedContext: cursor.serializedContext,
+                sessionState: cursor.sessionState,
+              });
+              await cursor.adopt(dispatchResult);
+              return dispatchResult;
+            })();
+            activeDispatchTransition = dispatchTransition;
+
+            let dispatchResult: Awaited<typeof dispatchTransition>;
+            try {
+              dispatchResult = await dispatchTransition;
+            } finally {
+              if (activeDispatchTransition === dispatchTransition) {
+                activeDispatchTransition = undefined;
+              }
+            }
 
             const results = await waitForRuntimeActionResults({
               bufferedDeliveries,
@@ -166,11 +182,13 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         }
       },
       inheritedSignal: input.stepInput.abortSignal,
-      onCancel: () =>
-        cancelPendingRemoteAgentTurnsStep({
+      onCancel: async () => {
+        await activeDispatchTransition;
+        await cancelPendingRemoteAgentTurnsStep({
           serializedContext: cursor.serializedContext,
           sessionState: cursor.sessionState,
-        }),
+        });
+      },
     });
 
     await cursor.finish(terminal, terminal.action, bufferedDeliveries);

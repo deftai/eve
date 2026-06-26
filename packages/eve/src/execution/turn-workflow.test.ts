@@ -221,6 +221,74 @@ describe("turnWorkflow", () => {
     expect(cancelHookControl).toBeUndefined();
   });
 
+  it("waits for an active dispatch to be adopted before cancelling remote children", async () => {
+    const initialState = createSessionState();
+    const pendingState = createSessionState({ continuationToken: "http:pending" });
+    const completedState = createSessionState({ continuationToken: "http:pending" });
+    let resolveDispatch!: (result: Awaited<ReturnType<typeof dispatchRuntimeActionsStep>>) => void;
+    const dispatchResult = new Promise<Awaited<ReturnType<typeof dispatchRuntimeActionsStep>>>(
+      (resolve) => {
+        resolveDispatch = resolve;
+      },
+    );
+    installInbox([
+      {
+        kind: "runtime-action-result",
+        results: [
+          {
+            callId: "call-1",
+            isError: true,
+            kind: "subagent-result",
+            output: "cancelled",
+            subagentName: "research",
+          },
+        ],
+      },
+    ]);
+    vi.mocked(dispatchRuntimeActionsStep).mockReturnValue(dispatchResult);
+    vi.mocked(turnStep)
+      .mockResolvedValueOnce({
+        action: "park",
+        hasPendingAuthorization: false,
+        hasPendingInputBatch: false,
+        pendingRuntimeActionKeys: ["subagent-call:research:call-1"],
+        serializedContext: { state: "pending" },
+        sessionState: pendingState,
+      })
+      .mockResolvedValueOnce({
+        action: "done",
+        output: "cancel settled",
+        serializedContext: { state: "done" },
+        sessionState: completedState,
+      });
+
+    const { input } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState: initialState,
+    });
+    const workflow = turnWorkflow(input);
+
+    await vi.waitFor(() => {
+      expect(dispatchRuntimeActionsStep).toHaveBeenCalledTimes(1);
+    });
+    const hook = cancelHookControl;
+    if (hook === undefined) {
+      throw new Error("Expected the root turn to create a cancel hook.");
+    }
+
+    hook.resolve();
+    await Promise.resolve();
+    expect(cancelPendingRemoteAgentTurnsStep).not.toHaveBeenCalled();
+
+    resolveDispatch({ results: [], sessionState: pendingState });
+
+    await expect(workflow).resolves.toBeUndefined();
+    expect(cancelPendingRemoteAgentTurnsStep).toHaveBeenCalledWith({
+      serializedContext: { state: "pending" },
+      sessionState: pendingState,
+    });
+  });
+
   it("migrates a pre-version (unversioned) input and runs the first turn step", async () => {
     const sessionState = createSessionState();
     const parentWritable = new WritableStream<Uint8Array>();
