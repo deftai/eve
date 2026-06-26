@@ -10,7 +10,7 @@ export const EVE_STREAM_FORMAT_HEADER = "x-eve-stream-format";
 export const EVE_STREAM_VERSION_HEADER = "x-eve-stream-version";
 export const EVE_MESSAGE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
 export const EVE_MESSAGE_STREAM_FORMAT = "ndjson";
-export const EVE_MESSAGE_STREAM_VERSION = "16";
+export const EVE_MESSAGE_STREAM_VERSION = "17";
 
 /**
  * eve-owned finish reason for one completed assistant step.
@@ -35,6 +35,13 @@ export type AssistantStepFinishReason =
  */
 export interface HandleMessageStreamEventMeta {
   readonly at: string;
+  /** Stable identity for one logical event occurrence across Workflow replays. */
+  readonly eventId?: string;
+  /** Logical turn that owns this event, including session boundary events. */
+  readonly turn?: {
+    readonly id: string;
+    readonly sequence: number;
+  };
 }
 
 /**
@@ -499,6 +506,8 @@ export interface AuthorizationCompletedStreamEvent {
  */
 export interface SessionWaitingStreamEvent {
   data: {
+    sequence?: number;
+    turnId?: string;
     wait: "next-user-message";
   };
   type: "session.waiting";
@@ -512,7 +521,9 @@ export interface SessionFailedStreamEvent {
     code: string;
     details?: JsonObject;
     message: string;
+    sequence?: number;
     sessionId: string;
+    turnId?: string;
   };
   type: "session.failed";
 }
@@ -521,6 +532,10 @@ export interface SessionFailedStreamEvent {
  * Stream event emitted when the session completes successfully.
  */
 export interface SessionCompletedStreamEvent {
+  data?: {
+    sequence: number;
+    turnId: string;
+  };
   type: "session.completed";
 }
 
@@ -574,7 +589,7 @@ export type TurnFailureStreamEvent =
  * original `meta.at` value instead of recomputing it.
  */
 export type TimedHandleMessageStreamEvent = HandleMessageStreamEvent & {
-  readonly meta: HandleMessageStreamEventMeta;
+  readonly meta: HandleMessageStreamEventMeta & { readonly eventId: string };
 };
 
 const textEncoder = new TextEncoder();
@@ -1122,9 +1137,14 @@ export function createCompactionCompletedEvent(input: {
  * Creates the `session.waiting` event for the only supported between-turn
  * wait.
  */
-export function createSessionWaitingEvent(): SessionWaitingStreamEvent {
+export function createSessionWaitingEvent(input?: {
+  readonly sequence: number;
+  readonly turnId: string;
+}): SessionWaitingStreamEvent {
   return {
     data: {
+      sequence: input?.sequence,
+      turnId: input?.turnId,
       wait: "next-user-message",
     },
     type: "session.waiting",
@@ -1138,14 +1158,18 @@ export function createSessionFailedEvent(input: {
   readonly code: string;
   readonly details?: JsonObject;
   readonly message: string;
+  readonly sequence?: number;
   readonly sessionId: string;
+  readonly turnId?: string;
 }): SessionFailedStreamEvent {
   return {
     data: {
       code: input.code,
       details: input.details,
       message: input.message,
+      sequence: input.sequence,
       sessionId: input.sessionId,
+      turnId: input.turnId,
     },
     type: "session.failed",
   };
@@ -1154,8 +1178,13 @@ export function createSessionFailedEvent(input: {
 /**
  * Creates the `session.completed` event for one terminal session completion.
  */
-export function createSessionCompletedEvent(): SessionCompletedStreamEvent {
-  return { type: "session.completed" };
+export function createSessionCompletedEvent(input?: {
+  readonly sequence: number;
+  readonly turnId: string;
+}): SessionCompletedStreamEvent {
+  return input === undefined
+    ? { type: "session.completed" }
+    : { data: input, type: "session.completed" };
 }
 
 /**
@@ -1169,13 +1198,53 @@ export function createSessionCompletedEvent(): SessionCompletedStreamEvent {
 export function timestampHandleMessageStreamEvent(
   event: HandleMessageStreamEvent,
   at = new Date().toISOString(),
+  identity?: {
+    readonly eventId?: string;
+    readonly eventIndex?: number;
+    readonly sessionId?: string;
+    readonly turn?: HandleMessageStreamEventMeta["turn"];
+  },
 ): TimedHandleMessageStreamEvent {
+  const turn = identity?.turn ?? readHandleMessageStreamEventTurn(event);
+  const eventId =
+    identity?.eventId ??
+    createHandleMessageStreamEventId({
+      event,
+      eventIndex: identity?.eventIndex ?? 0,
+      sessionId: identity?.sessionId ?? "session",
+      turn,
+    });
+
   return {
     ...event,
     meta: {
       at,
+      eventId,
+      turn,
     },
   };
+}
+
+/** Reads logical turn coordinates from events that carry them in their data. */
+export function readHandleMessageStreamEventTurn(
+  event: HandleMessageStreamEvent,
+): HandleMessageStreamEventMeta["turn"] | undefined {
+  if (!("data" in event) || event.data === undefined) return undefined;
+  const data = event.data as { readonly sequence?: unknown; readonly turnId?: unknown };
+  return typeof data.sequence === "number" && typeof data.turnId === "string"
+    ? { id: data.turnId, sequence: data.sequence }
+    : undefined;
+}
+
+/** Creates an opaque, replay-stable event ID from its durable emission position. */
+export function createHandleMessageStreamEventId(input: {
+  readonly event: HandleMessageStreamEvent;
+  readonly eventIndex: number;
+  readonly sessionId: string;
+  readonly turn?: HandleMessageStreamEventMeta["turn"];
+}): string {
+  const scope = input.turn === undefined ? "session" : input.turn.id;
+  return `${input.sessionId}:${scope}:${String(input.eventIndex)}:${input.event.type}`;
 }
 
 /**

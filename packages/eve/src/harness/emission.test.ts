@@ -46,6 +46,7 @@ function createSession(state?: Record<string, unknown>): HarnessSession {
 describe("getHarnessEmissionState", () => {
   it("returns defaults when no state exists", () => {
     expect(getHarnessEmissionState(createSession().state)).toEqual({
+      eventIndex: 0,
       sessionStarted: false,
       sequence: 0,
       stepIndex: 0,
@@ -55,6 +56,7 @@ describe("getHarnessEmissionState", () => {
 
   it("returns defaults when state key is missing", () => {
     expect(getHarnessEmissionState(createSession({ other: "value" }).state)).toEqual({
+      eventIndex: 0,
       sessionStarted: false,
       sequence: 0,
       stepIndex: 0,

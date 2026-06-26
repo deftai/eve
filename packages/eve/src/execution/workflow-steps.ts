@@ -59,6 +59,7 @@ import {
 import { createExecutionNodeStep } from "#execution/node-step.js";
 import { emitProxiedInputRequest, routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
+import { createSessionEventMetadataCursorForSession } from "#execution/session-event-metadata.js";
 import { buildTurnAttributes, readRootSessionId } from "#execution/eve-workflow-attributes.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import {
@@ -240,6 +241,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   }
 
   const writer = input.parentWritable.getWriter();
+  const eventMetadata = createSessionEventMetadataCursorForSession(initialSession);
   const hookRegistry = bundle.hookRegistry;
   const dynamicInstructionsResolvers = bundle.resolvedAgent.dynamicInstructionsResolvers ?? [];
   const dynamicSkillResolvers = bundle.resolvedAgent.dynamicSkillResolvers ?? [];
@@ -248,7 +250,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const emit = async (event: HandleMessageStreamEvent): Promise<HandleMessageStreamEvent> => {
     const toEmit = await callAdapterEventHandler(adapter, event, adapterCtx);
     setChannelContext(ctx, { ...adapter, state: { ...adapterCtx.state } });
-    await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(toEmit)));
+    await writer.write(encodeMessageStreamEvent(eventMetadata.stamp(toEmit)));
     return toEmit;
   };
 
@@ -336,7 +338,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   // Re-stamp the in-memory session's continuation token in case a
   // handler called `setContinuationToken(...)` (eg. Slack auto-anchor).
-  const rekeyed = reconcileSessionContinuationToken(ctx, stepResult.session);
+  const rekeyed = eventMetadata.apply(reconcileSessionContinuationToken(ctx, stepResult.session));
   const nextSerializedContext = serializeContext(ctx);
   stepResult = { ...stepResult, session: rekeyed };
 
@@ -511,7 +513,13 @@ export async function emitTerminalSessionFailureStep(input: {
   try {
     const writer = input.parentWritable.getWriter();
     try {
-      await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(event)));
+      await writer.write(
+        encodeMessageStreamEvent(
+          timestampHandleMessageStreamEvent(event, undefined, {
+            eventId: `${sessionId}:session:terminal:session.failed`,
+          }),
+        ),
+      );
     } finally {
       writer.releaseLock();
     }
@@ -554,6 +562,7 @@ export async function runProxyInputRequestStep(input: {
     durable: durableSession,
     turnAgent: bundle.turnAgent,
   });
+  const eventMetadata = createSessionEventMetadataCursorForSession(session);
   const writer = input.parentWritable.getWriter();
 
   let scopeResult: {
@@ -563,7 +572,7 @@ export async function runProxyInputRequestStep(input: {
   try {
     const emit = async (event: HandleMessageStreamEvent): Promise<void> => {
       const transformed = await callAdapterEventHandler(adapter, event, adapterCtx);
-      await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(transformed)));
+      await writer.write(encodeMessageStreamEvent(eventMetadata.stamp(transformed)));
     };
 
     scopeResult = await withContextScope(ctx, session, async (enrichedSession) => {
@@ -593,7 +602,9 @@ export async function runProxyInputRequestStep(input: {
     forChildContinuationToken: input.hookPayload.childContinuationToken,
     session: scopeResult.session,
   });
-  const nextSession = reconcileSessionContinuationToken(ctx, sessionWithProxyEntries);
+  const nextSession = eventMetadata.apply(
+    reconcileSessionContinuationToken(ctx, sessionWithProxyEntries),
+  );
   const nextState = createDurableSessionState({ session: nextSession });
 
   return {

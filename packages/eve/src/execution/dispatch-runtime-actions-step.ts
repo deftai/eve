@@ -21,11 +21,7 @@ import {
   getPendingRuntimeActionBatch,
   recordPendingSubagentChildToken,
 } from "#harness/runtime-actions.js";
-import {
-  createSubagentCalledEvent,
-  encodeMessageStreamEvent,
-  timestampHandleMessageStreamEvent,
-} from "#protocol/message.js";
+import { createSubagentCalledEvent, encodeMessageStreamEvent } from "#protocol/message.js";
 import type {
   RuntimeRemoteAgentCallActionRequest,
   RuntimeSubagentResultActionResult,
@@ -40,6 +36,7 @@ import {
   startRemoteAgentSession,
 } from "#execution/remote-agent-dispatch.js";
 import { hydrateDurableSession } from "#execution/session.js";
+import { createSessionEventMetadataCursorForSession } from "#execution/session-event-metadata.js";
 import { buildSubagentRunInput } from "#execution/subagent-tool.js";
 import { createWorkflowRuntime, workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
@@ -77,6 +74,7 @@ export async function dispatchRuntimeActionsStep(input: {
     turnAgent: bundle.turnAgent,
   });
   const adapter = ctx.require(ChannelKey);
+  const eventMetadata = createSessionEventMetadataCursorForSession(session);
   const auth = ctx.get(AuthKey) ?? null;
   const capabilities = ctx.get(CapabilitiesKey);
   const channelMetadata = ctx.get(ChannelInstrumentationKey);
@@ -171,12 +169,13 @@ export async function dispatchRuntimeActionsStep(input: {
         }),
         adapterCtx,
       );
-      await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(parentEvent)));
+      await writer.write(encodeMessageStreamEvent(eventMetadata.stamp(parentEvent)));
     }
   } finally {
     writer.releaseLock();
   }
 
+  nextSession = eventMetadata.apply(nextSession);
   const nextState =
     nextSession === session
       ? input.sessionState

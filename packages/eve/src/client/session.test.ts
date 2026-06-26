@@ -2,6 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClientSession } from "#client/session.js";
 import type { SessionState } from "#client/types.js";
+import {
+  createMessageCompletedEvent,
+  createSessionWaitingEvent,
+  createTurnCompletedEvent,
+  createTurnStartedEvent,
+  timestampHandleMessageStreamEvent,
+  type HandleMessageStreamEvent,
+} from "#protocol/message.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -265,4 +273,101 @@ describe("ClientSession", () => {
 
     expect(result.inputRequests.map((request) => request.requestId)).toEqual(["approval_1"]);
   });
+
+  it("consumes a late replay without exposing its stale boundary to the next send", async () => {
+    let streamRequest = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") return createAcceptedResponse();
+
+      streamRequest += 1;
+      if (streamRequest === 1) return createStreamResponse(turnEvents(0, "first", 0));
+      return createStreamResponse([...turnEvents(0, "first", 0), ...turnEvents(1, "second", 4)]);
+    });
+    const session = createSession();
+
+    expect((await (await session.send("first")).result()).message).toBe("first");
+    const second = await (await session.send("second")).result();
+
+    expect(second.message).toBe("second");
+    expect(second.events).toEqual(turnEvents(1, "second", 4));
+    expect(session.state.streamIndex).toBe(12);
+    expect(session.state.eventCursor?.settledTurnSequence).toBe(1);
+  });
+
+  it("filters interleaved concurrent copies while advancing the physical cursor", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") return createAcceptedResponse();
+
+      const [started, completed, turnCompleted, waiting] = turnEvents(0, "answer", 0);
+      return createStreamResponse([
+        started,
+        started,
+        completed,
+        completed,
+        turnCompleted,
+        turnCompleted,
+        waiting,
+      ]);
+    });
+    const session = createSession();
+
+    const result = await (await session.send("question")).result();
+
+    expect(result.events).toEqual(turnEvents(0, "answer", 0));
+    expect(session.state.streamIndex).toBe(7);
+  });
+
+  it("reconstructs replay state before resuming a legacy saved cursor", async () => {
+    const oldTurn = legacyTurnEvents(0, "old");
+    const replayedOldTurn = turnEvents(0, "old", 0);
+    const newTurn = turnEvents(1, "new", 4);
+    const streamUrls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
+      if ((init?.method ?? "GET") === "POST") return createAcceptedResponse();
+
+      const url =
+        typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+      streamUrls.push(url);
+      return streamUrls.length === 1
+        ? createStreamResponse(oldTurn)
+        : createStreamResponse([...replayedOldTurn, ...newTurn]);
+    });
+    const session = createSession({
+      continuationToken: "eve:test",
+      sessionId: "session_1",
+      streamIndex: oldTurn.length,
+    });
+
+    const result = await (await session.send("next")).result();
+
+    expect(result.message).toBe("new");
+    expect(result.events).toEqual(newTurn);
+    expect(new URL(streamUrls[0]!).searchParams.get("startIndex")).toBeNull();
+    expect(new URL(streamUrls[1]!).searchParams.get("startIndex")).toBe("4");
+  });
 });
+
+function turnEvents(sequence: number, message: string, startEventIndex: number) {
+  const turnId = `turn_${sequence}`;
+  return [
+    createTurnStartedEvent({ sequence, turnId }),
+    createMessageCompletedEvent({ finishReason: "stop", message, sequence, stepIndex: 0, turnId }),
+    createTurnCompletedEvent({ sequence, turnId }),
+    createSessionWaitingEvent({ sequence, turnId }),
+  ].map((event, index) =>
+    timestampHandleMessageStreamEvent(event, "2026-06-26T00:00:00.000Z", {
+      eventIndex: startEventIndex + index,
+      sessionId: "session_1",
+    }),
+  );
+}
+
+function legacyTurnEvents(sequence: number, message: string): HandleMessageStreamEvent[] {
+  const turnId = `turn_${sequence}`;
+  return [
+    createTurnStartedEvent({ sequence, turnId }),
+    createMessageCompletedEvent({ finishReason: "stop", message, sequence, stepIndex: 0, turnId }),
+    createTurnCompletedEvent({ sequence, turnId }),
+    { data: { wait: "next-user-message" }, type: "session.waiting" },
+  ];
+}

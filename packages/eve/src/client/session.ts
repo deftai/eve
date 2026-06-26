@@ -9,6 +9,7 @@ import { MessageResponse } from "#client/message-response.js";
 import { isStreamDisconnectError, readNdjsonStream } from "#client/ndjson.js";
 import { openStreamBody, openStreamIterable } from "#client/open-stream.js";
 import { normalizeOutputSchemaForRequest } from "#client/output-schema.js";
+import { ReplayNormalizer } from "#client/replay-normalizer.js";
 import { advanceSession } from "#client/session-utils.js";
 import { createClientUrl } from "#client/url.js";
 import type {
@@ -161,9 +162,19 @@ export class ClientSession {
     input: SendTurnPayload,
   ): AsyncGenerator<HandleMessageStreamEvent> {
     const events: HandleMessageStreamEvent[] = [];
+    let currentStreamIndex = initialState.sessionId === sessionId ? initialState.streamIndex : 0;
+    const priorCursor = initialState.sessionId === sessionId ? initialState.eventCursor : undefined;
+    const normalizer = new ReplayNormalizer(priorCursor);
 
     try {
-      let currentStreamIndex = initialState.sessionId === sessionId ? initialState.streamIndex : 0;
+      await this.#primeReplayNormalizer(normalizer, {
+        cursor: priorCursor,
+        headers: input.headers,
+        sessionId,
+        signal: input.signal,
+        startIndex: currentStreamIndex,
+      });
+
       let remainingReconnectAttempts = this.#context.maxReconnectAttempts;
 
       while (true) {
@@ -178,8 +189,9 @@ export class ClientSession {
 
         try {
           for await (const event of readNdjsonStream(body)) {
-            events.push(event);
             currentStreamIndex += 1;
+            if (!normalizer.shouldExpose(event)) continue;
+            events.push(event);
             yield event;
 
             if (isCurrentTurnBoundaryEvent(event)) {
@@ -212,10 +224,12 @@ export class ClientSession {
     } finally {
       this.#state = advanceSession({
         continuationToken,
+        eventCursor: normalizer.cursor,
         events,
         preserveCompletedSessions: this.#context.preserveCompletedSessions,
         sessionId,
         session: initialState,
+        streamIndex: currentStreamIndex,
       });
     }
   }
@@ -236,6 +250,40 @@ export class ClientSession {
     });
   }
 
+  async #primeReplayNormalizer(
+    normalizer: ReplayNormalizer,
+    input: {
+      readonly cursor: SessionState["eventCursor"];
+      readonly headers?: Readonly<Record<string, string>>;
+      readonly sessionId: string;
+      readonly signal?: AbortSignal;
+      readonly startIndex: number;
+    },
+  ): Promise<void> {
+    if (input.cursor !== undefined || input.startIndex === 0) return;
+
+    let consumed = 0;
+    for await (const event of openStreamIterable({
+      host: this.#context.host,
+      maxReconnectAttempts: this.#context.maxReconnectAttempts,
+      resolveHeaders: () => this.#context.resolveHeaders(input.headers),
+      redirect: this.#context.redirect,
+      sessionId: input.sessionId,
+      signal: input.signal,
+      startIndex: 0,
+    })) {
+      normalizer.observeHistory(event);
+      consumed += 1;
+      if (consumed >= input.startIndex) break;
+    }
+
+    if (consumed < input.startIndex && !input.signal?.aborted) {
+      throw new Error(
+        `Session stream ended at index ${consumed} before saved cursor ${input.startIndex}.`,
+      );
+    }
+  }
+
   async *#streamAndAdvance(
     sessionId: string,
     options?: StreamOptions,
@@ -243,6 +291,15 @@ export class ClientSession {
     const initialState = this.#state;
     const streamIndex = options?.startIndex ?? initialState.streamIndex;
     const events: HandleMessageStreamEvent[] = [];
+    let currentStreamIndex = streamIndex;
+    const cursor = streamIndex === initialState.streamIndex ? initialState.eventCursor : undefined;
+    const normalizer = new ReplayNormalizer(cursor);
+    await this.#primeReplayNormalizer(normalizer, {
+      cursor,
+      sessionId,
+      signal: options?.signal,
+      startIndex: streamIndex,
+    });
 
     try {
       for await (const event of openStreamIterable({
@@ -254,16 +311,20 @@ export class ClientSession {
         signal: options?.signal,
         startIndex: streamIndex,
       })) {
+        currentStreamIndex += 1;
+        if (!normalizer.shouldExpose(event)) continue;
         events.push(event);
         yield event;
       }
     } finally {
       this.#state = advanceSession({
         continuationToken: initialState.continuationToken,
+        eventCursor: normalizer.cursor,
         events,
         preserveCompletedSessions: this.#context.preserveCompletedSessions,
         session: { ...initialState, sessionId, streamIndex },
         sessionId,
+        streamIndex: currentStreamIndex,
       });
     }
   }

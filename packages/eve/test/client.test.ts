@@ -677,6 +677,7 @@ describe("Session state", () => {
 
     expect(session.state).toEqual({
       continuationToken: "http:session_001",
+      eventCursor: { version: 1 },
       sessionId: "session_001",
       streamIndex: 5,
     });
@@ -693,6 +694,7 @@ describe("Session state", () => {
     const client = new Client({ host: "http://localhost:3000" });
     const session = client.session({
       continuationToken: "http:session_001",
+      eventCursor: { settledTurnSequence: 1, version: 1 },
       sessionId: "session_001",
       streamIndex: 5,
     });
@@ -812,6 +814,7 @@ describe("Session.stream", () => {
     const client = new Client({ host: "http://localhost:3000" });
     const session = client.session({
       continuationToken: "http:session_001",
+      eventCursor: { settledTurnSequence: 1, version: 1 },
       sessionId: "session_001",
       streamIndex: 10,
     });

@@ -94,6 +94,16 @@ The stream is durable. Every event is recorded before a step completes, so the w
 curl "http://127.0.0.1:3000/eve/v1/session/<sessionId>/stream?startIndex=<count>"
 ```
 
+Workflow execution is at least once, so this raw physical stream can contain another copy of an
+event or an entire completed turn. `startIndex` counts every physical event, including those copies.
+Stream v17 events carry `meta.eventId` and `meta.turn` so clients can correlate replayed events
+without comparing their payloads.
+
+The TypeScript client consumes the physical copies but exposes one logical stream. It suppresses
+duplicate events and late events from settled turns while still advancing `SessionState.streamIndex`,
+so a stale replayed `session.waiting` cannot finish the next `send()`. Raw HTTP consumers that need
+the same behavior should persist the physical offset plus their logical event cursor.
+
 ## Use the client from TypeScript
 
 For scripts, server-to-server calls, tests, evals, and custom UIs, `eve/client` wraps these routes in a typed client so you don't hand-roll the POST and NDJSON stream loop.

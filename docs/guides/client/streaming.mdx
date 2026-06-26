@@ -95,6 +95,17 @@ const client = new Client({
 
 `maxReconnectAttempts` is per turn. The default is `3`.
 
+The durable stream is an at-least-once physical log: Workflow may append concurrent or late copies
+of events from the same logical turn. The client consumes those copies, advances its physical cursor,
+and suppresses them before they reach iteration, `result()`, evals, or frontend stores. Equal payloads
+from distinct logical events are preserved; filtering uses server-provided event identity and turn
+coordinates, not payload hashing.
+
+Persist the complete `session.state` after consuming a response. In addition to `streamIndex`, it
+contains a bounded logical cursor that keeps replay filtering correct after a process restart. A
+saved state from before this cursor existed is upgraded by silently reconstructing it from the
+durable stream prefix once.
+
 ## Open a stream manually
 
 Use `session.stream()` when you already have a session cursor and only need to attach to the existing stream:
@@ -118,6 +129,9 @@ for await (const event of session.stream({ startIndex: 0 })) {
   console.log(event.type);
 }
 ```
+
+`startIndex` is a physical offset. Overriding it to a different position also reconstructs the
+logical cursor through that prefix before exposing events.
 
 `stream()` throws if the session has no `sessionId`, because there's no stream to attach to before the first send.
 
