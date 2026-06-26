@@ -151,6 +151,43 @@ Recommended layering:
 5. Avoid a public `getSessionId()`/`setSessionId()` API unless there is a strong debugging need and
    it can be clearly marked unstable/internal.
 
+## Prior art
+
+The official MCP TypeScript SDK separates local transport teardown from remote session termination:
+
+- `StreamableHTTPClientTransport` accepts `sessionId` and `protocolVersion` constructor options.
+- When `Client.connect()` sees a transport with an existing `sessionId`, it treats that as a
+  reconnect path and skips a fresh `initialize`.
+- `transport.close()` only closes local transport resources.
+- `transport.terminateSession()` sends HTTP DELETE with `Mcp-Session-Id`, treats 405 as allowed by
+  the spec, and clears the local session id after termination.
+- Server session management is also opt-in: `sessionIdGenerator` enables stateful sessions, while
+  omitting it puts the server transport in stateless mode.
+- The server transport's `onsessionclosed` callback is specifically tied to DELETE, and its docs call
+  out that request-local transports may close while the logical session stays open.
+
+Vercel's `mcp-handler` mostly follows a stateless Streamable HTTP default:
+
+- the default Streamable HTTP path creates a fresh server and transport per POST;
+- GET and DELETE on the Streamable HTTP endpoint return 405 in that default path;
+- `sessionIdGenerator` is passed through to the official SDK transport for stateful sessions, but it
+  is an explicit server-side choice rather than the default;
+- Redis-backed resumability is focused on the legacy SSE path and uses session ids as routing keys
+  for request/response pub-sub, not as a client-side reattach API.
+
+Lessons for eve:
+
+- Match the official SDK distinction between local close/detach and explicit session termination.
+- Keep continuity opt-in because both the MCP spec and common handlers treat stateful sessions as
+  optional.
+- Store enough metadata to follow the official reconnect path: `sessionId`, negotiated protocol
+  version, and cached initialize result.
+- Prefer action-oriented helpers like `clearSession()` or `terminateSession()` over raw
+  `getSessionId()`/`setSessionId()` access if an escape hatch becomes necessary.
+- Consider naming the public option after "reattach" or "per-eve-session" continuity, since the
+  official SDK uses "session" for a transport protocol concept and "durable" can sound broader than
+  the feature actually is.
+
 ## Where state is saved
 
 Use durable context, not the workflow body as an authored input shape and not external storage.
