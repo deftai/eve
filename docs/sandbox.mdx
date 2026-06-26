@@ -216,7 +216,7 @@ The two supported backends expose different levels of integration:
 
 ### Managed authorization on Vercel Sandbox
 
-With `vercel()`, attach authorization directly to each route that needs it:
+With `vercel()`, attach authorization directly to each route and choose an explicit credential resolution mode:
 
 ```ts title="agent/sandbox.ts"
 import { connect } from "@vercel/connect/eve";
@@ -225,11 +225,24 @@ import { vercel } from "eve/sandbox/vercel";
 
 export default defineSandbox({
   backend: vercel({
+    credentialResolution: "on-request",
+    authProxyBaseUrl: "https://eve-tunnel.example.com",
     networkPolicy: {
       allow: {
         "api.github.com": [
           {
             auth: connect("github"),
+            transform: ({ token }) => [
+              {
+                headers: { authorization: `Bearer ${token}` },
+              },
+            ],
+          },
+        ],
+        "registry.internal": [
+          {
+            auth: connect("registry"),
+            credentialResolution: "eager",
             transform: ({ token }) => [
               {
                 headers: { authorization: `Bearer ${token}` },
@@ -243,13 +256,16 @@ export default defineSandbox({
 });
 ```
 
-`auth` accepts a static authorization provider using the same `getToken` and interactive strategy shapes as connections and authored tools. Dynamic resolver functions are not supported on sandbox rules; provide the provider object directly. eve resolves every authenticated rule before returning the sandbox to authored code. When the sandbox is first opened from an authored tool's `execute`, interactive credentials park and resume through eve's normal callback lifecycle. Hooks and channel events may use an already-authorized provider, but cannot initiate interactive sandbox authorization. Native Vercel `match` filters remain available on both authenticated and unauthenticated rules. This managed `auth` form is specific to the Vercel backend.
+`auth` accepts a static authorization provider using the same `getToken` and interactive strategy shapes as connections and authored tools. Dynamic resolver functions are not supported on sandbox rules. The backend-level `credentialResolution` defaults to `"eager"`; an individual rule may override it. Native Vercel `match` filters remain available on both authenticated and unauthenticated rules.
 
-On Vercel, firewall transformations require Pro or Enterprise and are unavailable on Hobby.
+- `"eager"` resolves all eager rules before eve returns the sandbox to authored code.
+- `"on-request"` resolves only a rule actually reached by an awaited sandbox process. Unused rules never prompt.
 
-eve removes resolved tokens after every step. Rules whose credentials are unavailable receive no credential transform. If another rule allows the same domain, Vercel still permits unmatched traffic to that domain without the credential.
+On-request resolution uses Vercel's `forwardURL` firewall capability. The authenticated proxy writes a demand marker into the originating sandbox and returns HTTP 428. eve terminates the blocked awaited command, resolves only the demanded rules, then replays the command. Missing interactive credentials park and resume through eve's normal callback lifecycle. Replay can repeat effects performed before the blocked request, so commands should be safe to retry. Detached or otherwise un-awaited processes do not support demand-triggered consent.
 
-Managed policies reject replacement through `onSession({ use })`, where eve owns the startup policy. `sandbox.setNetworkPolicy()` remains available mid-step, but replaces the complete active policy, including eve's credential transforms. eve clears the replacement after the step; a later step resolves and installs the managed policy again. Brokered credentials are unavailable during template bootstrap.
+Both modes require Vercel Pro or Enterprise because firewall transformations are not available on Hobby. On-request mode additionally uses a beta Vercel capability and requires a public HTTPS eve endpoint. Vercel deployments derive that endpoint automatically; local development must set `authProxyBaseUrl` to a public HTTPS tunnel or deployment. eve also uses this origin for interactive authorization callbacks, avoiding protected immutable deployment URLs when an explicit public origin is configured.
+
+eve removes resolved tokens after every step. Unresolved eager routes remain closed, while unresolved on-request routes revert to their trigger rules. Managed policies reject authored `forwardURL` rules and reject replacement through `onSession({ use })`. `sandbox.setNetworkPolicy()` is also rejected when on-request rules exist because a second policy writer would remove eve's triggers. With eager-only rules, it replaces the complete active policy until the step ends. Brokered credentials are unavailable during template bootstrap.
 
 ### Direct transforms
 

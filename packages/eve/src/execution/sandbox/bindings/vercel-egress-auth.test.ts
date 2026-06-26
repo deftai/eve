@@ -37,13 +37,15 @@ describe("Vercel sandbox route auth", () => {
 
     expect(egressAuth?.clearedPolicy).toEqual({ allow: {}, subnets: undefined });
     await expect(resolveVercelEgressPolicy(egressAuth!, "session")).resolves.toMatchObject({
-      allow: {
-        "api.example.com": [
-          {
-            match: { method: ["POST"] },
-            transform: [{ headers: { authorization: "Bearer secret" } }],
-          },
-        ],
+      policy: {
+        allow: {
+          "api.example.com": [
+            {
+              match: { method: ["POST"] },
+              transform: [{ headers: { authorization: "Bearer secret" } }],
+            },
+          ],
+        },
       },
     });
     expect(getToken).toHaveBeenCalledOnce();
@@ -109,9 +111,12 @@ describe("Vercel sandbox route auth", () => {
       },
     });
 
-    await expect(resolveVercelEgressPolicy(egressAuth!, "sandbox")).resolves.toEqual({
-      allow: {},
-      subnets: undefined,
+    await expect(resolveVercelEgressPolicy(egressAuth!, "sandbox")).resolves.toMatchObject({
+      policy: {
+        allow: {},
+        subnets: undefined,
+      },
+      unresolvedRuleIds: ["r0-0"],
     });
   });
 

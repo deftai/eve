@@ -33,8 +33,9 @@ import type {
  * when the factory policy contains eve-managed authenticated rules.
  *
  * Route-level `auth` rules resolve credentials for the active principal and
- * inject them through the Vercel Sandbox firewall before the sandbox is
- * returned to authored code. Credentials are removed after each step.
+ * inject them through the Vercel Sandbox firewall. `credentialResolution`
+ * selects eager or demand-driven resolution. Credentials are removed after
+ * each step.
  */
 export function vercel(
   opts?: VercelSandboxCreateOptions,

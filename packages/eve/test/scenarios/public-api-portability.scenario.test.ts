@@ -60,6 +60,8 @@ void justbash;
 void microsandbox;
 
 const hosted = vercel({
+  credentialResolution: "on-request",
+  authProxyBaseUrl: "https://eve.example.com",
   networkPolicy: {
     allow: {
       "api.example.com": [{

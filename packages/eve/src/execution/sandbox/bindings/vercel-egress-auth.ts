@@ -11,6 +11,7 @@ import {
 import type {
   VercelSandboxAuthNetworkPolicyRule,
   VercelSandboxCreateOptions,
+  VercelSandboxCredentialResolution,
   VercelSandboxNetworkPolicy,
 } from "#public/sandbox/vercel-sandbox.js";
 import {
@@ -43,13 +44,19 @@ type ResolvedCredentialEntry =
     };
 
 export interface VercelEgressAuth {
-  readonly buildPolicy: (credentials: ReadonlyMap<string, TokenResult>) => SandboxNetworkPolicy;
+  readonly callbackBaseUrl?: string;
+  readonly buildPolicy: (
+    credentials: ReadonlyMap<string, TokenResult>,
+    sandboxName?: string,
+  ) => SandboxNetworkPolicy;
   readonly clearedPolicy: SandboxNetworkPolicy;
+  readonly eagerRuleIds: readonly string[];
   readonly rules: ReadonlyMap<string, VercelManagedAuthRule>;
 }
 
 export interface VercelManagedAuthRule {
   readonly authorization: Readonly<AuthorizationDefinition>;
+  readonly credentialResolution: VercelSandboxCredentialResolution;
   readonly domain: string;
   readonly id: string;
 }
@@ -58,7 +65,8 @@ export function extractVercelEgressAuth(options: VercelSandboxCreateOptions | un
   readonly egressAuth: VercelEgressAuth | undefined;
   readonly createOptions: VercelCreateOptions;
 } {
-  const { networkPolicy, ...createOptions } = options ?? {};
+  const { authProxyBaseUrl, credentialResolution, networkPolicy, ...createOptions } = options ?? {};
+  assertCredentialResolution(credentialResolution, "vercel():");
   const authoredPolicy = networkPolicy;
   const discovered = discoverManagedRules(authoredPolicy);
   if (discovered.length === 0) {
@@ -70,13 +78,29 @@ export function extractVercelEgressAuth(options: VercelSandboxCreateOptions | un
           : ({ ...createOptions, networkPolicy: authoredPolicy } as VercelCreateOptions),
     };
   }
-  const rules = new Map(discovered.map((rule) => [rule.id, rule]));
-  const buildPolicy = (credentials: ReadonlyMap<string, TokenResult>): SandboxNetworkPolicy =>
-    buildManagedPolicy(authoredPolicy, discovered, credentials);
+  const defaultCredentialResolution = credentialResolution ?? "eager";
+  const normalizedRules: Array<VercelManagedAuthRule & { readonly index: number }> = discovered.map(
+    (rule) => ({
+      ...rule,
+      credentialResolution: rule.credentialResolution ?? defaultCredentialResolution,
+    }),
+  );
+  rejectAuthoredForwardUrls(authoredPolicy);
+  const callbackBaseUrl = resolveAuthProxyBaseUrl(authProxyBaseUrl, normalizedRules);
+  const rules = new Map(normalizedRules.map((rule) => [rule.id, rule]));
+  const buildPolicy = (
+    credentials: ReadonlyMap<string, TokenResult>,
+    sandboxName?: string,
+  ): SandboxNetworkPolicy =>
+    buildManagedPolicy(authoredPolicy, normalizedRules, credentials, callbackBaseUrl, sandboxName);
   return {
     egressAuth: {
+      callbackBaseUrl,
       buildPolicy,
       clearedPolicy: buildPolicy(new Map()),
+      eagerRuleIds: normalizedRules
+        .filter((rule) => rule.credentialResolution === "eager")
+        .map((rule) => rule.id),
       rules,
     },
     createOptions: createOptions as VercelCreateOptions,
@@ -86,10 +110,19 @@ export function extractVercelEgressAuth(options: VercelSandboxCreateOptions | un
 export async function resolveVercelEgressPolicy(
   egressAuth: VercelEgressAuth,
   sandboxScope: string,
-): Promise<SandboxNetworkPolicy> {
+  ruleIds: readonly string[] = egressAuth.eagerRuleIds,
+  sandboxName?: string,
+): Promise<{
+  readonly credentials: ReadonlyMap<string, TokenResult>;
+  readonly policy: SandboxNetworkPolicy;
+  readonly unresolvedRuleIds: readonly string[];
+}> {
   const entries: ResolvedCredentialEntry[] = await Promise.all(
-    [...egressAuth.rules.values()].map(async (rule) => {
-      const ruleId = rule.id;
+    ruleIds.map(async (ruleId) => {
+      const rule = egressAuth.rules.get(ruleId);
+      if (rule === undefined) {
+        throw new Error(`Unknown managed sandbox egress rule "${ruleId}".`);
+      }
       const scoped: ScopedAuthorization = {
         authorization: rule.authorization,
         connection: { url: `https://${rule.domain}` },
@@ -119,7 +152,7 @@ export async function resolveVercelEgressPolicy(
           }
 
           await evictScopedToken(scoped);
-          const signal = await startScopedAuthorization(scoped);
+          const signal = await startScopedAuthorization(scoped, egressAuth.callbackBaseUrl);
           if (signal !== undefined) {
             return { kind: "authorization", label: ruleId, signal } as const;
           }
@@ -158,14 +191,32 @@ export async function resolveVercelEgressPolicy(
       )
       .map((entry) => [entry.label, entry.token] as const),
   );
-  return egressAuth.buildPolicy(credentials);
+  const unresolvedRuleIds = entries
+    .filter(
+      (entry): entry is Extract<ResolvedCredentialEntry, { readonly kind: "token" }> =>
+        entry.kind === "token" && entry.token.token.length === 0,
+    )
+    .map((entry) => entry.label);
+  return {
+    credentials,
+    policy: egressAuth.buildPolicy(credentials, sandboxName),
+    unresolvedRuleIds,
+  };
 }
 
-function discoverManagedRules(
-  policy: VercelSandboxNetworkPolicy | undefined,
-): Array<VercelManagedAuthRule & { readonly index: number }> {
+function discoverManagedRules(policy: VercelSandboxNetworkPolicy | undefined): Array<
+  Omit<VercelManagedAuthRule, "credentialResolution"> & {
+    credentialResolution?: VercelSandboxCredentialResolution;
+    readonly index: number;
+  }
+> {
   if (typeof policy !== "object" || policy === null || Array.isArray(policy.allow)) return [];
-  const rules: Array<VercelManagedAuthRule & { readonly index: number }> = [];
+  const rules: Array<
+    Omit<VercelManagedAuthRule, "credentialResolution"> & {
+      credentialResolution?: VercelSandboxCredentialResolution;
+      readonly index: number;
+    }
+  > = [];
   let domainIndex = 0;
   for (const [domain, domainRules] of Object.entries(policy.allow ?? {})) {
     for (const [index, rule] of domainRules.entries()) {
@@ -176,11 +227,16 @@ function discoverManagedRules(
           `vercel(): egress rule "${domain}"[${index}] must define a transform function.`,
         );
       }
+      assertCredentialResolution(
+        rule.credentialResolution,
+        `vercel(): egress rule "${domain}"[${index}]:`,
+      );
       rules.push({
         authorization: normalizeAuthorizationSpec(
           rule.auth,
           `vercel() egress rule "${domain}"[${index}]:`,
         ),
+        credentialResolution: rule.credentialResolution,
         domain,
         id,
         index,
@@ -199,6 +255,8 @@ function buildManagedPolicy(
   policy: VercelSandboxNetworkPolicy | undefined,
   managedRules: ReadonlyArray<VercelManagedAuthRule & { readonly index: number }>,
   credentials: ReadonlyMap<string, TokenResult>,
+  callbackBaseUrl: string | undefined,
+  sandboxName: string | undefined,
 ): SandboxNetworkPolicy {
   if (typeof policy !== "object" || policy === null || Array.isArray(policy.allow)) {
     throw new Error("vercel(): managed `auth` rules require record-form `networkPolicy.allow`.");
@@ -223,9 +281,60 @@ function buildManagedPolicy(
         if (authoredRule.match !== undefined) compiledRule.match = authoredRule.match;
         return [compiledRule];
       }
+      if (managed.credentialResolution === "on-request" && sandboxName !== undefined) {
+        const compiledRule: NetworkPolicyRule = {
+          forwardURL:
+            `${callbackBaseUrl}/eve/v1/sandbox/egress/${managed.id}/` +
+            encodeURIComponent(sandboxName),
+        };
+        if (authoredRule.match !== undefined) compiledRule.match = authoredRule.match;
+        return [compiledRule];
+      }
       return [];
     });
     if (compiled.length > 0 || domainRules.length === 0) allow[domain] = compiled;
   }
   return { allow, subnets: policy.subnets };
+}
+
+function rejectAuthoredForwardUrls(policy: VercelSandboxNetworkPolicy | undefined): void {
+  if (typeof policy !== "object" || policy === null || Array.isArray(policy.allow)) return;
+  for (const rules of Object.values(policy.allow ?? {})) {
+    if (rules.some((rule) => "forwardURL" in rule && rule.forwardURL !== undefined)) {
+      throw new Error(
+        "vercel(): authored `forwardURL` rules cannot be combined with eve-managed `auth` rules.",
+      );
+    }
+  }
+}
+
+function assertCredentialResolution(
+  value: unknown,
+  prefix: string,
+): asserts value is VercelSandboxCredentialResolution | undefined {
+  if (value !== undefined && value !== "eager" && value !== "on-request") {
+    throw new Error(`${prefix} invalid credential resolution mode "${String(value)}".`);
+  }
+}
+
+function resolveAuthProxyBaseUrl(
+  authored: string | undefined,
+  rules: readonly VercelManagedAuthRule[],
+): string | undefined {
+  if (!rules.some((rule) => rule.credentialResolution === "on-request")) return undefined;
+  const candidate = authored ?? process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+  if (candidate === undefined || candidate.trim().length === 0) {
+    throw new Error(
+      "vercel(): `authProxyBaseUrl` is required for on-request credential resolution outside a Vercel deployment.",
+    );
+  }
+  const withScheme = candidate.includes("://") ? candidate : `https://${candidate}`;
+  const url = new URL(withScheme);
+  if (url.protocol !== "https:") {
+    throw new Error("vercel(): `authProxyBaseUrl` must be a public HTTPS URL.");
+  }
+  url.pathname = url.pathname.replace(/\/$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }
