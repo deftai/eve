@@ -243,6 +243,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           {
             auth: dispatchAuth,
             continuationToken: body.continuationToken,
+            requireActiveSession: true,
           },
         );
 

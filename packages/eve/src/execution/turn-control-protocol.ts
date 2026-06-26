@@ -6,6 +6,11 @@ import { resumeHook } from "#internal/workflow/runtime.js";
 export type TurnInboxPayload =
   | Exclude<HookPayload, DeliverHookPayload>
   | {
+      readonly accepted: boolean;
+      readonly claimId: string;
+      readonly kind: "turn-execution-claim-result";
+    }
+  | {
       readonly delivery: DeliverHookPayload;
       readonly kind: "driver-delivery";
       readonly requestId: string;
@@ -20,6 +25,11 @@ export type TurnControlPayload =
     }
   | { readonly kind: "turn-error"; readonly error: unknown }
   | { readonly continuationToken: string; readonly kind: "turn-continuation-token" }
+  | {
+      readonly claimId: string;
+      readonly inboxToken: string;
+      readonly kind: "turn-execution-claim";
+    }
   | {
       readonly continuationToken: string;
       readonly inboxToken: string;

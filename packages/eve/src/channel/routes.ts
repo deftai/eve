@@ -67,6 +67,11 @@ type BaseSendOptions = {
   continuationToken: string;
   mode?: RunMode;
   /**
+   * Requires delivery to an active session instead of falling back to a new
+   * session when the continuation token no longer has a live owner.
+   */
+  requireActiveSession?: boolean;
+  /**
    * Human-readable title for a newly started workflow session. Defaults to
    * the first user message and is ignored when resuming an existing session.
    */

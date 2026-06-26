@@ -66,6 +66,22 @@ describe("createSendFn", () => {
     warn.mockRestore();
   });
 
+  it("does not start a new session when active delivery is required", async () => {
+    const noSession = new RuntimeNoActiveSessionError("test:token");
+    const runtime = createRuntime(noSession);
+    const send = createSendFn(runtime, ADAPTER, "test");
+
+    await expect(
+      send("hello", {
+        auth: null,
+        continuationToken: "token",
+        requireActiveSession: true,
+      }),
+    ).rejects.toBe(noSession);
+
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
   it("rejects inputResponses when no active session exists", async () => {
     const runtime = createRuntime(new RuntimeNoActiveSessionError("test:token"));
     const send = createSendFn(runtime, ADAPTER, "test");

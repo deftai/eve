@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeliverHookPayload, HookPayload } from "#channel/types.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { forwardTurnDeliveryStep } from "#execution/forward-turn-delivery-step.js";
+import { sendTurnExecutionClaimResultStep } from "#execution/send-turn-execution-claim-result-step.js";
 import type { SessionDeliveryHook } from "#execution/session-delivery-hook.js";
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { TurnControlReceiver } from "#execution/turn-control-receiver.js";
@@ -15,6 +16,10 @@ vi.mock("#compiled/@workflow/core/index.js", () => ({
 
 vi.mock("./forward-turn-delivery-step.js", () => ({
   forwardTurnDeliveryStep: vi.fn(),
+}));
+
+vi.mock("./send-turn-execution-claim-result-step.js", () => ({
+  sendTurnExecutionClaimResultStep: vi.fn(),
 }));
 
 describe("TurnControlReceiver", () => {
@@ -93,6 +98,58 @@ describe("TurnControlReceiver", () => {
     installControlHook([{ error: { message: "boom", name: "TurnError" }, kind: "turn-error" }]);
 
     await expect(runReceiver([])).rejects.toThrow("boom");
+  });
+
+  it("accepts the first execution claim and rejects a replayed child", async () => {
+    installControlHook([
+      { claimId: "first-run", inboxToken: "first-inbox", kind: "turn-execution-claim" },
+      { claimId: "replayed-run", inboxToken: "replayed-inbox", kind: "turn-execution-claim" },
+      parkResult(),
+    ]);
+
+    const action = await runReceiver([]);
+
+    expect(action.kind).toBe("park");
+    expect(vi.mocked(sendTurnExecutionClaimResultStep).mock.calls).toEqual([
+      [{ accepted: true, claimId: "first-run", inboxToken: "first-inbox" }],
+      [{ accepted: false, claimId: "replayed-run", inboxToken: "replayed-inbox" }],
+    ]);
+  });
+
+  it("accepts a retried claim from the same child run", async () => {
+    installControlHook([
+      { claimId: "first-run", inboxToken: "first-inbox", kind: "turn-execution-claim" },
+      { claimId: "first-run", inboxToken: "first-inbox", kind: "turn-execution-claim" },
+      parkResult(),
+    ]);
+
+    await runReceiver([]);
+
+    expect(sendTurnExecutionClaimResultStep).toHaveBeenCalledTimes(2);
+    expect(sendTurnExecutionClaimResultStep).toHaveBeenLastCalledWith({
+      accepted: true,
+      claimId: "first-run",
+      inboxToken: "first-inbox",
+    });
+  });
+
+  it("remembers a claim whose child inbox already closed", async () => {
+    vi.mocked(sendTurnExecutionClaimResultStep)
+      .mockRejectedValueOnce({ name: "HookNotFoundError" })
+      .mockResolvedValueOnce(undefined);
+    installControlHook([
+      { claimId: "closed-run", inboxToken: "closed-inbox", kind: "turn-execution-claim" },
+      { claimId: "replayed-run", inboxToken: "replayed-inbox", kind: "turn-execution-claim" },
+      parkResult(),
+    ]);
+
+    await runReceiver([]);
+
+    expect(sendTurnExecutionClaimResultStep).toHaveBeenLastCalledWith({
+      accepted: false,
+      claimId: "replayed-run",
+      inboxToken: "replayed-inbox",
+    });
   });
 });
 

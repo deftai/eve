@@ -344,6 +344,7 @@ describe("eveChannel — onMessage", () => {
     expect(payload.inputResponses).toEqual([{ requestId: "req-1", optionId: "approve" }]);
     const options = handler.send.mock.calls[0]?.[1] as SendOptions;
     expect(options.auth).toEqual(ACCEPTED_AUTH);
+    expect(options.requireActiveSession).toBe(true);
   });
 
   it("does not run onMessage for inputResponses-only continue requests", async () => {

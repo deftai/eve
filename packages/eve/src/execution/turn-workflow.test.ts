@@ -17,7 +17,10 @@ const createHookMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: (...args: unknown[]) => createHookMock(...args),
-  getWorkflowMetadata: vi.fn(() => ({ url: "https://eve.example.com" })),
+  getWorkflowMetadata: vi.fn(() => ({
+    url: "https://eve.example.com",
+    workflowRunId: "turn-run",
+  })),
 }));
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
@@ -310,6 +313,68 @@ describe("turnWorkflow", () => {
     expect(resumeHookMock.mock.calls[0]?.[1]).toMatchObject({ kind: "turn-error" });
     expect(inbox.dispose).toHaveBeenCalledOnce();
     expect(inbox.createIterator).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the driver to accept its execution claim before running", async () => {
+    const sessionState = createSessionState();
+    installInbox([{ accepted: true, claimId: "turn-run", kind: "turn-execution-claim-result" }]);
+    vi.mocked(turnStep).mockResolvedValueOnce({
+      action: "done",
+      output: "ok",
+      serializedContext: { state: "done" },
+      sessionState,
+    });
+
+    const { input } = createInput({
+      driverCapabilities: { turnClaim: true, turnInbox: true },
+      sessionState,
+    });
+    await turnWorkflow(input);
+
+    expect(resumeHookMock).toHaveBeenNthCalledWith(1, "turn-token", {
+      claimId: "turn-run",
+      inboxToken: "turn-token:inbox",
+      kind: "turn-execution-claim",
+    });
+    expect(resumeHookMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(turnStep).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(turnStep).toHaveBeenCalledOnce();
+  });
+
+  it("does not run a replayed child after the driver rejects its claim", async () => {
+    const inbox = installInbox([
+      { accepted: true, claimId: "original-run", kind: "turn-execution-claim-result" },
+      { accepted: false, claimId: "turn-run", kind: "turn-execution-claim-result" },
+    ]);
+    const { input } = createInput({
+      driverCapabilities: { turnClaim: true, turnInbox: true },
+    });
+
+    await turnWorkflow(input);
+
+    expect(turnStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledOnce();
+    expect(resumeHookMock).toHaveBeenCalledWith("turn-token", {
+      claimId: "turn-run",
+      inboxToken: "turn-token:inbox",
+      kind: "turn-execution-claim",
+    });
+    expect(inbox.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("does not run a replayed child after the prior control hook closes", async () => {
+    const inbox = installInbox([]);
+    resumeHookMock.mockRejectedValueOnce({ name: "HookNotFoundError" });
+    const { input } = createInput({
+      driverCapabilities: { turnClaim: true, turnInbox: true },
+    });
+
+    await turnWorkflow(input);
+
+    expect(turnStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledOnce();
+    expect(inbox.dispose).toHaveBeenCalledOnce();
   });
 
   it("keeps a local subagent result inside one turn workflow", async () => {

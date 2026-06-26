@@ -31,10 +31,11 @@ export interface TurnWorkflowInput {
   readonly capabilities: SessionCapabilities | undefined;
   readonly completionToken: string;
   /**
-   * Additive driver feature negotiation. Older pinned drivers omit this,
-   * which keeps runtime-action orchestration on the legacy entry-owned path.
+   * Additive driver feature negotiation. Newer turn children only use
+   * protocols advertised by the pinned session driver that started them.
    */
   readonly driverCapabilities?: {
+    readonly turnClaim?: true;
     readonly turnInbox?: true;
   };
   readonly mode: RunMode;
@@ -57,7 +58,7 @@ export function createTurnWorkflowInput(input: TurnWorkflowDispatchInput): TurnW
   return {
     capabilities: input.capabilities,
     completionToken: input.completionToken,
-    driverCapabilities: { turnInbox: true },
+    driverCapabilities: { turnClaim: true, turnInbox: true },
     mode: input.mode,
     stepInput: {
       input: input.delivery,

@@ -3,9 +3,10 @@ import { createHook, type Hook } from "#compiled/@workflow/core/index.js";
 import type { DeliverHookPayload } from "#channel/types.js";
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { forwardTurnDeliveryStep } from "#execution/forward-turn-delivery-step.js";
-import { closeHookIterator, disposeHook } from "#execution/hook-ownership.js";
+import { closeHookIterator, disposeHook, isHookNotFoundError } from "#execution/hook-ownership.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import type { SessionDeliveryHook } from "#execution/session-delivery-hook.js";
+import { sendTurnExecutionClaimResultStep } from "#execution/send-turn-execution-claim-result-step.js";
 import { rebuildSerializableError } from "#execution/workflow-errors.js";
 
 type DeliveryRequest = Extract<TurnControlPayload, { readonly kind: "turn-delivery-request" }>;
@@ -16,6 +17,7 @@ export class TurnControlReceiver {
   private readonly control: Hook<TurnControlPayload>;
   private readonly controlIterator: AsyncIterator<TurnControlPayload>;
   private readonly deliveryHook: SessionDeliveryHook;
+  private executionClaimId: string | undefined;
   private pendingControl: Promise<IteratorResult<TurnControlPayload>> | null = null;
 
   constructor(input: {
@@ -74,10 +76,13 @@ export class TurnControlReceiver {
     return this.pendingControl;
   }
 
-  private async nextControl(
-    onClosed: string,
-  ): Promise<
-    Exclude<TurnControlPayload, { readonly kind: "turn-error" | "turn-continuation-token" }>
+  private async nextControl(onClosed: string): Promise<
+    Exclude<
+      TurnControlPayload,
+      {
+        readonly kind: "turn-continuation-token" | "turn-error" | "turn-execution-claim";
+      }
+    >
   > {
     while (true) {
       const next = await this.getControlPromise();
@@ -85,11 +90,37 @@ export class TurnControlReceiver {
       if (next.done) throw new Error(onClosed);
       const payload = next.value;
       if (payload.kind === "turn-error") throw rebuildSerializableError(payload.error);
-      if (payload.kind === "turn-continuation-token") {
-        await this.deliveryHook.rekey(payload.continuationToken);
+      if (payload.kind === "turn-continuation-token" || payload.kind === "turn-execution-claim") {
+        await this.serviceLifecycleControl(payload);
         continue;
       }
       return payload;
+    }
+  }
+
+  private async serviceLifecycleControl(
+    payload: Extract<
+      TurnControlPayload,
+      { readonly kind: "turn-continuation-token" | "turn-execution-claim" }
+    >,
+  ): Promise<void> {
+    if (payload.kind === "turn-continuation-token") {
+      await this.deliveryHook.rekey(payload.continuationToken);
+      return;
+    }
+
+    const accepted =
+      this.executionClaimId === undefined || this.executionClaimId === payload.claimId;
+    this.executionClaimId ??= payload.claimId;
+
+    try {
+      await sendTurnExecutionClaimResultStep({
+        accepted,
+        claimId: payload.claimId,
+        inboxToken: payload.inboxToken,
+      });
+    } catch (error) {
+      if (!isHookNotFoundError(error)) throw error;
     }
   }
 
@@ -117,8 +148,11 @@ export class TurnControlReceiver {
         if (winner.value.done) {
           throw new Error("Turn control hook closed during a delivery request.");
         }
-        if (winner.value.value.kind === "turn-continuation-token") {
-          await this.deliveryHook.rekey(winner.value.value.continuationToken);
+        if (
+          winner.value.value.kind === "turn-continuation-token" ||
+          winner.value.value.kind === "turn-execution-claim"
+        ) {
+          await this.serviceLifecycleControl(winner.value.value);
           continue;
         }
         const terminal = this.readTerminalControl(winner.value.value);
@@ -154,7 +188,7 @@ export class TurnControlReceiver {
         },
       });
     } catch (error) {
-      if (!(error instanceof Error && error.name === "HookNotFoundError")) throw error;
+      if (!isHookNotFoundError(error)) throw error;
     }
 
     return await this.awaitForwardedDelivery(request.requestId, delivery);

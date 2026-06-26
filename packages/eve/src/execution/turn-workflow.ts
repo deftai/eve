@@ -14,6 +14,7 @@ import {
   closeHookIterator,
   disposeHook,
   isHookConflictError,
+  isHookNotFoundError,
 } from "#execution/hook-ownership.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
@@ -69,6 +70,20 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
     } catch (error) {
       if (isHookConflictError(error)) return;
       throw error;
+    }
+
+    if (
+      input.driverCapabilities?.turnClaim === true &&
+      !(await claimTurnExecution({
+        // Claim replies are also at-least-once. The child run id prevents a late
+        // acceptance for the original run from authorizing a replayed child.
+        claimId: getWorkflowMetadata().workflowRunId,
+        cursor,
+        inboxToken: inbox.token,
+        iterator,
+      }))
+    ) {
+      return;
     }
 
     while (true) {
@@ -147,6 +162,32 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
   } finally {
     await closeHookIterator(iterator);
     if (ownsInbox) await disposeHook(inbox);
+  }
+}
+
+async function claimTurnExecution(input: {
+  readonly claimId: string;
+  readonly cursor: TurnExecutionCursor;
+  readonly inboxToken: string;
+  readonly iterator: AsyncIterator<TurnInboxPayload>;
+}): Promise<boolean> {
+  try {
+    await input.cursor.send({
+      claimId: input.claimId,
+      inboxToken: input.inboxToken,
+      kind: "turn-execution-claim",
+    });
+  } catch (error) {
+    if (isHookNotFoundError(error)) return false;
+    throw error;
+  }
+
+  while (true) {
+    const next = await input.iterator.next();
+    if (next.done) throw new Error("Turn inbox closed before its execution claim was resolved.");
+    if (next.value.kind === "turn-execution-claim-result" && next.value.claimId === input.claimId) {
+      return next.value.accepted;
+    }
   }
 }
 

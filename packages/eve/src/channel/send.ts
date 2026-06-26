@@ -23,6 +23,8 @@ export function createSendFn<TState = undefined>(
     const auth = (options as { auth: SessionAuthContext | null }).auth;
     const callback = (options as { callback?: SendOptions<TState>["callback"] }).callback;
     const mode = (options as { mode?: SendOptions<TState>["mode"] }).mode ?? "conversation";
+    const requireActiveSession = (options as { requireActiveSession?: boolean })
+      .requireActiveSession;
     const state = (options as { state?: TState }).state;
     const title = (options as { title?: string }).title;
     const rawToken = (options as { continuationToken: string }).continuationToken;
@@ -47,6 +49,8 @@ export function createSendFn<TState = undefined>(
 
       return createSession(sessionId, rawToken, runtime);
     } catch (error) {
+      if (requireActiveSession === true) throw error;
+
       // No-active-session is the expected resume-or-start signal. The
       // failure itself is logged in `deliver`; this only records the fallback.
       if (!isRuntimeNoActiveSessionError(error)) {
