@@ -42,6 +42,7 @@ import {
 } from "#execution/remote-agent-dispatch.js";
 import { hydrateDurableSession } from "#execution/session.js";
 import { buildSubagentRunInput } from "#execution/subagent-tool.js";
+import { createTurnControlToken, createTurnInboxToken } from "#execution/turn-control-token.js";
 import { createWorkflowRuntime, workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
@@ -119,6 +120,7 @@ export async function dispatchRuntimeActionsStep(input: {
           nextSession = recordPendingSubagentChildToken({
             callId: action.callId,
             childContinuationToken,
+            childTurnInboxToken: createTurnInboxToken(createTurnControlToken(handle.sessionId, 0)),
             session: nextSession,
           });
           childSessionId = handle.sessionId;

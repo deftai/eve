@@ -24,6 +24,7 @@ import { normalizeSerializableError } from "#execution/workflow-errors.js";
 import { createSessionStep } from "#execution/create-session-step.js";
 import { emitTerminalSessionFailureStep } from "#execution/workflow-steps.js";
 import { fireSessionCallbackStep } from "#execution/session-callback-step.js";
+import { createTurnControlToken } from "#execution/turn-control-token.js";
 import { closeHookIterator, disposeHook } from "#execution/hook-ownership.js";
 import {
   createSessionDeliveryHook,
@@ -160,7 +161,7 @@ async function runDriverLoop(input: {
   // turn needs its own session-scoped token.
   let turnDispatchIndex = 0;
   const nextTurnControlToken = (): string =>
-    `${input.sessionState.sessionId}:turn-control:${String(turnDispatchIndex++)}`;
+    createTurnControlToken(input.sessionState.sessionId, turnDispatchIndex++);
 
   const bufferedDeliveries: DeliverHookPayload[] = [];
   const deliveryHook = createSessionDeliveryHook(bufferedDeliveries);

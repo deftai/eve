@@ -1,6 +1,6 @@
 ---
 issue: https://github.com/vercel/eve/issues/216
-last_updated: "2026-06-25"
+last_updated: "2026-06-26"
 status: proposed
 ---
 
@@ -39,6 +39,10 @@ callbacks, and evals.
   its cancellation hook, and passes the controller's serializable `AbortSignal` through the full
   turn execution. A `turnWorkflow` entered through a subagent or recursive agent call accepts the
   inherited signal, creates no controller, and races no cancellation hook of its own.
+- Each pending local child records its deterministic active-turn inbox. Cancellation cascades over
+  those owned inboxes so every turn can cancel its directly owned remote children and settle them
+  through the existing runtime-action result path; inherited turns still create no cancellation
+  hook.
 
 ### Known Workflow issue
 

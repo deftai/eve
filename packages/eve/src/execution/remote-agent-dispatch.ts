@@ -30,7 +30,7 @@ export async function cancelRemoteAgentTurn(input: {
     method: "POST",
   });
 
-  if (!response.ok) {
+  if (!response.ok && response.status !== 409) {
     throw new Error(
       `Remote agent "${input.remote.name}" cancel-turn request failed with HTTP ${response.status}.`,
     );

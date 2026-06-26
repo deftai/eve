@@ -1,8 +1,14 @@
 import { createHook, getWorkflowMetadata } from "#compiled/@workflow/core/index.js";
 
 import type { DeliverHookPayload } from "#channel/types.js";
+import { cancelPendingChildTurnsStep } from "#execution/cancel-pending-child-turns-step.js";
 import { cancelPendingRemoteAgentTurnsStep } from "#execution/cancel-pending-remote-agent-turns-step.js";
-import { sendTurnControlStep, type TurnInboxPayload } from "#execution/turn-control-protocol.js";
+import { createTurnInboxToken } from "#execution/turn-control-token.js";
+import {
+  sendTurnCancellationStep,
+  sendTurnControlStep,
+  type TurnInboxPayload,
+} from "#execution/turn-control-protocol.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import {
@@ -44,7 +50,9 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
 }
 
 async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
-  const inbox = createHook<TurnInboxPayload>({ token: `${input.completionToken}:inbox` });
+  const inbox = createHook<TurnInboxPayload>({
+    token: createTurnInboxToken(input.completionToken),
+  });
   // Hook promises and iterators share one durable cursor. Create the iterator before
   // claiming so conflict replay is consumed by getConflict(), not a later iterator read.
   const iterator = inbox[Symbol.asyncIterator]();
@@ -118,6 +126,15 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
               : undefined;
 
           if (pendingActionKeys !== undefined) {
+            if (abortSignal.aborted) {
+              const cancelled = await finalizeCancelledTurnStep({
+                parentWritable: cursor.parentWritable,
+                serializedContext: result.serializedContext,
+                sessionState: result.sessionState,
+              });
+              return { ...cancelled, action: { kind: "park" as const } };
+            }
+
             await cursor.adopt(result);
             const dispatch =
               result.action === "dispatch-workflow-runtime-actions"
@@ -184,10 +201,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
       inheritedSignal: input.stepInput.abortSignal,
       onCancel: async () => {
         await activeDispatchTransition;
-        await cancelPendingRemoteAgentTurnsStep({
-          serializedContext: cursor.serializedContext,
-          sessionState: cursor.sessionState,
-        });
+        await sendTurnCancellationStep({ inboxToken: inbox.token });
       },
     });
 
@@ -244,6 +258,17 @@ async function waitForRuntimeActionResults(input: {
     if (next.done) throw new Error("Turn inbox closed before runtime actions completed.");
 
     const value = next.value;
+    if (value.kind === "turn-cancel-requested") {
+      results.push(
+        ...(await cancelPendingRemoteAgentTurnsStep({
+          serializedContext: input.cursor.serializedContext,
+          sessionState: input.cursor.sessionState,
+        })),
+      );
+      await cancelPendingChildTurnsStep({ sessionState: input.cursor.sessionState });
+      continue;
+    }
+
     if (value.kind === "runtime-action-result") {
       results.push(...value.results);
       continue;

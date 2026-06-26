@@ -1,4 +1,5 @@
 import type { DeliverHookPayload, HookPayload } from "#channel/types.js";
+import { HookNotFoundError } from "#compiled/@workflow/errors/index.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { resumeHook } from "#internal/workflow/runtime.js";
 
@@ -9,7 +10,8 @@ export type TurnInboxPayload =
       readonly delivery: DeliverHookPayload;
       readonly kind: "driver-delivery";
       readonly requestId: string;
-    };
+    }
+  | { readonly kind: "turn-cancel-requested" };
 
 /** Control payloads emitted from an active turn to its session driver. */
 export type TurnControlPayload =
@@ -37,4 +39,17 @@ export async function sendTurnControlStep(input: {
   "use step";
 
   await resumeHook(input.controlToken, input.payload);
+}
+
+/** Wakes an active turn so it can cancel its pending descendants. */
+export async function sendTurnCancellationStep(input: {
+  readonly inboxToken: string;
+}): Promise<void> {
+  "use step";
+
+  try {
+    await resumeHook(input.inboxToken, { kind: "turn-cancel-requested" });
+  } catch (error) {
+    if (!HookNotFoundError.is(error)) throw error;
+  }
 }

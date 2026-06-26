@@ -32,14 +32,15 @@ interface PendingRuntimeActionEventMetadata {
 /**
  * Serializable pending runtime-action batch stored on `session.state`.
  *
- * `childContinuationTokens` maps each `subagent-call` action's
- * `callId` to the deterministic child token minted by dispatch, so
- * the harness can clear proxy-input entries on result resolution
- * without re-deriving the token (keeps `harness/` runtime-agnostic).
+ * Local child identity maps preserve the continuation and active-turn inbox
+ * tokens minted by dispatch. The harness uses the continuation token to clear
+ * proxy-input state; turn cancellation uses the inbox token to cascade through
+ * the ownership tree without adding child cancellation hooks.
  */
 interface PendingRuntimeActionBatch {
   readonly actions: readonly RuntimeActionRequest[];
   readonly childContinuationTokens?: Readonly<Record<string, string>>;
+  readonly childTurnInboxTokens?: Readonly<Record<string, string>>;
   readonly event: PendingRuntimeActionEventMetadata;
   readonly remoteAgentSessions?: Readonly<
     Record<string, { readonly continuationToken: string; readonly sessionId: string }>
@@ -123,6 +124,7 @@ export function setPendingRuntimeActionBatch(input: {
 export function recordPendingSubagentChildToken(input: {
   readonly callId: string;
   readonly childContinuationToken: string;
+  readonly childTurnInboxToken: string;
   readonly session: HarnessSession;
 }): HarnessSession {
   const batch = getPendingRuntimeActionBatch(input.session.state);
@@ -137,6 +139,10 @@ export function recordPendingSubagentChildToken(input: {
     childContinuationTokens: {
       ...batch.childContinuationTokens,
       [input.callId]: input.childContinuationToken,
+    },
+    childTurnInboxTokens: {
+      ...batch.childTurnInboxTokens,
+      [input.callId]: input.childTurnInboxToken,
     },
   } satisfies PendingRuntimeActionBatch;
 
@@ -214,7 +220,9 @@ export function resolveRuntimeActionResultsForKeys(input: {
       continue;
     }
 
-    resultsByKey.set(key, result);
+    if (!resultsByKey.has(key)) {
+      resultsByKey.set(key, result);
+    }
   }
 
   const orderedResults: RuntimeActionResult[] = [];

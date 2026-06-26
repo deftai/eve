@@ -61,7 +61,7 @@ describe("cancelPendingRemoteAgentTurnsStep", () => {
     } as never);
     vi.mocked(resolveRemoteAgentForAction).mockReturnValue(remote);
 
-    await cancelPendingRemoteAgentTurnsStep({
+    const results = await cancelPendingRemoteAgentTurnsStep({
       serializedContext: { context: "serialized" },
       sessionState: {
         continuationToken: "eve:parent",
@@ -82,6 +82,18 @@ describe("cancelPendingRemoteAgentTurnsStep", () => {
       remote,
       sessionId: "remote-session",
     });
+    expect(results).toEqual([
+      {
+        callId: "call-remote",
+        isError: true,
+        kind: "subagent-result",
+        output: {
+          code: "REMOTE_AGENT_CANCELLED",
+          message: 'Remote agent "research" was cancelled.',
+        },
+        subagentName: "research",
+      },
+    ]);
   });
 });
 

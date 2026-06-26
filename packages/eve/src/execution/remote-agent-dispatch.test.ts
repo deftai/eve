@@ -264,7 +264,7 @@ describe("cancelRemoteAgentTurn", () => {
     );
   });
 
-  it("surfaces a rejected remote cancellation request", async () => {
+  it("treats an already-settled remote turn as cancelled", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(Response.json({ ok: false }, { status: 409 })),
@@ -276,7 +276,22 @@ describe("cancelRemoteAgentTurn", () => {
         remote: createRemoteAgent(),
         sessionId: "remote-session",
       }),
-    ).rejects.toThrow('Remote agent "research" cancel-turn request failed with HTTP 409.');
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces a rejected remote cancellation request", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: false }, { status: 503 })),
+    );
+
+    await expect(
+      cancelRemoteAgentTurn({
+        continuationToken: "eve:remote-turn",
+        remote: createRemoteAgent(),
+        sessionId: "remote-session",
+      }),
+    ).rejects.toThrow('Remote agent "research" cancel-turn request failed with HTTP 503.');
   });
 });
 

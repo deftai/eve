@@ -15,6 +15,7 @@ import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import {
   createCompiledAgentNodeManifest,
+  createCompiledSubagentNodeId,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
@@ -723,6 +724,458 @@ describe("workflowEntry integration", () => {
             expect.objectContaining({
               body: JSON.stringify({
                 continuationToken: "eve:remote-turn",
+                scope: "turn",
+              }),
+              method: "POST",
+            }),
+          );
+          await expect(run.status).resolves.toBe("running");
+        } finally {
+          stream.dispose();
+          await run.cancel();
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("waits for remote dispatch adoption before cancelling the remote turn", async () => {
+    let releaseRemoteCreation!: (response: Response) => void;
+    let signalRemoteStarted!: () => void;
+    let signalRemoteCancelled!: () => void;
+    const remoteCreation = new Promise<Response>((resolve) => {
+      releaseRemoteCreation = resolve;
+    });
+    const remoteStarted = new Promise<void>((resolve) => {
+      signalRemoteStarted = resolve;
+    });
+    const remoteCancelled = new Promise<void>((resolve) => {
+      signalRemoteCancelled = resolve;
+    });
+    const createRemoteResponse = () =>
+      Response.json(
+        {
+          continuationToken: "eve:delayed-remote-turn",
+          sessionId: "delayed-remote-session",
+        },
+        {
+          headers: { "x-eve-session-id": "delayed-remote-session" },
+          status: 202,
+        },
+      );
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url === "https://delayed-remote.example.com/eve/v1/session") {
+        signalRemoteStarted();
+        return await remoteCreation;
+      }
+
+      if (
+        url === "https://delayed-remote.example.com/eve/v1/session/delayed-remote-session/cancel"
+      ) {
+        signalRemoteCancelled();
+        return Response.json({ ok: true }, { status: 202 });
+      }
+
+      throw new Error(`Unexpected delayed remote request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-delayed-remote-cancellation" },
+    });
+    const remoteSourceId = "subagents/delayed_remote.ts";
+    runtime.manifest.remoteAgents.push({
+      description: "Runs a delayed remote cancellation probe.",
+      entryPath: `${runtime.manifest.agentRoot}/${remoteSourceId}`,
+      logicalPath: remoteSourceId,
+      name: "delayed_remote",
+      nodeId: remoteSourceId,
+      path: "/eve/v1/session",
+      rootPath: runtime.manifest.agentRoot,
+      sourceId: remoteSourceId,
+      sourceKind: "module",
+      url: "https://delayed-remote.example.com",
+    });
+    runtime.moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]!.modules[remoteSourceId] = {
+      default: {
+        description: "Runs a delayed remote cancellation probe.",
+        kind: "remote",
+        path: "/eve/v1/session",
+        url: "https://delayed-remote.example.com",
+      },
+    };
+    const continuationToken = "http:workflow-entry-delayed-remote-cancellation";
+
+    try {
+      await runtime.run(async () => {
+        const run = await start(workflowEntry, [
+          {
+            input: {
+              message: 'Use delayed_remote with message "Wait until cancelled before replying."',
+            },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              continuationToken,
+              mode: "conversation",
+            }),
+          },
+        ]);
+        const stream = captureEvents(run);
+
+        try {
+          await withTimeout(remoteStarted, "delayed remote subagent creation");
+          const cancellationHook = await resumeHook(`${continuationToken}:cancel`, {});
+
+          await expect(getRun(cancellationHook.runId).status).resolves.toBe("running");
+          expect(fetchMock).toHaveBeenCalledTimes(1);
+
+          releaseRemoteCreation(createRemoteResponse());
+          await withTimeout(remoteCancelled, "delayed remote subagent cancellation request");
+
+          const cancelledTurn = await stream.nextUntil(
+            "cancelled delayed remote parent turn",
+            (event) => event.type === "session.waiting",
+          );
+          const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+          expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+          expect(cancelledTypes).not.toContain("turn.failed");
+          expect(cancelledTypes).not.toContain("session.failed");
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://delayed-remote.example.com/eve/v1/session/delayed-remote-session/cancel",
+            expect.objectContaining({
+              body: JSON.stringify({
+                continuationToken: "eve:delayed-remote-turn",
+                scope: "turn",
+              }),
+              method: "POST",
+            }),
+          );
+          await getRun(cancellationHook.runId).returnValue;
+          await expect(run.status).resolves.toBe("running");
+        } finally {
+          releaseRemoteCreation(createRemoteResponse());
+          stream.dispose();
+          await run.cancel();
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("cascades cancellation through a local subagent to its remote descendant", async () => {
+    let signalRemoteStarted!: () => void;
+    let signalRemoteCancelled!: () => void;
+    const remoteStarted = new Promise<void>((resolve) => {
+      signalRemoteStarted = resolve;
+    });
+    const remoteCancelled = new Promise<void>((resolve) => {
+      signalRemoteCancelled = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url === "https://nested-remote.example.com/eve/v1/session") {
+        signalRemoteStarted();
+        return Response.json(
+          {
+            continuationToken: "eve:nested-remote-turn",
+            sessionId: "nested-remote-session",
+          },
+          {
+            headers: { "x-eve-session-id": "nested-remote-session" },
+            status: 202,
+          },
+        );
+      }
+
+      if (url === "https://nested-remote.example.com/eve/v1/session/nested-remote-session/cancel") {
+        signalRemoteCancelled();
+        return Response.json({ ok: true }, { status: 202 });
+      }
+
+      throw new Error(`Unexpected nested remote request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-nested-remote-cancellation" },
+    });
+    const childNodeId = "subagents/local_delegate";
+    const childAgentRoot = `${runtime.manifest.agentRoot}/${childNodeId}`;
+    const remoteSourceId = "subagents/blocking_remote.ts";
+    const childAgent = createCompiledAgentNodeManifest({
+      agentRoot: childAgentRoot,
+      appRoot: runtime.manifest.appRoot,
+      config: {
+        model: runtime.manifest.config.model,
+        name: "local_delegate",
+      },
+      remoteAgents: [
+        {
+          description: "Runs a nested remote cancellation probe.",
+          entryPath: `${childAgentRoot}/${remoteSourceId}`,
+          logicalPath: remoteSourceId,
+          name: "blocking_remote",
+          nodeId: remoteSourceId,
+          path: "/eve/v1/session",
+          rootPath: childAgentRoot,
+          sourceId: remoteSourceId,
+          sourceKind: "module",
+          url: "https://nested-remote.example.com",
+        },
+      ],
+    });
+    runtime.manifest.subagents.push({
+      agent: childAgent,
+      description: "Delegates to a blocking remote agent.",
+      entryPath: childNodeId,
+      logicalPath: `${childNodeId}/agent.ts`,
+      name: "local_delegate",
+      nodeId: childNodeId,
+      rootPath: childAgentRoot,
+      sourceId: `${childNodeId}/agent.ts`,
+      sourceKind: "module",
+    });
+    runtime.manifest.subagentEdges.push({
+      childNodeId,
+      parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
+    });
+    runtime.moduleMap.nodes[childNodeId] = {
+      modules: {
+        [remoteSourceId]: {
+          default: {
+            description: "Runs a nested remote cancellation probe.",
+            kind: "remote",
+            path: "/eve/v1/session",
+            url: "https://nested-remote.example.com",
+          },
+        },
+      },
+    };
+    const continuationToken = "http:workflow-entry-nested-remote-cancellation";
+
+    try {
+      await runtime.run(async () => {
+        const run = await start(workflowEntry, [
+          {
+            input: {
+              message:
+                'Use local_delegate with message "Use blocking_remote and wait for its result."',
+            },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              continuationToken,
+              mode: "conversation",
+            }),
+          },
+        ]);
+        const stream = captureEvents(run);
+
+        try {
+          await withTimeout(remoteStarted, "nested remote subagent creation");
+          await resumeHook(`${continuationToken}:cancel`, {});
+          await withTimeout(remoteCancelled, "nested remote subagent cancellation request");
+
+          const cancelledTurn = await stream.nextUntil(
+            "cancelled nested-remote parent turn",
+            (event) => event.type === "session.waiting",
+          );
+          const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+          expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+          expect(cancelledTypes).not.toContain("turn.failed");
+          expect(cancelledTypes).not.toContain("session.failed");
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://nested-remote.example.com/eve/v1/session/nested-remote-session/cancel",
+            expect.objectContaining({
+              body: JSON.stringify({
+                continuationToken: "eve:nested-remote-turn",
+                scope: "turn",
+              }),
+              method: "POST",
+            }),
+          );
+          await expect(run.status).resolves.toBe("running");
+        } finally {
+          stream.dispose();
+          await run.cancel();
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("cascades cancellation through multiple local subagents to a remote descendant", async () => {
+    let signalRemoteStarted!: () => void;
+    let signalRemoteCancelled!: () => void;
+    const remoteStarted = new Promise<void>((resolve) => {
+      signalRemoteStarted = resolve;
+    });
+    const remoteCancelled = new Promise<void>((resolve) => {
+      signalRemoteCancelled = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url === "https://deeply-nested-remote.example.com/eve/v1/session") {
+        signalRemoteStarted();
+        return Response.json(
+          {
+            continuationToken: "eve:deeply-nested-remote-turn",
+            sessionId: "deeply-nested-remote-session",
+          },
+          {
+            headers: { "x-eve-session-id": "deeply-nested-remote-session" },
+            status: 202,
+          },
+        );
+      }
+
+      if (
+        url ===
+        "https://deeply-nested-remote.example.com/eve/v1/session/deeply-nested-remote-session/cancel"
+      ) {
+        signalRemoteCancelled();
+        return Response.json({ ok: true }, { status: 202 });
+      }
+
+      throw new Error(`Unexpected deeply nested remote request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-deeply-nested-remote-cancellation" },
+    });
+    const localDelegateNodeId = "subagents/local_delegate";
+    const localDelegateRoot = `${runtime.manifest.agentRoot}/${localDelegateNodeId}`;
+    const deepDelegateSourceId = "subagents/deep_delegate";
+    const deepDelegateNodeId = createCompiledSubagentNodeId(
+      localDelegateNodeId,
+      deepDelegateSourceId,
+    );
+    const deepDelegateRoot = `${localDelegateRoot}/${deepDelegateSourceId}`;
+    const remoteSourceId = "subagents/blocking_remote.ts";
+    const localDelegateAgent = createCompiledAgentNodeManifest({
+      agentRoot: localDelegateRoot,
+      appRoot: runtime.manifest.appRoot,
+      config: {
+        model: runtime.manifest.config.model,
+        name: "local_delegate",
+      },
+    });
+    const deepDelegateAgent = createCompiledAgentNodeManifest({
+      agentRoot: deepDelegateRoot,
+      appRoot: runtime.manifest.appRoot,
+      config: {
+        model: runtime.manifest.config.model,
+        name: "deep_delegate",
+      },
+      remoteAgents: [
+        {
+          description: "Runs a deeply nested remote cancellation probe.",
+          entryPath: `${deepDelegateRoot}/${remoteSourceId}`,
+          logicalPath: remoteSourceId,
+          name: "blocking_remote",
+          nodeId: remoteSourceId,
+          path: "/eve/v1/session",
+          rootPath: deepDelegateRoot,
+          sourceId: remoteSourceId,
+          sourceKind: "module",
+          url: "https://deeply-nested-remote.example.com",
+        },
+      ],
+    });
+    runtime.manifest.subagents.push(
+      {
+        agent: localDelegateAgent,
+        description: "Delegates to another local agent.",
+        entryPath: localDelegateNodeId,
+        logicalPath: localDelegateNodeId,
+        name: "local_delegate",
+        nodeId: localDelegateNodeId,
+        rootPath: localDelegateRoot,
+        sourceId: localDelegateNodeId,
+        sourceKind: "module",
+      },
+      {
+        agent: deepDelegateAgent,
+        description: "Delegates to a blocking remote agent.",
+        entryPath: deepDelegateSourceId,
+        logicalPath: deepDelegateSourceId,
+        name: "deep_delegate",
+        nodeId: deepDelegateNodeId,
+        rootPath: deepDelegateRoot,
+        sourceId: deepDelegateSourceId,
+        sourceKind: "module",
+      },
+    );
+    runtime.manifest.subagentEdges.push(
+      {
+        childNodeId: localDelegateNodeId,
+        parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
+      },
+      {
+        childNodeId: deepDelegateNodeId,
+        parentNodeId: localDelegateNodeId,
+      },
+    );
+    runtime.moduleMap.nodes[localDelegateNodeId] = { modules: {} };
+    runtime.moduleMap.nodes[deepDelegateNodeId] = {
+      modules: {
+        [remoteSourceId]: {
+          default: {
+            description: "Runs a deeply nested remote cancellation probe.",
+            kind: "remote",
+            path: "/eve/v1/session",
+            url: "https://deeply-nested-remote.example.com",
+          },
+        },
+      },
+    };
+    const continuationToken = "http:workflow-entry-deeply-nested-remote-cancellation";
+
+    try {
+      await runtime.run(async () => {
+        const run = await start(workflowEntry, [
+          {
+            input: {
+              message:
+                'Use local_delegate with message "Use deep_delegate with message Use blocking_remote and wait for its result."',
+            },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              continuationToken,
+              mode: "conversation",
+            }),
+          },
+        ]);
+        const stream = captureEvents(run);
+
+        try {
+          await withTimeout(remoteStarted, "deeply nested remote subagent creation");
+          await resumeHook(`${continuationToken}:cancel`, {});
+          await withTimeout(remoteCancelled, "deeply nested remote subagent cancellation request");
+
+          const cancelledTurn = await stream.nextUntil(
+            "cancelled deeply nested remote parent turn",
+            (event) => event.type === "session.waiting",
+          );
+          const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+          expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+          expect(cancelledTypes).not.toContain("turn.failed");
+          expect(cancelledTypes).not.toContain("session.failed");
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://deeply-nested-remote.example.com/eve/v1/session/deeply-nested-remote-session/cancel",
+            expect.objectContaining({
+              body: JSON.stringify({
+                continuationToken: "eve:deeply-nested-remote-turn",
                 scope: "turn",
               }),
               method: "POST",

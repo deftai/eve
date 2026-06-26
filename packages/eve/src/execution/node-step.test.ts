@@ -62,7 +62,7 @@ function setupMockAgentForToolExecution(toolName: string, args: unknown): void {
             {
               execute: (
                 input: unknown,
-                options: { readonly toolCallId: string },
+                options: { readonly abortSignal: AbortSignal; readonly toolCallId: string },
               ) => Promise<unknown>;
             }
           >;
@@ -74,7 +74,10 @@ function setupMockAgentForToolExecution(toolName: string, args: unknown): void {
         throw new Error(`Missing test tool "${toolName}".`);
       }
 
-      const output = await tool.execute(args, { toolCallId: `call-${toolName}` });
+      const output = await tool.execute(args, {
+        abortSignal: new AbortController().signal,
+        toolCallId: `call-${toolName}`,
+      });
 
       const result = {
         finishReason: "stop",
@@ -262,6 +265,7 @@ describe("createExecutionNodeStep", () => {
       nodeId: undefined,
     };
     const step = createExecutionNodeStep({
+      abortSignal: new AbortController().signal,
       createRuntime: () => createNoopRuntime(),
       mode: "task",
       modelResolutionScope,
