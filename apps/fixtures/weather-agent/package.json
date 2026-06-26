@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@vercel/connect": "0.2.2",
     "eve": "workspace:*",
     "zod": "catalog:"
   }

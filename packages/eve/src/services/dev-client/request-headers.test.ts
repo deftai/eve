@@ -1,11 +1,19 @@
 import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { readVercelProjectLink } from "#internal/vercel/project-link.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveDevelopmentOidcToken } from "./request-headers.js";
+import {
+  resolveDevelopmentOidcToken,
+  resolveLinkedDevelopmentOidcToken,
+} from "./request-headers.js";
 
 vi.mock("#compiled/@vercel/oidc/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("#compiled/@vercel/oidc/index.js")>()),
   getVercelOidcToken: vi.fn(),
+}));
+
+vi.mock("#internal/vercel/project-link.js", () => ({
+  readVercelProjectLink: vi.fn(),
 }));
 
 const target = { ownerId: "team_expected", projectId: "prj_expected" } as const;
@@ -16,6 +24,7 @@ function token(claims: Record<string, string>): string {
 
 afterEach(() => {
   vi.mocked(getVercelOidcToken).mockReset();
+  vi.mocked(readVercelProjectLink).mockReset();
 });
 
 describe("resolveDevelopmentOidcToken", () => {
@@ -97,5 +106,29 @@ describe("resolveDevelopmentOidcToken", () => {
       kind: "resolution-failed",
       message: "refresh failed",
     });
+  });
+});
+
+describe("resolveLinkedDevelopmentOidcToken", () => {
+  it("uses the current local project link to resolve the request bearer", async () => {
+    vi.mocked(readVercelProjectLink).mockResolvedValue({
+      orgId: target.ownerId,
+      projectId: target.projectId,
+    });
+    const expected = token({ owner_id: target.ownerId, project_id: target.projectId });
+    vi.mocked(getVercelOidcToken).mockResolvedValue(expected);
+
+    await expect(resolveLinkedDevelopmentOidcToken("/workspace")).resolves.toBe(expected);
+    expect(getVercelOidcToken).toHaveBeenCalledWith({
+      team: target.ownerId,
+      project: target.projectId,
+    });
+  });
+
+  it("does not send a bearer when the local directory is unlinked", async () => {
+    vi.mocked(readVercelProjectLink).mockResolvedValue(undefined);
+
+    await expect(resolveLinkedDevelopmentOidcToken("/workspace")).resolves.toBe("");
+    expect(getVercelOidcToken).not.toHaveBeenCalled();
   });
 });

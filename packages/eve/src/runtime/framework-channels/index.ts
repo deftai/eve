@@ -1,4 +1,11 @@
-import { localDev, vercelOidc } from "#public/channels/auth.js";
+import { readVercelProjectLink } from "#internal/vercel/project-link.js";
+import {
+  extractBearerToken,
+  isLoopbackRequest,
+  localDev,
+  vercelOidc,
+  type AuthFn,
+} from "#public/channels/auth.js";
 import { eveChannel } from "#public/channels/eve.js";
 import type { CompiledChannel } from "#channel/compiled-channel.js";
 import { isHttpRouteDefinition } from "#channel/routes.js";
@@ -15,15 +22,16 @@ import type { ResolvedChannelDefinition } from "#runtime/types.js";
 const EVE_CHANNEL_NAME = "eve";
 
 /**
- * Framework default for the eve channel. Mirrors verbatim the scaffold
- * written by eve into `agent/channels/eve.ts`, so the
- * behavior of "no authored file" and "scaffolded file untouched" is
- * byte-identical — and the local-dev / Vercel branching lives in a
- * single named helper (`localDev`) instead of an env check buried in
- * the framework.
+ * Framework default for the eve channel. When the runtime knows the app root,
+ * local development binds an incoming Vercel OIDC token to that directory's
+ * current Vercel project link before falling back to unauthenticated loopback.
  */
-export function getFrameworkChannelDefinitions(): readonly ResolvedChannelDefinition[] {
-  const compiled = eveChannel({ auth: [localDev(), vercelOidc()] }) as CompiledChannel;
+export function getFrameworkChannelDefinitions(
+  input: { readonly appRoot?: string } = {},
+): readonly ResolvedChannelDefinition[] {
+  const compiled = eveChannel({
+    auth: [createFrameworkVercelOidc(input.appRoot), localDev()],
+  }) as CompiledChannel;
 
   const result: ResolvedChannelDefinition[] = [];
 
@@ -50,6 +58,35 @@ export function getFrameworkChannelDefinitions(): readonly ResolvedChannelDefini
   );
 
   return result;
+}
+
+function createFrameworkVercelOidc(appRoot: string | undefined): AuthFn<Request> {
+  const defaultVercelOidc = vercelOidc();
+  if (appRoot === undefined) return defaultVercelOidc;
+
+  return async (request) => {
+    if (!isLocalDevelopmentRequest(request)) return await defaultVercelOidc(request);
+    if (extractBearerToken(request.headers.get("authorization")) === null) return null;
+
+    const link = await readVercelProjectLink(appRoot);
+    if (link === undefined) return await defaultVercelOidc(request);
+
+    const auth = await vercelOidc({
+      currentVercelProject: {
+        environment: "development",
+        projectId: link.projectId,
+      },
+    })(request);
+    return auth?.principalType === "user" ? auth : null;
+  };
+}
+
+function isLocalDevelopmentRequest(request: Request): boolean {
+  if (process.env.VERCEL_ENV === "development") return true;
+  if (process.env.VERCEL_ENV === "preview" || process.env.VERCEL_ENV === "production") {
+    return false;
+  }
+  return isLoopbackRequest(request);
 }
 
 export function getAllFrameworkChannelNames(): ReadonlySet<string> {

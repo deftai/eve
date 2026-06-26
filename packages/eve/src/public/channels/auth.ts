@@ -268,6 +268,7 @@ export async function verifyOidc(
   const result = await runOidcVerification(token, {
     ...config,
     acceptCurrentVercelProject: false,
+    currentVercelProject: undefined,
   });
   return result.kind === "authenticated"
     ? { ok: true, sessionAuth: createRuntimeSessionAuthContext(result.principal) }
@@ -284,13 +285,16 @@ export async function verifyOidc(
  */
 async function runOidcVerification(
   token: string | null,
-  config: VerifyOidcConfig & { readonly acceptCurrentVercelProject: boolean },
+  config: VerifyOidcConfig & {
+    readonly acceptCurrentVercelProject: boolean;
+    readonly currentVercelProject: ResolvedOidcAuthStrategy["currentVercelProject"] | undefined;
+  },
 ): Promise<RouteStrategyAuthenticationResult> {
   if (token === null || token.length === 0) {
     return { kind: "not-authenticated" };
   }
 
-  const strategy: ResolvedOidcAuthStrategy = {
+  const baseStrategy = {
     acceptCurrentVercelProject: config.acceptCurrentVercelProject,
     audiences: [...config.audiences],
     clockSkewSeconds: config.clockSkewSeconds ?? 30,
@@ -300,7 +304,11 @@ async function runOidcVerification(
     kind: "oidc",
     ...(config.claims === undefined ? {} : { claims: config.claims }),
     ...(config.subjects === undefined ? {} : { subjects: config.subjects }),
-  };
+  } satisfies ResolvedOidcAuthStrategy;
+  const strategy =
+    config.currentVercelProject === undefined
+      ? baseStrategy
+      : { ...baseStrategy, currentVercelProject: config.currentVercelProject };
 
   return await authenticateOidcStrategy({ strategy, token });
 }
@@ -627,7 +635,8 @@ const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "[::1]"]);
  */
 const LOOPBACK_IPV4_PREFIX = /^127\./;
 
-function isLoopbackRequest(request: Request): boolean {
+/** Returns whether a request URL names a loopback host accepted by {@link localDev}. */
+export function isLoopbackRequest(request: Request): boolean {
   let hostname: string;
   try {
     hostname = new URL(request.url).hostname;
@@ -680,6 +689,15 @@ const VERCEL_OIDC_AUDIENCE_PREFIX = "https://vercel.com/";
  */
 export interface VerifyVercelOidcOptions {
   /**
+   * Explicit current-project binding for the verified token. When omitted,
+   * the verifier reads `VERCEL_PROJECT_ID` and `VERCEL_TARGET_ENV` /
+   * `VERCEL_ENV` from the runtime environment.
+   */
+  readonly currentVercelProject?: {
+    readonly environment?: string;
+    readonly projectId: string;
+  };
+  /**
    * Optional `sub` patterns granting callers access on top of the always-on
    * current-project bypass. Patterns use AWS IAM-style `*` wildcards and may
    * target tokens minted by other Vercel projects (e.g.
@@ -694,16 +712,19 @@ export interface VerifyVercelOidcOptions {
  *
  * Acceptance rule:
  *
- * - Tokens whose `project_id` matches `VERCEL_PROJECT_ID` are **always**
+ * - Tokens whose `project_id` matches the configured current project are **always**
  *   accepted regardless of `subjects`, so the deployment's own runtime
  *   callers (subagent, internal fetches) authenticate without being
  *   enumerated.
  * - Tokens with an `external_sub` claim authenticate as
- *   `principalType: "user"` when they match the current `VERCEL_PROJECT_ID`
- *   (if set) and `VERCEL_TARGET_ENV` / `VERCEL_ENV` (if set). `external_sub`
+ *   `principalType: "user"` when they match the configured current project
+ *   and environment. `external_sub`
  *   becomes the eve subject, `external_iss` or `connector_id` the eve issuer
  *   when present, and string-valued OIDC profile claims (`name`, `picture`,
  *   `email`) are exposed as auth attributes.
+ * - Development tokens with a `user_id` claim authenticate as
+ *   `principalType: "user"` only when both the token and configured current
+ *   project environment are `development`.
  * - Tokens from other Vercel projects are accepted **only** when their `sub`
  *   matches one of {@link VerifyVercelOidcOptions.subjects}.
  *
@@ -751,13 +772,15 @@ export async function verifyVercelOidc(
   }
 
   // `acceptCurrentVercelProject: true` activates the same-project bypass
-  // inside the OIDC verifier so any token minted for `VERCEL_PROJECT_ID`
+  // inside the OIDC verifier so any token minted for the configured project
   // is accepted regardless of `subjects`. The supplied `subjects`
   // matcher (defaulting to an empty list that matches nothing)
   // determines which **other** callers are allowed in.
+  const currentVercelProject = resolveCurrentVercelProject(opts);
   const result = await runOidcVerification(token, {
     acceptCurrentVercelProject: true,
     audiences: claims.audiences,
+    currentVercelProject,
     issuer: claims.issuer,
     subjects: opts.subjects ?? [],
   });
@@ -779,6 +802,20 @@ export async function verifyVercelOidc(
     ...(result.kind === "misconfigured" ? { detail: result.message } : {}),
   });
   return { ok: false };
+}
+
+function resolveCurrentVercelProject(
+  opts: VerifyVercelOidcOptions,
+): NonNullable<ResolvedOidcAuthStrategy["currentVercelProject"]> | undefined {
+  if (opts.currentVercelProject !== undefined) return opts.currentVercelProject;
+
+  const projectId = process.env.VERCEL_PROJECT_ID?.trim();
+  if (projectId === undefined || projectId.length === 0) return undefined;
+
+  const environment = process.env.VERCEL_TARGET_ENV?.trim() || process.env.VERCEL_ENV?.trim();
+  return environment === undefined || environment.length === 0
+    ? { projectId }
+    : { environment, projectId };
 }
 
 /**

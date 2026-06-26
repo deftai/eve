@@ -39,6 +39,8 @@ import type {
  * into a runtime-owned recursive agent graph.
  */
 interface ResolveRuntimeAgentGraphInput {
+  /** Authored app root used by framework features when manifests point at a dev snapshot. */
+  readonly frameworkAppRoot?: string;
   manifest: CompiledAgentManifest;
   moduleMap: CompiledModuleMap;
 }
@@ -91,6 +93,7 @@ export async function resolveRuntimeAgentGraph(
   );
   const root = await resolveRuntimeAgentNode({
     childNodeIdsByParentNodeId,
+    frameworkAppRoot: input.frameworkAppRoot,
     manifest: input.manifest,
     moduleMap: input.moduleMap,
     nodeId: ROOT_COMPILED_AGENT_NODE_ID,
@@ -106,6 +109,7 @@ export async function resolveRuntimeAgentGraph(
 
 interface ResolveRuntimeAgentNodeInput {
   readonly childNodeIdsByParentNodeId: ReadonlyMap<string, readonly string[]>;
+  readonly frameworkAppRoot?: string;
   readonly manifest: CompiledAgentNodeManifest;
   readonly moduleMap: CompiledModuleMap;
   readonly nodeId: string;
@@ -198,7 +202,9 @@ async function resolveRuntimeAgentNode(
   }
 
   const disabledFrameworkChannels = new Set(agent.disabledFrameworkChannels);
-  const activeFrameworkChannels = getFrameworkChannelDefinitions().filter(
+  const activeFrameworkChannels = getFrameworkChannelDefinitions({
+    appRoot: input.frameworkAppRoot ?? agent.metadata.appRoot,
+  }).filter(
     (channel) =>
       !authoredChannelNames.has(channel.name) && !disabledFrameworkChannels.has(channel.name),
   );
@@ -218,6 +224,7 @@ async function resolveRuntimeAgentNode(
     ],
     subagents: await resolveRuntimeSubagents({
       childNodeIdsByParentNodeId: input.childNodeIdsByParentNodeId,
+      frameworkAppRoot: input.frameworkAppRoot,
       manifest: input.manifest,
       moduleMap: input.moduleMap,
       nodesByNodeId: input.nodesByNodeId,
@@ -255,6 +262,7 @@ async function resolveRuntimeAgentNode(
 
 async function resolveRuntimeSubagents(input: {
   readonly childNodeIdsByParentNodeId: ReadonlyMap<string, readonly string[]>;
+  readonly frameworkAppRoot?: string;
   readonly manifest: CompiledAgentNodeManifest;
   readonly moduleMap: CompiledModuleMap;
   readonly nodesByNodeId: Map<string, ResolvedAgentGraphBundle["root"]>;
@@ -280,6 +288,7 @@ async function resolveRuntimeSubagents(input: {
     resolvedSubagents.push(
       await resolveRuntimeSubagent({
         childNodeIdsByParentNodeId: input.childNodeIdsByParentNodeId,
+        frameworkAppRoot: input.frameworkAppRoot,
         moduleMap: input.moduleMap,
         nodesByNodeId: input.nodesByNodeId,
         sourceRef,
@@ -303,6 +312,7 @@ async function resolveRuntimeSubagents(input: {
 
 async function resolveRuntimeSubagent(input: {
   readonly childNodeIdsByParentNodeId: ReadonlyMap<string, readonly string[]>;
+  readonly frameworkAppRoot?: string;
   readonly moduleMap: CompiledModuleMap;
   readonly nodesByNodeId: Map<string, ResolvedAgentGraphBundle["root"]>;
   readonly sourceRef: CompiledSubagentNode;
@@ -319,6 +329,7 @@ async function resolveRuntimeSubagent(input: {
   };
   await resolveRuntimeAgentNode({
     childNodeIdsByParentNodeId: input.childNodeIdsByParentNodeId,
+    frameworkAppRoot: input.frameworkAppRoot,
     manifest: input.sourceRef.agent,
     moduleMap: input.moduleMap,
     nodeId: input.sourceRef.nodeId,

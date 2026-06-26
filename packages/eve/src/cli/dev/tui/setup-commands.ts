@@ -70,7 +70,7 @@ export interface TuiSetupCommandResult {
   /** Keep warning/error lines after the bordered panel closes. */
   preserveFlowDiagnostics: boolean;
   /** Status refresh required after the command settles. */
-  effect?: VercelStatusEffect | { kind: "model-access-changed" };
+  effect?: VercelStatusEffect | { kind: "connection-added" } | { kind: "model-access-changed" };
 }
 
 /**
@@ -255,7 +255,10 @@ async function executeSetupCommand(
                   ? `/connect failed: ${result.message}`
                   : `Connection files changed, but /connect failed: ${result.message}`,
               preserveFlowDiagnostics: true,
-              effect: { kind: "model-access-changed" },
+              effect:
+                result.addedConnections.length === 0
+                  ? { kind: "model-access-changed" }
+                  : { kind: "connection-added" },
             };
           case "done":
             return {
@@ -264,7 +267,10 @@ async function executeSetupCommand(
                   ? "No connections added."
                   : `Connections added: ${result.addedConnections.join(", ")}.`,
               preserveFlowDiagnostics: true,
-              effect: { kind: "model-access-changed" },
+              effect:
+                result.addedConnections.length === 0
+                  ? { kind: "model-access-changed" }
+                  : { kind: "connection-added" },
             };
         }
       }

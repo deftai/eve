@@ -331,27 +331,35 @@ describe("runTuiSetupCommand", () => {
       "configured",
       { kind: "done", addedConnections: ["linear", "notion"] },
       "Connections added: linear, notion.",
+      { kind: "connection-added" },
     ],
-    ["empty", { kind: "done", addedConnections: [] }, "No connections added."],
-    ["cancelled", { kind: "cancelled" }, "/connect cancelled."],
+    [
+      "empty",
+      { kind: "done", addedConnections: [] },
+      "No connections added.",
+      { kind: "model-access-changed" },
+    ],
+    ["cancelled", { kind: "cancelled" }, "/connect cancelled.", { kind: "model-access-changed" }],
     [
       "partially failed",
       { kind: "failed", addedConnections: ["linear"], message: "install failed" },
       "Connection files changed, but /connect failed: install failed",
+      { kind: "connection-added" },
     ],
     [
       "failed before a connection file was written",
       { kind: "failed", addedConnections: [], message: "connector setup failed" },
       "/connect failed: connector setup failed",
+      { kind: "model-access-changed" },
     ],
-  ] as const)("reports %s connection flows", async (_case, result, message) => {
+  ] as const)("reports %s connection flows", async (_case, result, message, effect) => {
     const runConnectionsFlow = vi.fn(async () => result);
     await expect(
       run({ command: "connect", flows: fakeFlows({ runConnectionsFlow }) }),
     ).resolves.toEqual({
       message,
       preserveFlowDiagnostics: true,
-      effect: { kind: "model-access-changed" },
+      effect,
     });
     expect(runConnectionsFlow).toHaveBeenCalledWith(expect.objectContaining({ appRoot: APP_ROOT }));
   });

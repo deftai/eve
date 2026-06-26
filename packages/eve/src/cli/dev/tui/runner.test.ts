@@ -1680,6 +1680,46 @@ describe("EveTUIRunner Vercel status line", () => {
     expect(info).toHaveBeenCalledTimes(2);
   });
 
+  it("forces a runtime rebuild after /connect adds a connection", async () => {
+    const client = stubClient();
+    vi.spyOn(client, "info").mockResolvedValue(AGENT_INFO);
+    const requests: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        const url = new URL(
+          typeof input === "string" ? input : input instanceof URL ? input : input.url,
+        );
+        requests.push(url);
+        return Response.json({ revision: url.searchParams.get("force") === "1" ? "next" : "base" });
+      }),
+    );
+    const prompts: Array<string | undefined> = ["/connect", undefined];
+    const renderer = fakeRenderer({ readPrompt: vi.fn(async () => prompts.shift()) });
+    const connectOutcome = {
+      message: "Connections added: linear.",
+      effect: { kind: "connection-added" },
+    } satisfies PromptCommandOutcome;
+
+    const runner = new EveTUIRunner({
+      session: stubSession(),
+      client,
+      renderer,
+      serverUrl: "http://localhost:3000",
+      name: "Weather Agent",
+      promptCommandHandler: { handle: async () => connectOutcome },
+    });
+    await runner.run();
+
+    expect(
+      requests.some(
+        (url) =>
+          url.pathname === "/eve/v1/dev/runtime-artifacts/rebuild" &&
+          url.searchParams.get("force") === "1",
+      ),
+    ).toBe(true);
+  });
+
   it("never pushes Vercel status for a remote --url session", async () => {
     const setVercelStatus = vi.fn();
     const renderer = fakeRenderer({ setVercelStatus });

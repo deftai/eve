@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { readVercelProjectLink } from "#internal/vercel/project-link.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { z } from "zod";
 
@@ -58,6 +59,18 @@ export async function resolveDevelopmentOidcToken(
   } catch (error) {
     return { kind: "resolution-failed", message: toErrorMessage(error) };
   }
+}
+
+/** Resolves the current linked project's Vercel OIDC token for a local TUI request. */
+export async function resolveLinkedDevelopmentOidcToken(workspaceRoot: string): Promise<string> {
+  const link = await readVercelProjectLink(workspaceRoot);
+  if (link === undefined) return "";
+
+  const result = await resolveDevelopmentOidcToken({
+    ownerId: link.orgId,
+    projectId: link.projectId,
+  });
+  return result.kind === "resolved" ? result.token : "";
 }
 
 function validateDevelopmentOidcToken(

@@ -12,6 +12,7 @@ import { createApplicationNitro } from "#internal/nitro/host/create-application-
 import { createNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
 import type { AuthoredSourceWatcherHandle } from "#internal/nitro/host/dev-authored-source-watcher.js";
 import { prepareApplicationHost } from "#internal/nitro/host/prepare-application-host.js";
+import { handleDevRuntimeArtifactsRequest } from "#internal/nitro/routes/dev-runtime-artifacts.js";
 import { resolveNitroCompiledArtifactsSource } from "#internal/nitro/routes/runtime-artifacts.js";
 import {
   pruneLocalSandboxTemplatesInBackground,
@@ -37,6 +38,7 @@ import {
 import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
 import { eveDevArguments } from "#setup/primitives/index.js";
 import { devBootPhase } from "#internal/dev-boot-progress.js";
+import { EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH } from "#protocol/routes.js";
 
 const MAX_ALLOWED_DEVELOPMENT_SERVER_PORT = 65_535;
 const WORKFLOW_LOCAL_BASE_URL_ENV = "WORKFLOW_LOCAL_BASE_URL";
@@ -89,6 +91,34 @@ function isAddressInUseError(error: unknown): error is NodeJS.ErrnoException {
 
 type NitroDevelopmentServer = ReturnType<typeof createDevServer>;
 type NitroDevelopmentServerUpgrade = NitroDevelopmentServer["upgrade"];
+
+function addDevelopmentRuntimeArtifactsRebuildHandler(input: {
+  readonly appRoot: string;
+  readonly getWatcher: () => AuthoredSourceWatcherHandle | undefined;
+  readonly nitro: Nitro;
+}): void {
+  input.nitro.options.devHandlers.push({
+    handler: async (event) => {
+      const watcher = input.getWatcher();
+      if (watcher === undefined) {
+        return Response.json(
+          { error: "Development source watcher is not ready." },
+          { status: 503 },
+        );
+      }
+
+      if (new URL(event.req.url).searchParams.get("force") === "1") {
+        await watcher.rebuild();
+      } else {
+        await watcher.flush();
+      }
+
+      return handleDevRuntimeArtifactsRequest({ appRoot: input.appRoot });
+    },
+    method: "POST",
+    route: EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH,
+  });
+}
 
 function resolveDevelopmentServerPort(port: number | string | undefined): number {
   const resolvedPort =
@@ -235,6 +265,27 @@ async function readActiveDevelopmentProcess(
     processId,
     url: metadata?.processId === processId ? metadata.url : undefined,
   };
+}
+
+/**
+ * Returns whether `serverUrl` identifies this app's live local development
+ * server. The PID and URL must both match the metadata written at startup.
+ */
+export async function isActiveDevelopmentServerForApp(input: {
+  readonly appRoot: string;
+  readonly serverUrl: string;
+}): Promise<boolean> {
+  const activeProcess = await readActiveDevelopmentProcess(input.appRoot);
+  if (activeProcess?.url === undefined) return false;
+
+  try {
+    return (
+      new URL(activeProcess.url).origin ===
+      new URL(normalizeDevelopmentServerClientUrl(input.serverUrl)).origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function detectDevelopmentCommandPackageManager(
@@ -509,6 +560,11 @@ export async function startDevelopmentServer(
       options.onBootProgress,
     );
     nitro = activeNitro;
+    addDevelopmentRuntimeArtifactsRebuildHandler({
+      appRoot: preparedHost.appRoot,
+      getWatcher: () => authoredSourceWatcher,
+      nitro: activeNitro,
+    });
     devServer = createDevServer(activeNitro);
     const activeDevServer = devServer;
     guardDevelopmentServerWebSocketUpgrades(activeNitro, devServer);

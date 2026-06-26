@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   const authoredSourceWatcher = {
     close: vi.fn(async () => undefined),
     flush: vi.fn(async () => undefined),
+    rebuild: vi.fn(async () => undefined),
   };
   const listenerServer = {
     close: vi.fn(async () => undefined),
@@ -21,10 +22,16 @@ const mocks = vi.hoisted(() => {
     upgrade: vi.fn(async (_req: unknown, _socket: unknown, _head: unknown) => undefined),
   };
   const files = new Map<string, string>();
+  const devHandlers: Array<{
+    handler: (event: { readonly req: { readonly url: string } }) => Promise<Response>;
+    method?: string;
+    route?: string;
+  }> = [];
   const nitro = {
     close: vi.fn(async () => undefined),
     options: {
       buildDir: "/tmp/eve-test/.eve/nitro",
+      devHandlers,
       devServer: {
         hostname: "127.0.0.1",
         port: 0,
@@ -41,6 +48,9 @@ const mocks = vi.hoisted(() => {
     createDevServer: vi.fn(() => devServer),
     devServer,
     files,
+    handleDevRuntimeArtifactsRequest: vi.fn(() =>
+      Response.json({ revision: "/tmp/eve-test/.eve/dev-runtime/snapshots/current" }),
+    ),
     listenerServer,
     mkdir: vi.fn(async () => undefined),
     nitro,
@@ -107,6 +117,10 @@ vi.mock("./prepare-application-host.js", () => ({
 
 vi.mock("#internal/nitro/routes/runtime-artifacts.js", () => ({
   resolveNitroCompiledArtifactsSource: mocks.resolveNitroCompiledArtifactsSource,
+}));
+
+vi.mock("#internal/nitro/routes/dev-runtime-artifacts.js", () => ({
+  handleDevRuntimeArtifactsRequest: mocks.handleDevRuntimeArtifactsRequest,
 }));
 
 vi.mock("#execution/sandbox/development-prewarm.js", () => ({
@@ -198,6 +212,30 @@ describe("normalizeDevelopmentServerClientUrl", () => {
   });
 });
 
+describe("isActiveDevelopmentServerForApp", () => {
+  it("accepts only the live server URL recorded for this app", async () => {
+    const { isActiveDevelopmentServerForApp } = await import("./start-development-server.js");
+    mocks.files.set(developmentProcessIdPath, `${process.pid}\n`);
+    mocks.files.set(
+      developmentServerMetadataPath,
+      JSON.stringify({ pid: process.pid, url: "http://127.0.0.1:42123/" }),
+    );
+
+    await expect(
+      isActiveDevelopmentServerForApp({
+        appRoot: "/tmp/eve-test",
+        serverUrl: "http://127.0.0.1:42123/",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      isActiveDevelopmentServerForApp({
+        appRoot: "/tmp/eve-test",
+        serverUrl: "http://127.0.0.1:42124/",
+      }),
+    ).resolves.toBe(false);
+  });
+});
+
 describe("startDevelopmentServer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -212,6 +250,7 @@ describe("startDevelopmentServer", () => {
       experimental: {},
       features: {},
     });
+    mocks.nitro.options.devHandlers.splice(0);
     Object.assign(mocks.nitro.options.devServer, {
       hostname: "127.0.0.1",
       port: undefined,
@@ -262,6 +301,41 @@ describe("startDevelopmentServer", () => {
     expect(process.env.WORKFLOW_LOCAL_BASE_URL).toBeUndefined();
     expect(process.env.PORT).toBeUndefined();
     expect(process.env.EVE_DEVELOPMENT_SANDBOX_RUN_ID).toBeUndefined();
+  });
+
+  it("rebuilds authored artifacts through the host-owned dev handler", async () => {
+    const { EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH } = await import("#protocol/routes.js");
+    const server = await startServer();
+    const handler = mocks.nitro.options.devHandlers.find(
+      (candidate) => candidate.route === EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH,
+    );
+
+    expect(handler).toBeDefined();
+    if (handler === undefined) {
+      throw new Error("Expected the development runtime artifacts rebuild handler.");
+    }
+
+    await handler.handler({
+      req: {
+        url: `http://localhost${EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH}?force=1`,
+      },
+    });
+
+    expect(mocks.authoredSourceWatcher.rebuild).toHaveBeenCalledTimes(1);
+    expect(mocks.authoredSourceWatcher.flush).not.toHaveBeenCalled();
+    expect(mocks.handleDevRuntimeArtifactsRequest).toHaveBeenCalledWith({
+      appRoot: "/tmp/eve-test",
+    });
+
+    await handler.handler({
+      req: {
+        url: `http://localhost${EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH}`,
+      },
+    });
+
+    expect(mocks.authoredSourceWatcher.flush).toHaveBeenCalledTimes(1);
+
+    await server.close();
   });
 
   it("uses eve's default port when no port is requested", async () => {

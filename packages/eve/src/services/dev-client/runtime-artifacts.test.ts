@@ -61,4 +61,18 @@ describe("rebuildDevelopmentRuntimeArtifacts", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("can force a rebuild after a known local source mutation", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ revision: "rev-3" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      rebuildDevelopmentRuntimeArtifacts({ force: true, serverUrl: SERVER_URL }),
+    ).resolves.toBe("rev-3");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/eve/v1/dev/runtime-artifacts/rebuild?force=1", SERVER_URL),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });

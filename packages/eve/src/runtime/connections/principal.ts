@@ -11,7 +11,7 @@
  */
 
 import { type AlsContext, contextStorage } from "#context/container.js";
-import { AuthKey } from "#context/keys.js";
+import { AuthKey, type SessionAuthContext } from "#context/keys.js";
 import { ConnectionAuthorizationFailedError } from "#public/connections/errors.js";
 import type { AuthorizationDefinition, ConnectionPrincipal } from "#runtime/connections/types.js";
 
@@ -24,10 +24,15 @@ import type { AuthorizationDefinition, ConnectionPrincipal } from "#runtime/conn
  *   issuer prefix prevents collisions when the same `id` across
  *   identity providers (for example Slack `U123` vs Google `U123`)
  *   would otherwise alias to the same cache slot.
+ * - `{ type: "user", id }` → `"user:${id}"`. This is the native
+ *   Vercel Connect user projection.
  */
 export function principalKey(principal: ConnectionPrincipal): string {
   if (principal.type === "app") {
     return "app";
+  }
+  if (principal.issuer === undefined) {
+    return `user:${principal.id}`;
   }
   return `user:${principal.issuer}:${principal.id}`;
 }
@@ -91,12 +96,29 @@ export function resolveConnectionPrincipal(
     });
   }
 
+  if (authorization.vercelConnect !== undefined && isVercelDevelopmentUser(current)) {
+    return {
+      attributes: current.attributes,
+      id: current.subject ?? current.principalId,
+      type: "user",
+    };
+  }
+
   return {
     attributes: current.attributes,
     id: current.principalId,
     issuer: current.issuer ?? current.authenticator,
     type: "user",
   };
+}
+
+function isVercelDevelopmentUser(current: SessionAuthContext): boolean {
+  return (
+    current.authenticator === "oidc" &&
+    current.issuer?.startsWith("https://oidc.vercel.com/") === true &&
+    current.attributes.environment === "development" &&
+    current.subject === current.attributes.user_id
+  );
 }
 
 function buildUserPrincipalRequiredMessage(

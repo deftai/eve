@@ -8,6 +8,7 @@ import type { RuntimeAdapterRegistry } from "#runtime/channels/registry.js";
 import { createRuntimeAdapterRegistry } from "#runtime/channels/registry.js";
 import {
   getRuntimeCompiledArtifactsCacheKey,
+  getRuntimeCompiledArtifactsSandboxAppRoot,
   type RuntimeDiskCompiledArtifactsSource,
   type RuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
@@ -71,7 +72,11 @@ async function loadFullBundle(
     loadCompiledManifest({ compiledArtifactsSource: normalizedCompiledArtifactsSource }),
     loadRuntimeCompiledModuleMap(normalizedCompiledArtifactsSource),
   ]);
-  const graph = await resolveRuntimeAgentGraph({ manifest, moduleMap });
+  const graph = await resolveRuntimeAgentGraph({
+    frameworkAppRoot: getRuntimeCompiledArtifactsSandboxAppRoot(normalizedCompiledArtifactsSource),
+    manifest,
+    moduleMap,
+  });
   const rootNode = graph.root;
 
   return {

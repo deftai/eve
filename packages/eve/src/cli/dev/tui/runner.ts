@@ -304,8 +304,8 @@ export interface PromptCommandHandlerContext {
 export interface PromptCommandOutcome {
   /** Outcome line rendered under the echoed command; absent renders nothing. */
   message?: string;
-  /** Post-command work; model access also re-probes the Vercel identity. */
-  effect?: VercelStatusEffect | { kind: "model-access-changed" };
+  /** Post-command work after setup settles. */
+  effect?: VercelStatusEffect | { kind: "connection-added" } | { kind: "model-access-changed" };
 }
 
 export interface PromptCommandHandler {
@@ -1127,6 +1127,13 @@ export class EveTUIRunner {
   }
 
   async #applyCommandEffect(effect: PromptCommandOutcome["effect"]): Promise<void> {
+    if (effect?.kind === "connection-added") {
+      this.#vercelStatus?.applyEffect({ kind: "refresh-identity" });
+      this.#authHintStale = true;
+      await this.#refreshConnectionRuntime();
+      await this.#refreshModelAccess();
+      return;
+    }
     if (effect?.kind === "model-access-changed") {
       this.#vercelStatus?.applyEffect({ kind: "refresh-identity" });
       this.#authHintStale = true;
@@ -1138,6 +1145,18 @@ export class EveTUIRunner {
     this.#vercelStatus?.applyEffect(effect);
     this.#authHintStale = true;
     void this.#refreshSetupAttention(this.#agentInfo);
+  }
+
+  async #refreshConnectionRuntime(): Promise<void> {
+    const client = this.#client;
+    const runtimeArtifacts = this.#runtimeArtifacts;
+    if (client === undefined || runtimeArtifacts === undefined) return;
+
+    this.#session = await runtimeArtifacts.refreshAfterSourceChange({
+      createSession: () => client.session(),
+      onRuntimeArtifactsChanged: () => this.#handleRuntimeArtifactsChanged(),
+      session: this.#session,
+    });
   }
 
   async #executeExtensionCommand(

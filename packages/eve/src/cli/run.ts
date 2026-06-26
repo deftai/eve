@@ -64,6 +64,10 @@ interface CliRuntimeDependencies {
     options: EvalCliOptions,
     logger: CliLogger,
   ): Promise<void>;
+  isActiveDevelopmentServerForApp(input: {
+    readonly appRoot: string;
+    readonly serverUrl: string;
+  }): Promise<boolean>;
   startHost(appRoot: string, options?: DevelopmentServerOptions): Promise<DevelopmentServerHandle>;
   startProductionHost(
     appRoot: string,
@@ -132,6 +136,12 @@ async function loadRunEvalCommand(): Promise<CliRuntimeDependencies["runEvalComm
 
 async function loadStartHost(): Promise<CliRuntimeDependencies["startHost"]> {
   return (await import("#internal/nitro/host.js")).startDevelopmentServer;
+}
+
+async function loadIsActiveDevelopmentServerForApp(): Promise<
+  CliRuntimeDependencies["isActiveDevelopmentServerForApp"]
+> {
+  return (await import("#internal/nitro/host.js")).isActiveDevelopmentServerForApp;
 }
 
 async function loadStartProductionHost(): Promise<CliRuntimeDependencies["startProductionHost"]> {
@@ -490,6 +500,16 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
       const { loadDevelopmentEnvironmentFiles } = await import("#cli/dev/environment.js");
 
       loadDevelopmentEnvironmentFiles(appRoot);
+      const existingLocalDevelopmentServer =
+        remoteServerUrl === undefined
+          ? false
+          : await (
+              runtime.isActiveDevelopmentServerForApp ??
+              (await loadIsActiveDevelopmentServerForApp())
+            )({
+              appRoot,
+              serverUrl: remoteServerUrl,
+            });
 
       const runInteractiveUi = async (serverUrl: string, report?: DevBootProgressReporter) => {
         const runDevelopmentTui = await devBootPhase(
@@ -499,7 +519,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
         );
         const display = resolveTuiDisplayOptions(options);
         const target: DevelopmentTuiTarget =
-          remoteServerUrl === undefined
+          remoteServerUrl === undefined || existingLocalDevelopmentServer
             ? { kind: "local", serverUrl, workspaceRoot: appRoot }
             : { kind: "remote", serverUrl, workspaceRoot: appRoot };
         const title = resolveTuiTitle({ name: options.name, target });
@@ -514,7 +534,9 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
       };
 
       if (remoteServerUrl) {
-        logger.log(`↗ remote mode targeting ${theme.info(new URL(remoteServerUrl).host)}`);
+        logger.log(
+          `↗ ${existingLocalDevelopmentServer ? "local" : "remote"} mode targeting ${theme.info(new URL(remoteServerUrl).host)}`,
+        );
 
         if (mode === "headless") {
           logger.log(

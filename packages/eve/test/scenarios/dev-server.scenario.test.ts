@@ -2,9 +2,25 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { EVE_HEALTH_ROUTE_PATH } from "../../src/protocol/routes.js";
+import {
+  EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH,
+  EVE_HEALTH_ROUTE_PATH,
+  EVE_INFO_ROUTE_PATH,
+} from "../../src/protocol/routes.js";
+import { Client } from "../../src/client/index.js";
+import {
+  EveTUIRunner,
+  type AgentTUIRenderer,
+  type PromptCommandOutcome,
+} from "../../src/cli/dev/tui/runner.js";
+import { runPnpmCommand } from "../../src/internal/testing/run-pnpm-command.js";
+import { getCatalogEntry } from "../../src/setup/scaffold/connections/catalog.js";
+import {
+  ensureConnection,
+  ensureConnectionDependencies,
+} from "../../src/setup/scaffold/update/connections.js";
 import { WEATHER_AGENT_DESCRIPTOR } from "../../src/internal/testing/scenario-apps/weather-agent.js";
 import {
   type ScenarioAppDescriptor,
@@ -288,6 +304,168 @@ describe("eve dev server", () => {
 
         const output = `${server.stdout()}\n${server.stderr()}`;
         expect(hasKnownDevBundlingFailure(output)).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    },
+    DEV_SERVER_SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "activates a newly installed Connect connection before the next request",
+    async () => {
+      const app = await scenarioApp(DEV_SERVER_AGENT_DESCRIPTOR);
+      const server = await startEveDev(app.appRoot);
+      const linear = getCatalogEntry("linear");
+      if (linear === undefined) throw new Error("Expected the Linear connection catalog entry.");
+      let restoreFetch: (() => void) | undefined;
+
+      try {
+        const originalFetch = globalThis.fetch;
+        const requestedUrls: URL[] = [];
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          requestedUrls.push(url);
+          return await originalFetch(input, init);
+        });
+        restoreFetch = () => fetchSpy.mockRestore();
+        const client = new Client({ host: server.url });
+        const prompts: Array<string | undefined> = ["/connect", undefined];
+        const renderer: AgentTUIRenderer = {
+          readPrompt: async () => prompts.shift(),
+          async renderStream(result) {
+            for await (const _event of result.events) {
+              // The setup command does not create a model stream in this test.
+            }
+          },
+        };
+        const connectOutcome: PromptCommandOutcome = {
+          effect: { kind: "connection-added" },
+          message: "Connections added: linear.",
+        };
+        const handle = vi.fn(async (): Promise<PromptCommandOutcome> => {
+          await ensureConnectionDependencies({ projectRoot: app.appRoot });
+          await runPnpmCommand({
+            args: [
+              "install",
+              "--no-frozen-lockfile",
+              "--prefer-offline",
+              "--ignore-scripts",
+              "--config.confirm-modules-purge=false",
+              "--config.minimum-release-age=0",
+            ],
+            cwd: app.appRoot,
+          });
+          await ensureConnection({
+            entry: {
+              ...linear,
+              description: "hmr-probe: connection-active",
+            },
+            projectRoot: app.appRoot,
+            protocol: "mcp",
+          });
+          return connectOutcome;
+        });
+        const runner = new EveTUIRunner({
+          client,
+          promptCommandHandler: {
+            handle,
+          },
+          renderer,
+          serverUrl: server.url,
+          session: client.session(),
+        });
+
+        await runner.run();
+        expect(handle).toHaveBeenCalledTimes(1);
+        expect(
+          requestedUrls.some(
+            (url) =>
+              url.pathname === EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH &&
+              url.searchParams.get("force") === "1",
+          ),
+        ).toBe(true);
+
+        const info = await fetch(new URL(EVE_INFO_ROUTE_PATH, server.url));
+        expect(info.status).toBe(200);
+        const infoPayload = await info.json();
+        expect(
+          infoPayload,
+          [`stdout:\n${server.stdout()}`, `stderr:\n${server.stderr()}`].join("\n\n"),
+        ).toMatchObject({ connections: [expect.objectContaining({ connectionName: "linear" })] });
+
+        const turn = await sendDevelopmentMessage({
+          message: "hello",
+          session: createDevelopmentSessionState(),
+          serverUrl: server.url,
+        });
+        const completedMessage = turn.events.find(
+          (event) => event.type === "message.completed" && event.data.message !== null,
+        );
+        expect(completedMessage).toMatchObject({
+          data: { message: expect.stringContaining("probe=connection-active") },
+        });
+      } finally {
+        restoreFetch?.();
+        await server.stop();
+      }
+    },
+    DEV_SERVER_SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "activates a connection added outside the TUI without restarting eve dev",
+    async () => {
+      const app = await scenarioApp(DEV_SERVER_AGENT_DESCRIPTOR);
+      const server = await startEveDev(app.appRoot);
+      const linear = getCatalogEntry("linear");
+      if (linear === undefined) throw new Error("Expected the Linear connection catalog entry.");
+
+      try {
+        await ensureConnectionDependencies({ projectRoot: app.appRoot });
+        await runPnpmCommand({
+          args: [
+            "install",
+            "--no-frozen-lockfile",
+            "--prefer-offline",
+            "--ignore-scripts",
+            "--config.confirm-modules-purge=false",
+            "--config.minimum-release-age=0",
+          ],
+          cwd: app.appRoot,
+        });
+        await ensureConnection({
+          entry: {
+            ...linear,
+            description: "hmr-probe: watcher-active",
+          },
+          projectRoot: app.appRoot,
+          protocol: "mcp",
+        });
+
+        await vi.waitFor(
+          async () => {
+            const info = await fetch(new URL(EVE_INFO_ROUTE_PATH, server.url));
+
+            expect(info.status).toBe(200);
+            expect(await info.json()).toMatchObject({
+              connections: [expect.objectContaining({ connectionName: "linear" })],
+            });
+          },
+          { interval: 100, timeout: 20_000 },
+        );
+
+        const turn = await sendDevelopmentMessage({
+          message: "hello",
+          session: createDevelopmentSessionState(),
+          serverUrl: server.url,
+        });
+        const completedMessage = turn.events.find(
+          (event) => event.type === "message.completed" && event.data.message !== null,
+        );
+        expect(completedMessage).toMatchObject({
+          data: { message: expect.stringContaining("probe=watcher-active") },
+        });
       } finally {
         await server.stop();
       }
