@@ -172,6 +172,7 @@ export class ClientSession {
       let currentTurnId: string | undefined;
       let remainingReconnectAttempts = this.#context.maxReconnectAttempts;
       const currentEventIds = new Set<string>();
+      let suppressConcurrentReplay = false;
       let sawCurrentTurnEvent = false;
 
       while (true) {
@@ -201,6 +202,9 @@ export class ClientSession {
               if (currentTurnId !== turnId) {
                 currentTurnId = turnId;
                 currentEventIds.clear();
+                suppressConcurrentReplay = false;
+              } else if (event.type === "turn.started" && currentEventIds.has(identity)) {
+                suppressConcurrentReplay = true;
               }
               sawCurrentTurnEvent = true;
             }
@@ -215,7 +219,12 @@ export class ClientSession {
               continue;
             }
 
-            if (currentEventIds.has(identity)) continue;
+            if (
+              currentEventIds.has(identity) &&
+              (suppressConcurrentReplay || isUniqueTurnLifecycleEvent(event))
+            ) {
+              continue;
+            }
             currentEventIds.add(identity);
 
             events.push(event);
@@ -307,6 +316,10 @@ export class ClientSession {
       });
     }
   }
+}
+
+function isUniqueTurnLifecycleEvent(event: HandleMessageStreamEvent): boolean {
+  return !["message.appended", "reasoning.appended", "subagent.event"].includes(event.type);
 }
 
 async function postTurnWithRetry(input: {

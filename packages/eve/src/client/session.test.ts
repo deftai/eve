@@ -190,6 +190,61 @@ describe("ClientSession", () => {
     expect(session.state).toMatchObject({ lastTurnId: "turn_0", streamIndex: 7 });
   });
 
+  it("preserves repeated events until a concurrent replay is proven", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") return createAcceptedResponse();
+
+      const [started, completed, turnCompleted, waiting] = turnEvents(0, "answer");
+      const appended = {
+        data: {
+          messageDelta: "answer",
+          messageSoFar: "answer",
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        },
+        type: "message.appended",
+      };
+      return createStreamResponse([started, appended, appended, completed, turnCompleted, waiting]);
+    });
+    const session = createSession();
+
+    const result = await (await session.send("question")).result();
+
+    expect(result.events.filter((event) => event.type === "message.appended")).toHaveLength(2);
+    expect(session.state).toMatchObject({ lastTurnId: "turn_0", streamIndex: 6 });
+  });
+
+  it("suppresses a replayed lifecycle event without a repeated turn start", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") return createAcceptedResponse();
+
+      const [started, completed, turnCompleted, waiting] = turnEvents(0, "answer");
+      const subagentCompleted = {
+        data: {
+          callId: "call_1",
+          output: "answer",
+          subagentName: "helper",
+        },
+        type: "subagent.completed",
+      };
+      return createStreamResponse([
+        started,
+        subagentCompleted,
+        subagentCompleted,
+        completed,
+        turnCompleted,
+        waiting,
+      ]);
+    });
+    const session = createSession();
+
+    const result = await (await session.send("question")).result();
+
+    expect(result.events.filter((event) => event.type === "subagent.completed")).toHaveLength(1);
+    expect(session.state).toMatchObject({ lastTurnId: "turn_0", streamIndex: 6 });
+  });
+
   it("cancels a parked stream after collecting its result", async () => {
     const encoder = new TextEncoder();
     let cancelled = false;
