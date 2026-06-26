@@ -179,6 +179,75 @@ describe("TerminalRenderer (inline scrollback)", () => {
     expect(snapshot).toContain("It's 73°F in SF.");
   });
 
+  it("renders interleaved tool lifecycles in arrival order", async () => {
+    const { screen, renderer } = makeRenderer();
+    await renderer.renderStream(
+      streamOf([
+        {
+          type: "tool-call",
+          toolCallId: "first",
+          toolName: "first_search",
+          input: { query: "first" },
+        },
+        { type: "tool-result", toolCallId: "first", output: { result: "first result" } },
+        {
+          type: "tool-call",
+          toolCallId: "second",
+          toolName: "second_search",
+          input: { query: "second" },
+        },
+        { type: "tool-result", toolCallId: "second", output: { result: "second result" } },
+        { type: "finish" },
+      ]),
+      { submittedPrompt: "run both searches", continueSession: false },
+    );
+
+    const snapshot = screen.snapshot();
+    expect(snapshot).toContain("✓ first_search");
+    expect(snapshot).toContain("first result");
+    expect(snapshot).toContain("✓ second_search");
+    expect(snapshot).toContain("second result");
+    expect(snapshot.indexOf("first_search")).toBeLessThan(snapshot.indexOf("second_search"));
+    renderer.shutdown();
+  });
+
+  it("renders a concurrent tool batch before any result arrives", async () => {
+    const { screen, renderer } = makeRenderer(120, 140);
+    let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;
+    const rendering = renderer.renderStream(
+      {
+        events: new ReadableStream<AgentTUIStreamEvent>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      },
+      { submittedPrompt: "search the tri-state area", continueSession: true },
+    );
+
+    const controller = streamController;
+    expect(controller).toBeDefined();
+    controller?.enqueue({ type: "step-start" });
+    for (let index = 1; index <= 100; index += 1) {
+      controller?.enqueue({
+        type: "tool-call",
+        toolCallId: `search-${index}`,
+        toolName: "web_search",
+        input: { query: `tri-state-${index}` },
+      });
+    }
+
+    await screen.waitForText("tri-state-100");
+
+    const snapshot = screen.snapshot();
+    expect(snapshot.match(/web_search/g)).toHaveLength(100);
+    expect(snapshot).not.toContain("✓ web_search");
+
+    controller?.close();
+    await rendering;
+    renderer.shutdown();
+  });
+
   it("omits the interrupt hint while waiting for the first stream event", async () => {
     const { screen, renderer } = makeRenderer();
     let streamController: ReadableStreamDefaultController<AgentTUIStreamEvent> | undefined;
@@ -1801,40 +1870,62 @@ describe("TerminalRenderer setup panel", () => {
     renderer.shutdown();
   });
 
-  it("renames the hovered editable row directly via typing and backspace", async () => {
+  it("uses the default name as a placeholder when renaming the hovered row", async () => {
     const { screen, input, renderer } = makeRenderer();
 
     const answer = renderer.setupFlow.readEditableSelect?.({
       message: "Vercel project",
       options: [
-        { value: "new", label: "Create a new project", hint: "Named 'weather-agent'" },
+        { value: "new", label: "Create a new project", hint: "Name: weather-agent" },
         { value: "link", label: "Link an existing project" },
       ],
       initialValue: "new",
       editable: {
         value: "new",
         defaultValue: "weather-agent",
-        formatHint: (value) => `Named '${value}'`,
+        formatHint: (value) => `Name: ${value}`,
       },
     });
     expect(answer).toBeDefined();
 
     // Hovering the editable row is already a live field — no → to enter.
     expect(screen.snapshot()).toContain("type to rename");
-    expect(screen.snapshot()).toContain("Named 'weather-agent");
-    // Backspace edits the seeded default in place, exactly like typing.
+    expect(screen.snapshot()).toContain("Name: weather-agent");
+    // The default is not real editor text, so backspace cannot partially erase
+    // it. Typing replaces the placeholder with the new name.
     input.backspace();
-    input.backspace();
-    // "nt" trimmed off the end of the seeded default.
-    expect(screen.snapshot()).not.toContain("weather-agent");
-    input.type("!");
-    expect(screen.snapshot()).toContain("Named 'weather-age!");
+    expect(screen.snapshot()).toContain("Name: weather-agent");
+    input.type("weather-age!");
+    expect(screen.snapshot()).toContain("Name: weather-age!");
     input.enter();
     await expect(answer).resolves.toEqual({
       kind: "edited",
       value: "new",
       text: "weather-age!",
     });
+    renderer.shutdown();
+  });
+
+  it("returns an untouched editable row as a plain selection", async () => {
+    const { input, renderer } = makeRenderer();
+
+    const answer = renderer.setupFlow.readEditableSelect?.({
+      message: "Vercel project",
+      options: [
+        { value: "new", label: "Create a new project", hint: "Name: weather-agent" },
+        { value: "link", label: "Link an existing project" },
+      ],
+      initialValue: "new",
+      editable: {
+        value: "new",
+        defaultValue: "weather-agent",
+        formatHint: (value) => `Name: ${value}`,
+      },
+    });
+    expect(answer).toBeDefined();
+
+    input.enter();
+    await expect(answer).resolves.toEqual({ kind: "selected", value: "new" });
     renderer.shutdown();
   });
 
