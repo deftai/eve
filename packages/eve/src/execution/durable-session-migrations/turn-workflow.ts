@@ -35,8 +35,11 @@ export interface TurnWorkflowInput {
    * which keeps runtime-action orchestration on the legacy entry-owned path.
    */
   readonly driverCapabilities?: {
+    readonly turnActivation?: true;
     readonly turnInbox?: true;
   };
+  /** Stable inbox shared by every child started by one dispatch step. */
+  readonly inboxToken?: string;
   readonly mode: RunMode;
   readonly stepInput: TurnStepInput;
 }
@@ -45,6 +48,7 @@ export interface TurnWorkflowDispatchInput {
   readonly capabilities: SessionCapabilities | undefined;
   readonly completionToken: string;
   readonly delivery: HookPayload;
+  readonly inboxToken?: string;
   readonly mode: RunMode;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly serializedContext: Record<string, unknown>;
@@ -54,10 +58,13 @@ export interface TurnWorkflowDispatchInput {
 const turnWorkflowInputMigrations: readonly VersionMigration[] = [turnWorkflowInputV0ToV1];
 
 export function createTurnWorkflowInput(input: TurnWorkflowDispatchInput): TurnWorkflowInput {
-  return {
+  const workflowInput: TurnWorkflowInput = {
     capabilities: input.capabilities,
     completionToken: input.completionToken,
-    driverCapabilities: { turnInbox: true },
+    driverCapabilities:
+      input.inboxToken === undefined
+        ? { turnInbox: true }
+        : { turnActivation: true, turnInbox: true },
     mode: input.mode,
     stepInput: {
       input: input.delivery,
@@ -67,6 +74,9 @@ export function createTurnWorkflowInput(input: TurnWorkflowDispatchInput): TurnW
     },
     version: TURN_WORKFLOW_INPUT_VERSION,
   };
+
+  if (input.inboxToken === undefined) return workflowInput;
+  return { ...workflowInput, inboxToken: input.inboxToken };
 }
 
 export function migrateTurnWorkflowInput(value: unknown): TurnWorkflowInput {

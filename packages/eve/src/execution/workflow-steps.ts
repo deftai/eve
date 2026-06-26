@@ -5,6 +5,7 @@ import type {
   SessionAuthContext,
   SubagentInputRequestHookPayload,
 } from "#channel/types.js";
+import { getStepMetadata } from "#compiled/@workflow/core/index.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
 import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
@@ -60,13 +61,14 @@ import { createExecutionNodeStep } from "#execution/node-step.js";
 import { emitProxiedInputRequest, routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
 import { buildTurnAttributes, readRootSessionId } from "#execution/eve-workflow-attributes.js";
+import { isHookNotFoundError } from "#execution/hook-ownership.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import {
   createWorkflowRuntime,
   startWorkflowPreferLatest,
   turnWorkflowReference,
 } from "#execution/workflow-runtime.js";
-import { resumeHook } from "#internal/workflow/runtime.js";
+import { getHookByToken, resumeHook } from "#internal/workflow/runtime.js";
 
 /**
  * Result of one durable harness step, consumed by the turn workflow.
@@ -640,12 +642,14 @@ export async function routeProxiedDeliverStep(input: {
 /** Starts a per-turn child workflow for the current driver session. */
 export async function dispatchTurnStep(
   input: TurnWorkflowDispatchInput,
-): Promise<{ readonly runId: string }> {
+): Promise<{ readonly inboxToken: string; readonly ownerRunId: string }> {
   "use step";
 
-  const run = await startWorkflowPreferLatest(
+  const inboxToken = `${input.completionToken}:inbox:${getStepMetadata().stepId}`;
+
+  await startWorkflowPreferLatest(
     turnWorkflowReference,
-    [createTurnWorkflowInput(input)],
+    [createTurnWorkflowInput({ ...input, inboxToken })],
     {
       allowReservedAttributes: true,
       attributes: normalizeEveAttributes(
@@ -658,5 +662,22 @@ export async function dispatchTurnStep(
     },
   );
 
-  return { runId: run.runId };
+  return { inboxToken, ownerRunId: await waitForTurnInboxOwner(inboxToken) };
+}
+
+async function waitForTurnInboxOwner(inboxToken: string): Promise<string> {
+  let notFound: unknown;
+
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try {
+      return (await getHookByToken(inboxToken)).runId;
+    } catch (error) {
+      if (!isHookNotFoundError(error)) throw error;
+      notFound = error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw notFound;
 }

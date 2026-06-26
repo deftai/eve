@@ -42,7 +42,9 @@ export async function turnWorkflow(rawInput: unknown): Promise<void> {
 }
 
 async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
-  const inbox = createHook<TurnInboxPayload>({ token: `${input.completionToken}:inbox` });
+  const inbox = createHook<TurnInboxPayload>({
+    token: input.inboxToken ?? `${input.completionToken}:inbox`,
+  });
   // Hook promises and iterators share one durable cursor. Create the iterator before
   // claiming so conflict replay is consumed by getConflict(), not a later iterator read.
   const iterator = inbox[Symbol.asyncIterator]();
@@ -69,6 +71,17 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
     } catch (error) {
       if (isHookConflictError(error)) return;
       throw error;
+    }
+
+    if (input.driverCapabilities?.turnActivation === true) {
+      const activation = await iterator.next();
+      if (
+        activation.done ||
+        activation.value.kind !== "turn-activation" ||
+        activation.value.expectedRunId !== getWorkflowMetadata().workflowRunId
+      ) {
+        return;
+      }
     }
 
     while (true) {

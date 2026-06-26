@@ -62,6 +62,22 @@ describe("turn workflow wire migrations", () => {
     });
   });
 
+  it("advertises activation when dispatch provides a stable inbox", () => {
+    const input = createTurnWorkflowInput({
+      capabilities: undefined,
+      completionToken: "turn-token",
+      delivery: createDelivery(),
+      inboxToken: "turn-token:inbox:step_dispatch",
+      mode: "conversation",
+      parentWritable: new WritableStream<Uint8Array>(),
+      serializedContext: {},
+      sessionState: createSessionState(),
+    });
+
+    expect(input.driverCapabilities).toEqual({ turnActivation: true, turnInbox: true });
+    expect(input.inboxToken).toBe("turn-token:inbox:step_dispatch");
+  });
+
   it("migrates pre-version (unversioned) workflow input into the current shape", () => {
     const delivery = createDelivery();
     const parentWritable = new WritableStream<Uint8Array>();

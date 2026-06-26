@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DeliverHookPayload, HookPayload } from "#channel/types.js";
+import { activateTurnStep } from "#execution/activate-turn-step.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { forwardTurnDeliveryStep } from "#execution/forward-turn-delivery-step.js";
 import type { SessionDeliveryHook } from "#execution/session-delivery-hook.js";
@@ -14,7 +15,14 @@ vi.mock("#compiled/@workflow/core/index.js", () => ({
 }));
 
 vi.mock("./workflow-steps.js", () => ({
-  dispatchTurnStep: vi.fn(async () => ({ runId: "turn-run" })),
+  dispatchTurnStep: vi.fn(async () => ({
+    inboxToken: "turn-inbox",
+    ownerRunId: "turn-owner",
+  })),
+}));
+
+vi.mock("./activate-turn-step.js", () => ({
+  activateTurnStep: vi.fn(),
 }));
 
 vi.mock("./forward-turn-delivery-step.js", () => ({
@@ -51,6 +59,10 @@ describe("dispatchAndAwaitTurn", () => {
     });
 
     expect(rekeyHook).toHaveBeenCalledWith("slack:C1:T1");
+    expect(activateTurnStep).toHaveBeenCalledWith({
+      expectedRunId: "turn-owner",
+      inboxToken: "turn-inbox",
+    });
   });
 
   it("rekeys while a turn delivery request is already waiting", async () => {

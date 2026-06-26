@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChannelAdapter, ChannelAdapterContext } from "#channel/adapter.js";
 import type { DeliverPayload, SubagentInputRequestHookPayload } from "#channel/types.js";
@@ -82,6 +82,7 @@ function createStubSessionState(overrides: Partial<DurableSessionState> = {}): D
 
 const DEFAULT_WORKFLOW_STREAM_NAMESPACE = "__default__";
 const getRunMock = vi.fn();
+const getHookByTokenMock = vi.fn();
 const startMock = vi.fn();
 const workflowWritesByNamespace = new Map<string, unknown[]>();
 
@@ -106,9 +107,14 @@ vi.mock("../runtime/sessions/compiled-agent-cache.js", () => ({
 }));
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
+  getHookByToken: (...args: unknown[]) => getHookByTokenMock(...args),
   getRun: (...args: unknown[]) => getRunMock(...args),
   resumeHook: vi.fn(),
   start: (...args: unknown[]) => startMock(...args),
+}));
+
+vi.mock("#compiled/@workflow/core/index.js", () => ({
+  getStepMetadata: vi.fn(() => ({ stepId: "step_dispatch" })),
 }));
 
 const ThreadKey = new ContextKey<string>("test.workflow.thread");
@@ -175,12 +181,17 @@ function createSerializedContext(): Record<string, unknown> {
 }
 
 afterEach(() => {
+  getHookByTokenMock.mockReset();
   getRunMock.mockReset();
   startMock.mockReset();
   workflowWritesByNamespace.clear();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+});
+
+beforeEach(() => {
+  getHookByTokenMock.mockResolvedValue({ runId: "turn-owner" });
 });
 
 describe("dispatchTurnStep", () => {
@@ -208,11 +219,19 @@ describe("dispatchTurnStep", () => {
     const input = createTurnInput();
     startMock.mockResolvedValue({ runId: "turn-run" });
 
-    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+    await expect(dispatchTurnStep(input)).resolves.toEqual({
+      inboxToken: "turn-control:inbox:step_dispatch",
+      ownerRunId: "turn-owner",
+    });
 
     expect(startMock).toHaveBeenCalledWith(
       turnWorkflowReference,
-      [createTurnWorkflowInput(input)],
+      [
+        createTurnWorkflowInput({
+          ...input,
+          inboxToken: "turn-control:inbox:step_dispatch",
+        }),
+      ],
       {
         allowReservedAttributes: true,
         attributes: {
@@ -231,12 +250,20 @@ describe("dispatchTurnStep", () => {
     const input = createTurnInput();
     startMock.mockResolvedValue({ runId: "turn-run" });
 
-    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+    await expect(dispatchTurnStep(input)).resolves.toEqual({
+      inboxToken: "turn-control:inbox:step_dispatch",
+      ownerRunId: "turn-owner",
+    });
 
     expect(startMock).toHaveBeenCalledTimes(1);
     expect(startMock).toHaveBeenCalledWith(
       turnWorkflowReference,
-      [createTurnWorkflowInput(input)],
+      [
+        createTurnWorkflowInput({
+          ...input,
+          inboxToken: "turn-control:inbox:step_dispatch",
+        }),
+      ],
       {
         allowReservedAttributes: true,
         attributes: {
@@ -249,6 +276,23 @@ describe("dispatchTurnStep", () => {
     );
   });
 
+  it("waits for the child to register its inbox", async () => {
+    const input = createTurnInput();
+    startMock.mockResolvedValue({ runId: "turn-run" });
+    getHookByTokenMock
+      .mockRejectedValueOnce(
+        Object.assign(new Error("not registered"), { name: "HookNotFoundError" }),
+      )
+      .mockResolvedValueOnce({ runId: "turn-owner" });
+
+    await expect(dispatchTurnStep(input)).resolves.toEqual({
+      inboxToken: "turn-control:inbox:step_dispatch",
+      ownerRunId: "turn-owner",
+    });
+
+    expect(getHookByTokenMock).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to the current deployment when latest is unsupported", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const input = createTurnInput();
@@ -256,9 +300,15 @@ describe("dispatchTurnStep", () => {
       .mockRejectedValueOnce(new Error(LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE))
       .mockResolvedValueOnce({ runId: "turn-run" });
 
-    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+    await expect(dispatchTurnStep(input)).resolves.toEqual({
+      inboxToken: "turn-control:inbox:step_dispatch",
+      ownerRunId: "turn-owner",
+    });
 
-    const wireInput = createTurnWorkflowInput(input);
+    const wireInput = createTurnWorkflowInput({
+      ...input,
+      inboxToken: "turn-control:inbox:step_dispatch",
+    });
     expect(startMock).toHaveBeenNthCalledWith(1, turnWorkflowReference, [wireInput], {
       allowReservedAttributes: true,
       attributes: {

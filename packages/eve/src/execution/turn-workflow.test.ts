@@ -17,7 +17,10 @@ const createHookMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: (...args: unknown[]) => createHookMock(...args),
-  getWorkflowMetadata: vi.fn(() => ({ url: "https://eve.example.com" })),
+  getWorkflowMetadata: vi.fn(() => ({
+    url: "https://eve.example.com",
+    workflowRunId: "wrun_owner",
+  })),
 }));
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
@@ -250,7 +253,7 @@ describe("turnWorkflow", () => {
 
   it("deduplicates concurrent turn workflows through inbox ownership", async () => {
     const sessionState = createSessionState();
-    const ownerInbox = createInboxMock([]);
+    const ownerInbox = createInboxMock([{ expectedRunId: "wrun_owner", kind: "turn-activation" }]);
     const duplicateInbox = createInboxMock([], {
       conflict: { runId: "wrun_owner" },
     });
@@ -263,7 +266,8 @@ describe("turnWorkflow", () => {
     });
 
     const { input } = createInput({
-      driverCapabilities: { turnInbox: true },
+      driverCapabilities: { turnActivation: true, turnInbox: true },
+      inboxToken: "turn-token:inbox",
       sessionState,
     });
     await Promise.all([turnWorkflow(input), turnWorkflow(input)]);
@@ -277,6 +281,20 @@ describe("turnWorkflow", () => {
     expect(duplicateInbox.dispose).toHaveBeenCalledOnce();
     expect(ownerInbox.createIterator).toHaveBeenCalledOnce();
     expect(duplicateInbox.createIterator).toHaveBeenCalledOnce();
+  });
+
+  it("does not execute when activation names a different inbox owner", async () => {
+    const inbox = installInbox([{ expectedRunId: "wrun_previous_owner", kind: "turn-activation" }]);
+    const { input } = createInput({
+      driverCapabilities: { turnActivation: true, turnInbox: true },
+      inboxToken: "turn-token:inbox",
+    });
+
+    await turnWorkflow(input);
+
+    expect(turnStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).not.toHaveBeenCalled();
+    expect(inbox.dispose).toHaveBeenCalledOnce();
   });
 
   it("deduplicates a cross-realm inbox conflict rejection", async () => {

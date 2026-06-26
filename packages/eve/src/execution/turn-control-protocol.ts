@@ -6,6 +6,10 @@ import { resumeHook } from "#internal/workflow/runtime.js";
 export type TurnInboxPayload =
   | Exclude<HookPayload, DeliverHookPayload>
   | {
+      readonly expectedRunId: string;
+      readonly kind: "turn-activation";
+    }
+  | {
       readonly delivery: DeliverHookPayload;
       readonly kind: "driver-delivery";
       readonly requestId: string;

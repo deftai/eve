@@ -70,6 +70,18 @@ export function isHookConflictError(error: unknown): error is {
   );
 }
 
+/** Recognizes missing hooks across Workflow package identities. */
+export function isHookNotFoundError(
+  error: unknown,
+): error is { readonly name: "HookNotFoundError" } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "HookNotFoundError"
+  );
+}
+
 function createHookConflictError(
   token: string,
   conflictingRunId?: string,

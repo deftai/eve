@@ -1,4 +1,5 @@
 import type { DeliverHookPayload, HookPayload, SessionCapabilities } from "#channel/types.js";
+import { activateTurnStep } from "#execution/activate-turn-step.js";
 import { TurnControlReceiver } from "#execution/turn-control-receiver.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
@@ -25,7 +26,7 @@ export async function dispatchAndAwaitTurn(input: {
   });
 
   try {
-    await dispatchTurnStep({
+    const dispatched = await dispatchTurnStep({
       capabilities: input.capabilities,
       completionToken: control.token,
       delivery: input.delivery,
@@ -33,6 +34,11 @@ export async function dispatchAndAwaitTurn(input: {
       parentWritable: input.parentWritable,
       serializedContext: input.serializedContext,
       sessionState: input.sessionState,
+    });
+
+    await activateTurnStep({
+      expectedRunId: dispatched.ownerRunId,
+      inboxToken: dispatched.inboxToken,
     });
 
     return await control.waitForAction();
