@@ -1,23 +1,29 @@
 import { createHash } from "node:crypto";
 
-import { getStepMetadata } from "#compiled/@workflow/core/index.js";
 import {
   type HandleMessageStreamEvent,
   type TimedHandleMessageStreamEvent,
   timestampHandleMessageStreamEvent,
 } from "#protocol/message.js";
 
+export interface EventIdentityScope {
+  readonly sessionId: string;
+  readonly turnSequence: number | "terminal";
+}
+
 /**
- * Creates an event stamper scoped to one workflow step invocation.
+ * Creates an event stamper scoped to one logical session turn.
  *
- * The workflow step ID is stable across retries. Event content keeps IDs
- * stable when independent emissions change order, while the per-content
- * occurrence distinguishes intentionally repeated identical events.
+ * At-least-once delivery can invoke multiple physical Workflow steps for the
+ * same logical turn. The session and turn sequence survive that replay. Event
+ * content keeps IDs stable when independent emissions change order, while the
+ * per-content occurrence distinguishes intentionally repeated identical events.
  */
-export function createStepEventStamper(
-  stepId = getStepMetadata().stepId,
+export function createEventStamper(
+  scope: EventIdentityScope,
 ): (event: HandleMessageStreamEvent) => TimedHandleMessageStreamEvent {
   const occurrences = new Map<string, number>();
+  const serializedScope = JSON.stringify(scope, sortJsonObjectKeys);
 
   return (event) => {
     const { meta: _meta, ...logicalEvent } = event;
@@ -26,7 +32,7 @@ export function createStepEventStamper(
     occurrences.set(content, occurrence + 1);
 
     const id = createHash("sha256")
-      .update(stepId)
+      .update(serializedScope)
       .update("\0")
       .update(content)
       .update("\0")

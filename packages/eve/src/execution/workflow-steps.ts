@@ -35,7 +35,7 @@ import {
   encodeMessageStreamEvent,
   type HandleMessageStreamEvent,
 } from "#protocol/message.js";
-import { createStepEventStamper } from "#execution/step-event-stamper.js";
+import { createEventStamper } from "#execution/event-stamper.js";
 import {
   CallbackBaseUrlKey,
   clearPendingAuthorization,
@@ -191,6 +191,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     durable: durableSession,
     turnAgent: bundle.turnAgent,
   });
+  const initialEmissionState = getHarnessEmissionState(initialSession.state);
 
   const adapterCtx = buildAdapterContext(adapter, ctx);
 
@@ -240,7 +241,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   }
 
   const writer = input.parentWritable.getWriter();
-  const stampEvent = createStepEventStamper();
+  const stampEvent = createEventStamper({
+    sessionId: initialSession.sessionId,
+    turnSequence: initialEmissionState.sequence,
+  });
   const hookRegistry = bundle.hookRegistry;
   const dynamicInstructionsResolvers = bundle.resolvedAgent.dynamicInstructionsResolvers ?? [];
   const dynamicSkillResolvers = bundle.resolvedAgent.dynamicSkillResolvers ?? [];
@@ -473,11 +477,11 @@ export async function emitTerminalSessionFailureStep(input: {
 }): Promise<void> {
   "use step";
 
-  const stampEvent = createStepEventStamper();
   const details = formatError(input.error);
   const code = typeof details.name === "string" ? details.name : "WORKFLOW_EXECUTION_FAILED";
   const message = typeof details.message === "string" ? details.message : String(input.error);
   const sessionId = (input.serializedContext["eve.sessionId"] as string | undefined) ?? "";
+  const stampEvent = createEventStamper({ sessionId, turnSequence: "terminal" });
 
   log.error("workflow loop threw — emitting terminal session.failed", {
     sessionId,
@@ -543,7 +547,6 @@ export async function runProxyInputRequestStep(input: {
 }): Promise<ProxyInputRequestResult> {
   "use step";
 
-  const stampEvent = createStepEventStamper();
   const durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
   const adapter = ctx.require(ChannelKey);
@@ -556,6 +559,10 @@ export async function runProxyInputRequestStep(input: {
     },
     durable: durableSession,
     turnAgent: bundle.turnAgent,
+  });
+  const stampEvent = createEventStamper({
+    sessionId: session.sessionId,
+    turnSequence: getHarnessEmissionState(session.state).sequence,
   });
   const writer = input.parentWritable.getWriter();
 

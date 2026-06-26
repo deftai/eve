@@ -36,7 +36,7 @@ export type AssistantStepFinishReason =
 export interface HandleMessageStreamEventMeta {
   readonly at: string;
   /**
-   * Stable identity for this logical event across workflow step retries.
+   * Stable identity for this logical event across workflow delivery replays.
    *
    * TypeScript clients use this value to suppress replayed events while still
    * advancing the durable stream cursor past every physical record.
