@@ -39,6 +39,26 @@ async function executeSdkTool(input: {
   return await execute!(input.toolInput ?? {}, { toolCallId: input.toolCallId ?? "call_1" });
 }
 
+async function notifySdkToolInputAvailable(input: {
+  readonly tool: unknown;
+  readonly toolCallId?: string;
+  readonly toolInput?: unknown;
+}): Promise<void> {
+  const onInputAvailable = (
+    input.tool as {
+      readonly onInputAvailable?: (options: {
+        readonly input: unknown;
+        readonly toolCallId: string;
+      }) => Promise<void> | void;
+    }
+  ).onInputAvailable;
+  expect(onInputAvailable).toBeTypeOf("function");
+  await onInputAvailable!({
+    input: input.toolInput ?? {},
+    toolCallId: input.toolCallId ?? "call_1",
+  });
+}
+
 async function projectSdkToolOutput(input: {
   readonly output: unknown;
   readonly tool: unknown;
@@ -302,6 +322,42 @@ describe("buildToolSet", () => {
 
     expect(needsApproval).toBeTypeOf("function");
     await expect(needsApproval?.({}, {})).resolves.toBe(false);
+  });
+
+  it("does not eagerly start a tool that requires approval", async () => {
+    let approvalChecks = 0;
+    let executionCount = 0;
+    const tools: HarnessToolMap = new Map<string, HarnessToolDefinition>([
+      [
+        "dangerous_tool",
+        {
+          description: "Does a risky thing.",
+          execute: async () => {
+            executionCount += 1;
+            return "ok";
+          },
+          inputSchema: jsonSchema({}),
+          name: "dangerous_tool",
+          needsApproval: () => {
+            approvalChecks += 1;
+            return true;
+          },
+        },
+      ],
+    ]);
+    const sdkTool = buildToolSet({ tools }).dangerous_tool;
+    const toolInput = {};
+    const needsApproval = (
+      sdkTool as {
+        readonly needsApproval?: (input: unknown, context: unknown) => Promise<boolean> | boolean;
+      }
+    ).needsApproval;
+
+    await notifySdkToolInputAvailable({ tool: sdkTool, toolInput });
+    await expect(needsApproval?.(toolInput, {})).resolves.toBe(true);
+
+    expect(approvalChecks).toBe(1);
+    expect(executionCount).toBe(0);
   });
 
   it("forwards toModelOutput to the SDK tool", () => {

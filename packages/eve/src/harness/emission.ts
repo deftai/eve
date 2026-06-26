@@ -14,7 +14,6 @@ type InlineToolResultJsonValue = Extract<InlineToolResultPart["output"], { type:
 import type { AssistantStepFinishReason, RuntimeIdentity } from "#protocol/message.js";
 import {
   createActionsRequestedEvent,
-  createActionResultEvent,
   createMessageAppendedEvent,
   createMessageCompletedEvent,
   createMessageReceivedEvent,
@@ -34,14 +33,15 @@ import type { RunMode } from "#shared/run-mode.js";
 import { hasEmptyDeliverySentinel } from "#shared/empty-delivery.js";
 import { toError } from "#shared/errors.js";
 import type { JsonObject } from "#shared/json.js";
-import {
-  createRuntimeToolResultFromStepResult,
-  createRuntimeToolResultFromValue,
-} from "#harness/action-result-helpers.js";
+import type { EagerToolExecutionGate } from "#harness/eager-tool-execution-gate.js";
 import {
   createRuntimeActionRequestFromToolCall,
   resolveToolCallInputObject,
 } from "#harness/runtime-actions.js";
+import {
+  createStreamToolErrorEvent,
+  createStreamToolResultEvent,
+} from "#harness/stream-action-results.js";
 import type { RuntimeActionRequest } from "#runtime/actions/types.js";
 import { isAuthorizationSignal, isPendingAuthorizationToolOutput } from "#harness/authorization.js";
 import { contextStorage } from "#context/container.js";
@@ -321,9 +321,9 @@ export function normalizeAssistantStepFinishReason(
 /**
  * Result of consuming one step's `fullStream`.
  *
- * `handledInlineToolResultCallIds` lists approval-resume tool-result
- * call ids the stream already handled inline — either emitted as
- * `action.result` events or routed to the authorization park path.
+ * `handledInlineToolResultCallIds` lists terminal tool-result call ids the
+ * stream already handled inline — either emitted as `action.result` events
+ * or routed to the authorization park path.
  * `emitStepActions` skips these to avoid double-emission.
  *
  * `inlineToolResultParts` holds the same tool-results in
@@ -345,7 +345,9 @@ interface EmittedStreamContent {
 }
 
 interface StreamActionEmissionOptions {
+  readonly eagerToolExecutionGate?: EagerToolExecutionGate;
   readonly excludedActionToolNames: ReadonlySet<string>;
+  readonly localExecutionEndCallIds?: ReadonlySet<string>;
   readonly tools: HarnessToolMap;
 }
 
@@ -353,12 +355,10 @@ interface StreamActionEmissionOptions {
  * Consumes the AI SDK `fullStream` and emits real-time text and reasoning
  * events.
  *
- * `tool-result` parts that have no preceding `tool-call` in this stream
- * are emitted inline as `action.result` events. This is the
- * approval-resume path: when a previously-parked tool call is approved,
- * the AI SDK enqueues the executed tool-result onto the same step's
- * stream before the next LLM call. Emitting `action.result` inline keeps
- * it ahead of the message events that depend on it.
+ * Terminal local `tool-result` parts emit `action.result` immediately.
+ * This includes calls observed earlier in this stream and approval resumes
+ * whose calls were observed on a prior step. Preliminary results remain
+ * non-terminal and never complete an action row.
  *
  * Eligible local tool-call parts complete preceding assistant text, then emit
  * `actions.requested` before execution begins. `emitStepActions` emits only
@@ -381,6 +381,7 @@ export async function emitStreamContent(
   let streamError: Error | undefined;
   const toolCallIdsSeenInStream = new Set<string>();
   const emittedActionCallIds = new Set<string>();
+  const localExecutionEndCallIds = options?.localExecutionEndCallIds ?? new Set<string>();
   const providerToolCallIdsSeen = new Set<string>();
   const providerActionBatch = createProviderStreamActionBatch({ emitFn, state });
   const handledInlineToolResultCallIds = new Set<string>();
@@ -446,6 +447,7 @@ export async function emitStreamContent(
         turnId: state.turnId,
       }),
     );
+    options?.eagerToolExecutionGate?.actionRequested(action.callId);
   };
 
   const observeStreamToolCall = async (toolCall: TypedToolCall<ToolSet>): Promise<void> => {
@@ -539,46 +541,55 @@ export async function emitStreamContent(
             toolName: inlineToolResult.toolName,
           });
           await providerActionBatch.flush();
-          await emitFn(
-            createActionResultEvent({
-              result: createRuntimeToolResultFromStepResult(inlineToolResult),
-              sequence: state.sequence,
-              stepIndex: state.stepIndex,
-              turnId: state.turnId,
-            }),
-          );
+          await emitFn(createStreamToolResultEvent({ state, toolResult: inlineToolResult }));
           // Provider-executed results are already kept in the provider-owned
           // assistant response shape. Do not synthesize local `role: "tool"`
           // history for them; just surface the normal action result above.
           break;
         }
 
-        // Approval-resume: the AI SDK enqueues a previously-parked
-        // tool's result onto the parent stream before re-entering the
-        // LLM call. The tool-call itself was emitted on a prior step's
-        // stream, so it is absent here. Surface `action.result`
-        // inline so it precedes the message events that consume it.
-        if (toolCallIdsSeenInStream.has(part.toolCallId)) {
+        if (inlineToolResult.preliminary === true) {
           break;
         }
         await providerActionBatch.flush();
         await flushCurrentMessage();
+
+        const isCurrentStreamCall = toolCallIdsSeenInStream.has(inlineToolResult.toolCallId);
         if (isInlineAuthorizationToolResult(inlineToolResult)) {
-          // Approval-resume auth: route to the park detector via
-          // inlineAuthorizationResults instead of emitting a plain
-          // action.result that the model would treat as a normal output.
-          handledInlineToolResultCallIds.add(part.toolCallId);
-          inlineAuthorizationResults.push(inlineToolResult);
+          if (!isCurrentStreamCall) {
+            // Approval-resume auth: route to the park detector via
+            // inlineAuthorizationResults instead of emitting a plain
+            // action.result that the model would treat as a normal output.
+            handledInlineToolResultCallIds.add(inlineToolResult.toolCallId);
+            inlineAuthorizationResults.push(inlineToolResult);
+          }
           break;
         }
-        await emitFn(
-          createActionResultEvent({
-            result: createRuntimeToolResultFromStepResult(inlineToolResult),
-            sequence: state.sequence,
-            stepIndex: state.stepIndex,
-            turnId: state.turnId,
-          }),
-        );
+
+        // The AI SDK just reported a real local executor completion. Surface
+        // its terminal result as soon as the SDK yields it instead of waiting
+        // for every sibling call to finish and `onStepFinish` to run.
+        if (
+          emittedActionCallIds.has(inlineToolResult.toolCallId) &&
+          localExecutionEndCallIds.has(inlineToolResult.toolCallId)
+        ) {
+          await emitFn(createStreamToolResultEvent({ state, toolResult: inlineToolResult }));
+          handledInlineToolResultCallIds.add(inlineToolResult.toolCallId);
+          break;
+        }
+
+        // A synthetic/replayed result for a call already present in this
+        // stream still belongs to the step reconciliation path. Only an AI SDK
+        // execution-end marker proves that it is a live local completion.
+        if (isCurrentStreamCall) {
+          break;
+        }
+
+        // Approval-resume: the AI SDK enqueues a previously-parked tool's
+        // result onto the parent stream before re-entering the LLM call. The
+        // original tool-call was emitted on a prior step, so splice the result
+        // into history after surfacing it as an action event.
+        await emitFn(createStreamToolResultEvent({ state, toolResult: inlineToolResult }));
         handledInlineToolResultCallIds.add(part.toolCallId);
         // Match AI SDK's `createToolModelOutput` shape (json for non-strings,
         // text for strings) so persisted history is shape-compatible.
@@ -599,19 +610,15 @@ export async function emitStreamContent(
         if (toolError.providerExecuted === true) {
           await collectProviderToolCall(toolError);
           await providerActionBatch.flush();
-          await emitFn(
-            createActionResultEvent({
-              result: createRuntimeToolResultFromValue({
-                callId: toolError.toolCallId,
-                isError: true,
-                output: toError(toolError.error),
-                toolName: toolError.toolName,
-              }),
-              sequence: state.sequence,
-              stepIndex: state.stepIndex,
-              turnId: state.turnId,
-            }),
-          );
+          await emitFn(createStreamToolErrorEvent({ state, toolError }));
+        } else if (
+          emittedActionCallIds.has(toolError.toolCallId) &&
+          localExecutionEndCallIds.has(toolError.toolCallId)
+        ) {
+          await providerActionBatch.flush();
+          await flushCurrentMessage();
+          await emitFn(createStreamToolErrorEvent({ state, toolError }));
+          handledInlineToolResultCallIds.add(toolError.toolCallId);
         }
         break;
       }

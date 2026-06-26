@@ -190,9 +190,9 @@ export function buildStepHooks(input: StepHooksInput): StepHooks {
  * arguments — the runtime event stream only sees successfully parsed
  * tool calls.
  *
- * `handledInlineToolResultCallIds` lists approval-resume tool-result
- * call ids the stream already handled inline (see `emitStreamContent`).
- * This skips them to avoid double-emission.
+ * `handledInlineToolResultCallIds` lists terminal tool-result call ids the
+ * stream already emitted inline (see `emitStreamContent`). This skips them to
+ * avoid double-emission.
  */
 export async function emitStepActions(
   emitFn: HarnessEmitFn,

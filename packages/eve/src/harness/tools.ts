@@ -1,4 +1,4 @@
-import { type JSONValue, type ToolSet, tool } from "ai";
+import { asSchema, type JSONValue, type ToolSet, tool } from "ai";
 
 import type { SessionCapabilities } from "#channel/types.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
@@ -7,6 +7,7 @@ import { WEB_SEARCH_TOOL_DEFINITION } from "#runtime/framework-tools/web-search.
 import { isObject } from "#shared/guards.js";
 import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
+import type { EagerToolExecutionGate } from "#harness/eager-tool-execution-gate.js";
 import { resolveWebSearchBackend, resolveWebSearchProviderTool } from "#harness/provider-tools.js";
 import type { HarnessToolMap } from "#harness/types.js";
 import { loadContext } from "#context/container.js";
@@ -43,6 +44,7 @@ export function buildToolSet(input: {
   readonly approvedTools?: ReadonlySet<string>;
   readonly capabilities?: SessionCapabilities;
   readonly disabledProviderTools?: ReadonlySet<string>;
+  readonly eagerToolExecutionGate?: EagerToolExecutionGate;
   readonly tools: HarnessToolMap;
 }): ToolSet {
   const tools: Record<string, ToolSet[string]> = {};
@@ -59,11 +61,25 @@ export function buildToolSet(input: {
     }
 
     const authorToModelOutput = definition.toModelOutput;
+    const execute = wrapToolExecute(definition);
+    const needsApproval = buildNeedsApprovalFn(definition, input);
+    const eagerExecution =
+      execute === undefined
+        ? undefined
+        : createEagerLocalToolExecution({
+            execute,
+            eagerToolExecutionGate: input.eagerToolExecutionGate,
+            inputSchema: definition.inputSchema,
+            needsApproval,
+          });
     tools[definition.name] = tool({
       description: definition.description,
-      execute: wrapToolExecute(definition),
+      execute: eagerExecution?.execute,
       inputSchema: definition.inputSchema,
-      needsApproval: buildNeedsApprovalFn(definition, input),
+      needsApproval: eagerExecution?.needsApproval ?? needsApproval,
+      ...(eagerExecution === undefined
+        ? {}
+        : { onInputAvailable: eagerExecution.onInputAvailable }),
       outputSchema: definition.outputSchema,
       ...(definition.execute !== undefined
         ? {
@@ -129,6 +145,7 @@ export function buildToolSetFromDefinitions(input: {
   readonly approvedTools?: ReadonlySet<string>;
   readonly capabilities?: SessionCapabilities;
   readonly disabledProviderTools?: ReadonlySet<string>;
+  readonly eagerToolExecutionGate?: EagerToolExecutionGate;
   readonly tools: readonly HarnessToolDefinition[];
 }): ToolSet {
   const tools = new Map<string, HarnessToolDefinition>();
@@ -141,6 +158,7 @@ export function buildToolSetFromDefinitions(input: {
     approvedTools: input.approvedTools,
     capabilities: input.capabilities,
     disabledProviderTools: input.disabledProviderTools,
+    eagerToolExecutionGate: input.eagerToolExecutionGate,
     tools,
   });
 }
@@ -170,6 +188,99 @@ export function wrapToolExecute(
       toolName: definition.name,
     });
   };
+}
+
+type LocalToolExecute = NonNullable<ReturnType<typeof wrapToolExecute>>;
+
+type EagerToolExecutionResult =
+  | { readonly status: "fulfilled"; readonly value: unknown }
+  | { readonly error: unknown; readonly status: "rejected" };
+
+/**
+ * Starts an auto-approved local tool when the model has supplied its complete
+ * input, then lets the AI SDK await the same execution at model-call end.
+ *
+ * AI SDK invokes `onInputAvailable` before its normal execution transform.
+ * The cached outcome gives that transform its usual result or error without
+ * running the local executor twice. Approval is evaluated through the same
+ * memoized function in both phases, so a gated tool never starts early.
+ */
+function createEagerLocalToolExecution(input: {
+  readonly execute: LocalToolExecute;
+  readonly eagerToolExecutionGate?: EagerToolExecutionGate;
+  readonly inputSchema: HarnessToolDefinition["inputSchema"];
+  readonly needsApproval: (toolInput: unknown) => Promise<boolean>;
+}): {
+  readonly execute: LocalToolExecute;
+  readonly needsApproval: (toolInput: unknown) => Promise<boolean>;
+  readonly onInputAvailable: (options: {
+    readonly input: unknown;
+    readonly toolCallId: string;
+  }) => Promise<void>;
+} {
+  const approvalsByInput = new Map<unknown, Promise<boolean>>();
+  const executionsByCallId = new Map<string, Promise<EagerToolExecutionResult>>();
+
+  const needsApproval = (toolInput: unknown): Promise<boolean> => {
+    const cachedApproval = approvalsByInput.get(toolInput);
+    if (cachedApproval !== undefined) return cachedApproval;
+
+    const approval = input.needsApproval(toolInput);
+    approvalsByInput.set(toolInput, approval);
+    return approval;
+  };
+
+  const startExecution = (toolInput: unknown, toolCallId: string) => {
+    const cachedExecution = executionsByCallId.get(toolCallId);
+    if (cachedExecution !== undefined) return cachedExecution;
+
+    const execution = input.execute(toolInput, { toolCallId }).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (error: unknown) => ({ error, status: "rejected" as const }),
+    );
+    executionsByCallId.set(toolCallId, execution);
+    return execution;
+  };
+
+  const waitForActionRequest = async (toolCallId: string): Promise<void> => {
+    await input.eagerToolExecutionGate?.waitForActionRequest(toolCallId);
+  };
+
+  return {
+    async execute(toolInput, options) {
+      await waitForActionRequest(options.toolCallId);
+      const result = await startExecution(toolInput, options.toolCallId);
+      if (result.status === "rejected") throw result.error;
+      return result.value;
+    },
+    needsApproval,
+    async onInputAvailable({ input: toolInput, toolCallId }) {
+      if (!(await hasValidEagerToolInput(toolInput, input.inputSchema))) return;
+      if (await needsApproval(toolInput)) return;
+
+      void waitForActionRequest(toolCallId).then(() => startExecution(toolInput, toolCallId));
+    },
+  };
+}
+
+async function hasValidEagerToolInput(
+  toolInput: unknown,
+  inputSchema: HarnessToolDefinition["inputSchema"],
+): Promise<boolean> {
+  // The SDK invokes `onInputAvailable` even for an invalid tool-call part.
+  // Object-only eager dispatch is deliberately conservative: it preserves the
+  // normal executor for exotic primitive/array schemas rather than risking an
+  // execution the SDK would reject.
+  if (!isObject(toolInput)) return false;
+
+  const validate = asSchema(inputSchema).validate;
+  if (validate === undefined) return true;
+
+  try {
+    return (await validate(toolInput)).success;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeToolJsonOutput(input: {
@@ -252,6 +363,7 @@ export async function buildToolSetWithProviderTools(input: {
   readonly approvedTools?: ReadonlySet<string>;
   readonly capabilities?: SessionCapabilities;
   readonly disabledProviderTools?: ReadonlySet<string>;
+  readonly eagerToolExecutionGate?: EagerToolExecutionGate;
   readonly modelReference: RuntimeModelReference;
   readonly tools: HarnessToolMap;
 }): Promise<ToolSet> {
@@ -261,6 +373,7 @@ export async function buildToolSetWithProviderTools(input: {
       approvedTools: input.approvedTools,
       capabilities: input.capabilities,
       disabledProviderTools: disabled,
+      eagerToolExecutionGate: input.eagerToolExecutionGate,
       tools: input.tools,
     }),
   };

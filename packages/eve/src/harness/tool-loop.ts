@@ -10,6 +10,7 @@ import {
   type ModelMessage,
   type SystemModelMessage,
   type TelemetryOptions,
+  type ToolExecutionEndEvent,
   type ToolModelMessage,
   ToolLoopAgent,
   type ToolSet,
@@ -136,6 +137,7 @@ import {
   isInvalidToolCall,
 } from "#harness/step-hooks.js";
 import { buildToolSetFromDefinitions, buildToolSetWithProviderTools } from "#harness/tools.js";
+import { createEagerToolExecutionGate } from "#harness/eager-tool-execution-gate.js";
 import {
   continueWorkflowSandboxInterrupt,
   getWorkflowSandboxInterrupt,
@@ -607,11 +609,14 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const callMessages = opts.trailingUserNote
         ? [...modelMessages, { role: "user" as const, content: opts.trailingUserNote }]
         : modelMessages;
+      const eagerToolExecutionGate =
+        emit === undefined ? undefined : createEagerToolExecutionGate();
 
       const flatTools = await buildToolSetWithProviderTools({
         approvedTools,
         capabilities: config.capabilities,
         disabledProviderTools: opts.disabledProviderTools,
+        eagerToolExecutionGate,
         modelReference: session.agent.modelReference,
         tools: config.tools,
       });
@@ -622,6 +627,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           approvedTools,
           capabilities: config.capabilities,
           disabledProviderTools: opts.disabledProviderTools,
+          eagerToolExecutionGate,
           tools: dynamicTools,
         });
         // Dynamic tools override a same-named authored tool.
@@ -662,12 +668,16 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         marker,
         session,
       });
+      const localExecutionEndCallIds = new Set<string>();
 
       const agentSettings = {
         headers: attributionHeaders,
         instructions,
         model,
-        onToolExecutionEnd: logToolExecutionError,
+        onToolExecutionEnd(event: ToolExecutionEndEvent) {
+          logToolExecutionError(event);
+          localExecutionEndCallIds.add(event.toolCall.toolCallId);
+        },
         // Replaces the AI SDK's default `console.error`; the harness still
         // emits stream events, this just keeps the raw error from being silent.
         onError(event: { error: unknown }) {
@@ -699,7 +709,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             inlineAuthorizationResults,
             inlineToolResultParts,
           } = await emitStreamContent(emit, emissionState, streamResult.fullStream, {
+            eagerToolExecutionGate,
             excludedActionToolNames,
+            localExecutionEndCallIds,
             tools: config.tools,
           });
           const stepResult = await hooks.stepResult;

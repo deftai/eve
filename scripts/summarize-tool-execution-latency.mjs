@@ -143,7 +143,7 @@ function renderMarkdown(summary) {
     "| --- | ---: | ---: | ---: | ---: | ---: |",
     rows,
     "",
-    "p95 uses nearest-rank. `estimatedEager*` and `potential*` are counterfactual estimates; compare `current*` directly between baseline and treatment.",
+    "p95 uses nearest-rank. Every metric is observed in its recorded trial; compare like-for-like trace kinds between baseline and treatment.",
     "",
   ].join("\n");
 }
