@@ -234,6 +234,25 @@ void (async () => {
     console.log(theme.muted("[states] right-title flipped to authorized"));
 
     await waitForCondition(
+      () => {
+        const snap = screen.snapshot();
+        return (
+          snap.includes("Authorization complete") &&
+          !snap.includes("Authorization required for stub-mcp") &&
+          !snap.includes("URL: https://example.com/authorize/stub-mcp") &&
+          !snap.includes("Code: STUB-1234") &&
+          !snap.includes("Visit the URL above")
+        );
+      },
+      {
+        timeoutMs: 5_000,
+        label: "completed authorization replaces the stale challenge body",
+        onTimeout: () => screen.snapshot(),
+      },
+    );
+    console.log(theme.muted("[states] completed authorization body replaced the challenge"));
+
+    await waitForCondition(
       () => !screen.snapshot().includes("Waiting for connection authorization"),
       {
         timeoutMs: 5_000,

@@ -1013,18 +1013,14 @@ export class TerminalRenderer implements AgentTUIRenderer {
 
   upsertConnectionAuth(update: ConnectionAuthUpdate): void {
     if (this.#connectionAuth === "hidden") return;
-    const isTerminal =
-      update.state === "authorized" ||
-      update.state === "declined" ||
-      update.state === "failed" ||
-      update.state === "timed-out";
+    const terminalMessage = connectionAuthTerminalMessage(update.state);
     this.#upsertBlock({
       id: connectionAuthSectionId(update.name),
       kind: "connection-auth",
       title: `${stripTerminalControls(update.name)} · authorization · ${update.state}`,
-      body: formatConnectionAuthContent(update),
+      body: formatConnectionAuthContent(update, terminalMessage),
       preformatted: true,
-      live: !isTerminal,
+      live: terminalMessage === undefined,
     });
     this.#paint();
   }
@@ -3424,15 +3420,38 @@ function connectionAuthSectionId(connectionName: string): string {
   return `connection-auth:${connectionName}`;
 }
 
-function formatConnectionAuthContent(update: ConnectionAuthUpdate): string {
+function connectionAuthTerminalMessage(state: ConnectionAuthUpdate["state"]): string | undefined {
+  switch (state) {
+    case "authorized":
+      return "Authorization complete";
+    case "declined":
+      return "Authorization declined";
+    case "failed":
+      return "Authorization failed";
+    case "timed-out":
+      return "Authorization timed out";
+    case "required":
+    case "pending":
+      return undefined;
+  }
+}
+
+function formatConnectionAuthContent(
+  update: ConnectionAuthUpdate,
+  terminalMessage: string | undefined,
+): string {
   const lines: string[] = [];
-  const description = stripTerminalControls(update.description);
-  if (description.length > 0) lines.push(description);
-  const challenge = update.challenge;
-  if (challenge?.url) lines.push(`URL: ${stripTerminalControls(challenge.url)}`);
-  if (challenge?.userCode) lines.push(`Code: ${stripTerminalControls(challenge.userCode)}`);
-  if (challenge?.expiresAt) lines.push(`Expires: ${stripTerminalControls(challenge.expiresAt)}`);
-  if (challenge?.instructions) lines.push(stripTerminalControls(challenge.instructions));
+  if (terminalMessage !== undefined) {
+    lines.push(terminalMessage);
+  } else {
+    const description = stripTerminalControls(update.description);
+    if (description.length > 0) lines.push(description);
+    const challenge = update.challenge;
+    if (challenge?.url) lines.push(`URL: ${stripTerminalControls(challenge.url)}`);
+    if (challenge?.userCode) lines.push(`Code: ${stripTerminalControls(challenge.userCode)}`);
+    if (challenge?.expiresAt) lines.push(`Expires: ${stripTerminalControls(challenge.expiresAt)}`);
+    if (challenge?.instructions) lines.push(stripTerminalControls(challenge.instructions));
+  }
   if (update.reason !== undefined) {
     const reason = stripTerminalControls(update.reason);
     if (reason.length > 0) lines.push(`Reason: ${reason}`);

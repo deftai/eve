@@ -635,13 +635,17 @@ describe("TerminalRenderer (inline scrollback)", () => {
       name: "linear",
       description: "Authorization required for linear",
       state: "authorized",
+      challenge: { url: "https://connect.vercel.com/authorize/linear" },
     });
     renderer.shutdown();
 
     const snapshot = screen.snapshot();
     expect(snapshot).toContain("linear · authorization · authorized");
+    expect(snapshot).toContain("Authorization complete");
     expect(snapshot).not.toContain("linear · authorization · required");
     expect(snapshot).not.toContain("linear · authorization · pending");
+    expect(snapshot).not.toContain("Authorization required for linear");
+    expect(snapshot).not.toContain("https://connect.vercel.com/authorize/linear");
   });
 
   it("does not commit partial live assistant rows while streaming over the viewport", async () => {
