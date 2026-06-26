@@ -13,7 +13,10 @@ import {
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import {
+  createCompiledAgentNodeManifest,
+  ROOT_COMPILED_AGENT_NODE_ID,
+} from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import type { ToolContext } from "#public/definitions/tool.js";
@@ -472,6 +475,145 @@ describe("workflowEntry integration", () => {
         await expect(run.status).resolves.toBe("running");
       } finally {
         releaseTool();
+        stream.dispose();
+        await run.cancel();
+      }
+    });
+  });
+
+  it("cancels a blocking local subagent with its parent turn", async () => {
+    let releaseChild = () => {};
+    let signalChildStarted!: () => void;
+    let signalChildAborted!: () => void;
+    const childStarted = new Promise<void>((resolve) => {
+      signalChildStarted = resolve;
+    });
+    const childAborted = new Promise<void>((resolve) => {
+      signalChildAborted = resolve;
+    });
+    const waitForCancellationTool: ResolvedToolDefinition = {
+      description: "Wait until the active turn is cancelled.",
+      execute: createToolExecuteWithAuth({
+        scope: "wait_for_cancellation",
+        async execute(_input, rawCtx) {
+          const abortSignal = (rawCtx as ToolContext).abortSignal;
+          signalChildStarted();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => {
+              signalChildAborted();
+              reject(abortSignal.reason);
+            };
+            releaseChild = () => {
+              abortSignal.removeEventListener("abort", onAbort);
+              resolve();
+            };
+            if (abortSignal.aborted) {
+              onAbort();
+              return;
+            }
+            abortSignal.addEventListener("abort", onAbort, { once: true });
+          });
+          return { status: "released" };
+        },
+      }),
+      inputSchema: {
+        additionalProperties: false,
+        properties: {},
+        type: "object",
+      },
+      logicalPath: "tools/wait_for_cancellation.ts",
+      name: "wait_for_cancellation",
+      sourceId: "tools/wait_for_cancellation.ts",
+      sourceKind: "module",
+    };
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-local-subagent-cancellation" },
+    });
+    const childNodeId = "subagents/blocking_delegate";
+    const childAgentRoot = `${runtime.manifest.agentRoot}/${childNodeId}`;
+    const childToolSourceId = "memory::subagents/blocking_delegate/tools/wait_for_cancellation.ts";
+    runtime.manifest.subagents.push({
+      agent: createCompiledAgentNodeManifest({
+        agentRoot: childAgentRoot,
+        appRoot: runtime.manifest.appRoot,
+        config: {
+          model: runtime.manifest.config.model,
+          name: "blocking_delegate",
+        },
+        tools: [
+          {
+            description: waitForCancellationTool.description,
+            inputSchema: waitForCancellationTool.inputSchema,
+            logicalPath: "tools/wait_for_cancellation.ts",
+            name: waitForCancellationTool.name,
+            sourceId: childToolSourceId,
+            sourceKind: "module",
+          },
+        ],
+      }),
+      description: "Runs a blocking cancellation probe.",
+      entryPath: "subagents/blocking_delegate",
+      logicalPath: "subagents/blocking_delegate/agent.ts",
+      name: "blocking_delegate",
+      nodeId: childNodeId,
+      rootPath: childAgentRoot,
+      sourceId: "subagents/blocking_delegate/agent.ts",
+      sourceKind: "module",
+    });
+    runtime.manifest.subagentEdges.push({
+      childNodeId,
+      parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
+    });
+    runtime.moduleMap.nodes[childNodeId] = {
+      modules: {
+        [childToolSourceId]: {
+          default: { execute: waitForCancellationTool.execute },
+        },
+      },
+    };
+    const continuationToken = "http:workflow-entry-local-subagent-cancellation";
+
+    await runtime.run(async () => {
+      const run = await start(workflowEntry, [
+        {
+          input: {
+            message:
+              'Use blocking_delegate with message "Use wait_for_cancellation before replying."',
+          },
+          serializedContext: buildSerializedContext({
+            channelKind: "http",
+            continuationToken,
+            mode: "conversation",
+          }),
+        },
+      ]);
+      const stream = captureEvents(run);
+
+      try {
+        const initialEvents = await stream.nextUntil(
+          "local subagent dispatch",
+          (event) => event.type === "subagent.called",
+        );
+        await withTimeout(childStarted, "blocking local subagent execution");
+        await resumeHook(`${continuationToken}:cancel`, {});
+        await withTimeout(childAborted, "the root abort signal to reach the local subagent");
+
+        const cancelledTurn = [
+          ...initialEvents,
+          ...(await stream.nextUntil(
+            "cancelled parent turn",
+            (event) => event.type === "session.waiting",
+          )),
+        ];
+        const cancelledTypes = cancelledTurn.map((event) => event.type);
+
+        expect(cancelledTypes.slice(-2)).toEqual(["turn.cancelled", "session.waiting"]);
+        expect(cancelledTypes).not.toContain("step.failed");
+        expect(cancelledTypes).not.toContain("turn.failed");
+        expect(cancelledTypes).not.toContain("session.failed");
+        await expect(run.status).resolves.toBe("running");
+      } finally {
+        releaseChild();
         stream.dispose();
         await run.cancel();
       }

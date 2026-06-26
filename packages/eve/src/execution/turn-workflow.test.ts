@@ -185,6 +185,33 @@ describe("turnWorkflow", () => {
     );
   });
 
+  it("uses an inherited abort signal without creating a child cancel hook", async () => {
+    const abortController = new AbortController();
+    const sessionState = createSessionState();
+    vi.mocked(turnStep).mockResolvedValueOnce({
+      action: "done",
+      output: "child output",
+      serializedContext: { state: "done" },
+      sessionState,
+    });
+    const { input } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState,
+    });
+
+    await turnWorkflow({
+      ...input,
+      stepInput: {
+        ...input.stepInput,
+        abortSignal: abortController.signal,
+      },
+    });
+
+    expect(vi.mocked(turnStep).mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
+    expect(createHookMock).not.toHaveBeenCalledWith({ token: "http:test:cancel" });
+    expect(cancelHookControl).toBeUndefined();
+  });
+
   it("migrates a pre-version (unversioned) input and runs the first turn step", async () => {
     const sessionState = createSessionState();
     const parentWritable = new WritableStream<Uint8Array>();
@@ -468,7 +495,10 @@ describe("turnWorkflow", () => {
     expect(resumeHookMock.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(dispatchRuntimeActionsStep).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
+    const abortSignal = vi.mocked(turnStep).mock.calls[0]?.[0].abortSignal;
+    expect(abortSignal).toBeInstanceOf(AbortSignal);
     expect(dispatchRuntimeActionsStep).toHaveBeenCalledWith({
+      abortSignal,
       callbackBaseUrl: "https://eve.example.com",
       parentContinuationToken: "turn-token:inbox",
       parentWritable,
@@ -476,6 +506,7 @@ describe("turnWorkflow", () => {
       sessionState: pendingState,
     });
     expect(vi.mocked(turnStep).mock.calls[1]?.[0]).toMatchObject({
+      abortSignal,
       input: {
         kind: "runtime-action-result",
         results: [expect.objectContaining({ callId: "call-1", output: "child output" })],
@@ -535,6 +566,7 @@ describe("turnWorkflow", () => {
     await turnWorkflow(input);
 
     expect(dispatchWorkflowRuntimeActionsStep).toHaveBeenCalledWith({
+      abortSignal: expect.any(AbortSignal),
       callbackBaseUrl: "https://eve.example.com",
       parentContinuationToken: "turn-token:inbox",
       parentWritable,

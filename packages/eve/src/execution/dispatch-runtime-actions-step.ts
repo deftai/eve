@@ -48,6 +48,7 @@ import { toErrorMessage } from "#shared/errors.js";
 const log = createLogger("execution.dispatch-runtime-actions");
 
 export async function dispatchRuntimeActionsStep(input: {
+  readonly abortSignal?: AbortSignal;
   readonly callbackBaseUrl?: string;
   /** Internal hook that receives child completion and HITL payloads. */
   readonly parentContinuationToken?: string;
@@ -98,6 +99,7 @@ export async function dispatchRuntimeActionsStep(input: {
       switch (action.kind) {
         case "subagent-call": {
           const childRuntime = createWorkflowRuntime({
+            abortSignal: input.abortSignal,
             compiledArtifactsSource: bundle.compiledArtifactsSource,
             nodeId: action.nodeId,
           });

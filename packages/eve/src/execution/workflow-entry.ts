@@ -40,6 +40,7 @@ import {
  * and deserialized at each `"use step"` boundary.
  */
 export interface WorkflowEntryInput {
+  readonly abortSignal?: AbortSignal;
   readonly input: RunInput["input"];
   readonly serializedContext: Record<string, unknown>;
 }
@@ -97,6 +98,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
     });
 
     return await runDriverLoop({
+      abortSignal: input.abortSignal,
       capabilities,
       driverWritable,
       initialInput: {
@@ -138,6 +140,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
 }
 
 async function runDriverLoop(input: {
+  readonly abortSignal?: AbortSignal;
   readonly capabilities?: SessionCapabilities;
   readonly driverWritable: WritableStream<Uint8Array>;
   readonly initialInput: HookPayload;
@@ -168,6 +171,7 @@ async function runDriverLoop(input: {
     }
 
     let action: NextDriverAction = await dispatchAndAwaitTurn({
+      abortSignal: input.abortSignal,
       bufferedDeliveries,
       capabilities: input.capabilities,
       controlToken: nextTurnControlToken(),
@@ -220,6 +224,7 @@ async function runDriverLoop(input: {
         }
 
         action = await dispatchAndAwaitTurn({
+          abortSignal: input.abortSignal,
           bufferedDeliveries,
           capabilities: input.capabilities,
           controlToken: nextTurnControlToken(),
@@ -258,6 +263,7 @@ async function runDriverLoop(input: {
       }
 
       action = await dispatchAndAwaitTurn({
+        abortSignal: input.abortSignal,
         bufferedDeliveries,
         capabilities: input.capabilities,
         controlToken: nextTurnControlToken(),

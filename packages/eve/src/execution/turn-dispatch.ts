@@ -8,6 +8,7 @@ import type { RunMode } from "#shared/run-mode.js";
 
 /** Dispatches one turn and services its private-inbox control protocol until it terminates. */
 export async function dispatchAndAwaitTurn(input: {
+  readonly abortSignal?: AbortSignal;
   readonly bufferedDeliveries: DeliverHookPayload[];
   readonly capabilities?: SessionCapabilities;
   readonly controlToken: string;
@@ -26,6 +27,7 @@ export async function dispatchAndAwaitTurn(input: {
 
   try {
     await dispatchTurnStep({
+      ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
       capabilities: input.capabilities,
       completionToken: control.token,
       delivery: input.delivery,

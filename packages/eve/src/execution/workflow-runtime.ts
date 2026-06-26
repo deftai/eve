@@ -93,6 +93,7 @@ export const turnWorkflowReference = {
  * event stream and dispatches each turn as a child workflow run.
  */
 export function createWorkflowRuntime(config: {
+  readonly abortSignal?: AbortSignal;
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly nodeId?: string;
 }): Runtime {
@@ -137,6 +138,7 @@ export function createWorkflowRuntime(config: {
           workflowEntryReference,
           [
             {
+              ...(config.abortSignal === undefined ? {} : { abortSignal: config.abortSignal }),
               input: input.input,
               serializedContext,
             },

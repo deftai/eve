@@ -284,6 +284,7 @@ describe("dispatchTurnStep", () => {
 describe("dispatchRuntimeActionsStep", () => {
   it("starts subagent child drivers on the latest deployment", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
+    const abortController = new AbortController();
     const compiledArtifactsSource = {} as never;
     const compiledBundle = {
       adapterRegistry: {
@@ -341,6 +342,7 @@ describe("dispatchRuntimeActionsStep", () => {
     });
 
     const result = await dispatchRuntimeActionsStep({
+      abortSignal: abortController.signal,
       parentContinuationToken: "turn-inbox",
       parentWritable: createTestWritable(),
       serializedContext: createSerializedContext(),
@@ -352,6 +354,7 @@ describe("dispatchRuntimeActionsStep", () => {
       workflowEntryReference,
       [
         expect.objectContaining({
+          abortSignal: abortController.signal,
           input: {
             message: expect.stringContaining("investigate latest routing"),
           },

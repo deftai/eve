@@ -120,6 +120,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
                 ? dispatchWorkflowRuntimeActionsStep
                 : dispatchRuntimeActionsStep;
             const dispatchResult = await dispatch({
+              abortSignal,
               callbackBaseUrl: resolveWorkflowCallbackBaseUrl(getWorkflowMetadata().url),
               parentContinuationToken: inbox.token,
               parentWritable: cursor.parentWritable,
