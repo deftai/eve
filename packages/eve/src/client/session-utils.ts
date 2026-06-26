@@ -65,7 +65,19 @@ export function readTurnId(event: HandleMessageStreamEvent): string | undefined 
 }
 
 export function createSessionEventIdentity(event: HandleMessageStreamEvent): string {
-  return JSON.stringify([event.type, "data" in event ? event.data : undefined]);
+  return JSON.stringify([event.type, "data" in event ? canonicalizeJson(event.data) : undefined]);
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (typeof value !== "object" || value === null) return value;
+
+  const source = value as Record<string, unknown>;
+  const canonical: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    canonical[key] = canonicalizeJson(source[key]);
+  }
+  return canonical;
 }
 
 /**

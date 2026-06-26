@@ -228,10 +228,18 @@ describe("ClientSession", () => {
         },
         type: "subagent.completed",
       };
+      const reorderedReplay = {
+        data: {
+          subagentName: "helper",
+          output: "answer",
+          callId: "call_1",
+        },
+        type: "subagent.completed",
+      };
       return createStreamResponse([
         started,
         subagentCompleted,
-        subagentCompleted,
+        reorderedReplay,
         completed,
         turnCompleted,
         waiting,
