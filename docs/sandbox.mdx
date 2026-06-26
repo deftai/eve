@@ -207,9 +207,16 @@ Domain-level allow-lists and credential brokering are supported by `vercel()` an
 
 ## Credential brokering
 
-Secrets never enter the sandbox. Instead, the network policy's per-domain `transform` injects credentials at the firewall, so a header can authenticate egress to a host while the secret stays out of the sandbox process entirely.
+Credential brokering is an optional backend capability, not part of the portable sandbox contract. `vercel()` and `microsandbox()` can inject headers at the network boundary, so secrets stay out of the sandbox process. Docker and just-bash do not support these transforms.
 
-With the Vercel backend, attach authorization directly to each route that needs it:
+The two supported backends expose different levels of integration:
+
+- `vercel()` supports Eve-managed authorization rules and direct transforms.
+- `microsandbox()` supports direct transforms, but not Eve-managed authorization rules.
+
+### Managed authorization on Vercel Sandbox
+
+With `vercel()`, attach authorization directly to each route that needs it:
 
 ```ts title="agent/sandbox.ts"
 import { connect } from "@vercel/connect/eve";
@@ -236,15 +243,17 @@ export default defineSandbox({
 });
 ```
 
-`auth` uses the same authorization contract as connections and authored tools: a static `getToken`, a per-user strategy, or an interactive strategy such as Vercel Connect. Eve resolves every authenticated rule before returning the sandbox to authored code. Interactive credentials park and resume through Eve's normal callback lifecycle. Native Vercel `match` filters remain available on both authenticated and unauthenticated rules.
+`auth` uses the same authorization contract as connections and authored tools: a static `getToken`, a per-user strategy, or an interactive strategy such as Vercel Connect. Eve resolves every authenticated rule before returning the sandbox to authored code. Interactive credentials park and resume through Eve's normal callback lifecycle. Native Vercel `match` filters remain available on both authenticated and unauthenticated rules. This managed `auth` form is specific to the Vercel backend.
 
-Firewall transformations require Vercel Pro or Enterprise and are unavailable on Hobby.
+On Vercel, firewall transformations require Pro or Enterprise and are unavailable on Hobby.
 
 Eve removes resolved tokens after every step. Rules whose credentials are unavailable receive no credential transform. If another rule allows the same domain, Vercel still permits unmatched traffic to that domain without the credential.
 
 Managed policies reject replacement through `onSession({ use })`, where Eve owns the startup policy. `sandbox.setNetworkPolicy()` remains available mid-step, but replaces the complete active policy, including Eve's credential transforms. Eve clears the replacement after the step; a later step resolves and installs the managed policy again. Brokered credentials are unavailable during template bootstrap.
 
-You can also construct transforms directly on Vercel Sandbox or microsandbox:
+### Direct transforms
+
+Both `vercel()` and `microsandbox()` accept transforms whose credentials are already available to the app runtime:
 
 ```ts
 async onSession({ use }) {
@@ -268,7 +277,7 @@ async onSession({ use }) {
 }
 ```
 
-For mid-turn brokering, call `setNetworkPolicy` with the same shape. The [Vercel Sandbox docs](https://vercel.com/docs/sandbox) cover the firewall mechanism itself.
+For mid-turn brokering on either backend, call `setNetworkPolicy` with the same shape. The [Vercel Sandbox docs](https://vercel.com/docs/sandbox) cover the hosted firewall mechanism itself.
 
 ## What to read next
 
