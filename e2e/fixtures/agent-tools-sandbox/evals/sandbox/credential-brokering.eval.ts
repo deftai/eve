@@ -5,7 +5,6 @@ interface ProbeResult {
   readonly credentialVisibleToProcess?: unknown;
   readonly mode?: unknown;
   readonly supported?: unknown;
-  readonly unavailableRouteBlocked?: unknown;
 }
 
 interface CleanupResult {
@@ -16,7 +15,7 @@ interface CleanupResult {
 
 export default defineEval({
   description:
-    "Sandbox: Vercel firewall injects brokered credentials, keeps them out of the process, fails closed, and clears them after the step.",
+    "Sandbox: Vercel firewall injects brokered credentials, keeps them out of the process, and clears them after the step.",
   timeoutMs: 90_000,
   async test(t) {
     const probe = await t.send(
@@ -69,8 +68,7 @@ function assertProbeResult(value: unknown, targetKind: "local" | "remote"): void
     result.mode !== "vercel" ||
     result.supported !== true ||
     result.authorized !== true ||
-    result.credentialVisibleToProcess !== false ||
-    result.unavailableRouteBlocked !== true
+    result.credentialVisibleToProcess !== false
   ) {
     throw new Error(`Vercel credential brokering probe failed: ${JSON.stringify(value)}`);
   }

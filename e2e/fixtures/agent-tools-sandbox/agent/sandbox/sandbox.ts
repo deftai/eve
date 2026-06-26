@@ -1,11 +1,7 @@
 import { defaultBackend, defineSandbox } from "eve/sandbox";
 import { vercel } from "eve/sandbox/vercel";
 
-import {
-  CREDENTIAL_PROBE_PATH,
-  CREDENTIAL_PROBE_TOKEN,
-  CREDENTIAL_PROBE_UNAVAILABLE_PATH,
-} from "../credential-probe.js";
+import { CREDENTIAL_PROBE_PATH, CREDENTIAL_PROBE_TOKEN } from "../credential-probe.js";
 
 /**
  * Sandbox lifecycle fixture exercising the surfaces an agent author relies
@@ -59,29 +55,34 @@ const CLI_SCRIPT = [
 ].join("\n");
 
 const authorSnapshotId = process.env.EVE_TEST_AUTHOR_SNAPSHOT_ID;
+const credentialProbeHost = process.env.VERCEL_URL;
 const backend =
   authorSnapshotId !== undefined
     ? vercel({ source: { snapshotId: authorSnapshotId, type: "snapshot" } })
-    : process.env.VERCEL === "1"
+    : process.env.VERCEL === "1" && credentialProbeHost !== undefined
       ? vercel({
           networkPolicy: {
             allow: {
-              "*.vercel.app": [
-                {
-                  auth: {
-                    getToken: async () => ({ token: CREDENTIAL_PROBE_TOKEN }),
-                  },
-                  match: { path: { exact: CREDENTIAL_PROBE_PATH } },
-                  transform: ({ token }) => [{ headers: { authorization: `Bearer ${token}` } }],
-                },
+              [credentialProbeHost]: [
                 {
                   auth: {
                     getToken: async () => {
-                      throw new Error("credential-probe: intentionally unavailable credential");
+                      const token = process.env.VERCEL_OIDC_TOKEN;
+                      if (token === undefined || token.length === 0) {
+                        throw new Error("credential-probe: VERCEL_OIDC_TOKEN is unavailable");
+                      }
+                      return { token };
                     },
                   },
-                  match: { path: { exact: CREDENTIAL_PROBE_UNAVAILABLE_PATH } },
-                  transform: ({ token }) => [{ headers: { authorization: `Bearer ${token}` } }],
+                  match: { path: { exact: CREDENTIAL_PROBE_PATH } },
+                  transform: ({ token }) => [
+                    {
+                      headers: {
+                        authorization: `Bearer ${CREDENTIAL_PROBE_TOKEN}`,
+                        "x-vercel-trusted-oidc-idp-token": token,
+                      },
+                    },
+                  ],
                 },
               ],
             },

@@ -13,13 +13,12 @@ function sandbox(): SdkSandbox {
 }
 
 describe("Vercel managed credential sessions", () => {
-  it("rejects authored policy replacement through the live session", async () => {
+  it("allows authored policy replacement through the live session", async () => {
     const sdk = sandbox();
 
-    await expect(createVercelNetworkPolicySetter(sdk, true)("allow-all")).rejects.toThrow(
-      /setNetworkPolicy.*unavailable/,
-    );
-    expect(sdk.update).not.toHaveBeenCalled();
+    await createVercelNetworkPolicySetter(sdk)("allow-all");
+
+    expect(sdk.update).toHaveBeenCalledWith({ networkPolicy: "allow-all" });
   });
 
   it("rejects onSession policy replacement", async () => {

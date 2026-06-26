@@ -26,7 +26,7 @@ export function createVercelSandboxHandle(
   return {
     session: buildSandboxSession(
       createVercelInternalSandboxSession(sandbox, sessionKey),
-      createVercelNetworkPolicySetter(sandbox, brokering !== undefined),
+      createVercelNetworkPolicySetter(sandbox),
     ),
     useSessionFn: async (options?: VercelSandboxSessionUseOptions) => {
       if (options !== undefined) {
@@ -42,7 +42,7 @@ export function createVercelSandboxHandle(
       }
       return buildSandboxSession(
         createVercelInternalSandboxSession(sandbox, sessionKey),
-        createVercelNetworkPolicySetter(sandbox, brokering !== undefined),
+        createVercelNetworkPolicySetter(sandbox),
       );
     },
     async captureState() {
@@ -100,14 +100,8 @@ export function createVercelInternalSandboxSession(
 
 export function createVercelNetworkPolicySetter(
   sandbox: VercelSandbox,
-  managed = false,
 ): (policy: SandboxNetworkPolicy) => Promise<void> {
   return async (policy) => {
-    if (managed) {
-      throw new Error(
-        "vercel(): `setNetworkPolicy` is unavailable when managed `auth` rules exist.",
-      );
-    }
     await sandbox.update({ networkPolicy: policy });
   };
 }

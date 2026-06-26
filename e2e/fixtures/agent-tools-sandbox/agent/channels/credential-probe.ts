@@ -1,10 +1,6 @@
 import { defineChannel, GET } from "eve/channels";
 
-import {
-  CREDENTIAL_PROBE_PATH,
-  CREDENTIAL_PROBE_TOKEN,
-  CREDENTIAL_PROBE_UNAVAILABLE_PATH,
-} from "../credential-probe.js";
+import { CREDENTIAL_PROBE_PATH, CREDENTIAL_PROBE_TOKEN } from "../credential-probe.js";
 
 export default defineChannel({
   routes: [
@@ -13,8 +9,5 @@ export default defineChannel({
         request.headers.get("authorization") === `Bearer ${CREDENTIAL_PROBE_TOKEN}`;
       return Response.json({ authorized }, { status: authorized ? 200 : 401 });
     }),
-    GET(CREDENTIAL_PROBE_UNAVAILABLE_PATH, async () =>
-      Response.json({ unexpectedlyReached: true }),
-    ),
   ],
 });

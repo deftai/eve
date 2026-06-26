@@ -240,7 +240,9 @@ export default defineSandbox({
 
 Firewall transformations require Vercel Pro or Enterprise and are unavailable on Hobby.
 
-Eve removes resolved tokens after every step. Routes whose credentials are unavailable remain closed. Managed policies reject replacement through `onSession({ use })` or `sandbox.setNetworkPolicy()`; a second policy writer would otherwise remove Eve's transforms. Brokered credentials are unavailable during template bootstrap.
+Eve removes resolved tokens after every step. Rules whose credentials are unavailable receive no credential transform. If another rule allows the same domain, Vercel still permits unmatched traffic to that domain without the credential.
+
+Managed policies reject replacement through `onSession({ use })`, where Eve owns the startup policy. `sandbox.setNetworkPolicy()` remains available mid-step, but replaces the complete active policy, including Eve's credential transforms. Eve clears the replacement after the step; a later step resolves and installs the managed policy again. Brokered credentials are unavailable during template bootstrap.
 
 You can also construct transforms directly on Vercel Sandbox or microsandbox:
 
