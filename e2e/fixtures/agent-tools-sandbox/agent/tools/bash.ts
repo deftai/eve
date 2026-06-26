@@ -1,5 +1,20 @@
 import { defineTool, defineBashTool } from "eve/tools";
 import { never } from "eve/tools/approval";
+import { z } from "zod";
+
+const bash = defineBashTool();
+
+const BASH_OUTPUT_SCHEMA = z.object({
+  exitCode: z.number().int(),
+  stderr: z.string(),
+  stdout: z.string(),
+  truncated: z.boolean(),
+});
+
+const BASH_LATENCY_OUTPUT_SCHEMA = BASH_OUTPUT_SCHEMA.extend({
+  executionCompletedAt: z.number().int(),
+  executionStartedAt: z.number().int(),
+});
 
 /**
  * Bash tool exposed to the model for the sandbox-bootstrap smoke
@@ -13,6 +28,16 @@ import { never } from "eve/tools/approval";
  * check.
  */
 export default defineTool({
-  ...defineBashTool(),
+  ...bash,
   needsApproval: never(),
+  outputSchema: BASH_LATENCY_OUTPUT_SCHEMA,
+  async execute(input, ctx) {
+    const executionStartedAt = Date.now();
+    const result = BASH_OUTPUT_SCHEMA.parse(await bash.execute(input, ctx));
+    return {
+      ...result,
+      executionCompletedAt: Date.now(),
+      executionStartedAt,
+    };
+  },
 });

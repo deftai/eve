@@ -24,12 +24,7 @@ interface ToolFanoutTraceCall {
   readonly resultAt: string | null;
 }
 
-/**
- * Reports the observed stream latency alongside an eager-execution estimate.
- * The estimate preserves each call's measured execution and result-projection
- * duration, but begins that work at its observed action request. It therefore
- * quantifies available overlap, not a measured post-fix result.
- */
+/** Reports directly observed action, execution, and result timing for one fan-out turn. */
 export function formatToolFanoutTrace(input: {
   readonly events: readonly HandleMessageStreamEvent[];
   readonly toolName: string;
@@ -61,8 +56,10 @@ export function formatToolFanoutTrace(input: {
   return JSON.stringify({
     calls,
     kind: "tool-fanout-trace",
-    requestSpreadMs: durationMs(calls[0]?.requestedAt, calls.at(-1)?.requestedAt),
-    timing: summarizeToolFanoutTiming(calls),
+    timing: {
+      ...summarizeToolFanoutTiming(calls),
+      requestSpreadMs: durationMs(calls[0]?.requestedAt, calls.at(-1)?.requestedAt),
+    },
     toolName: input.toolName,
   });
 }
@@ -144,13 +141,12 @@ function eventTimestampMs(value: string | null | undefined): number | undefined 
 function summarizeToolFanoutTiming(calls: readonly ToolFanoutTraceCall[]): {
   readonly currentCompletionFromFirstRequestMs: number | null;
   readonly currentFirstResultFromFirstRequestMs: number | null;
-  readonly estimatedEagerCompletionFromFirstRequestMs: number | null;
-  readonly estimatedEagerFirstResultFromFirstRequestMs: number | null;
+  readonly executionOverlapHeadroomMs: number | null;
+  readonly firstExecutionStartFromFirstRequestMs: number | null;
   readonly executionStartSpreadMs: number | null;
+  readonly lastExecutionStartFromFirstRequestMs: number | null;
   readonly maxRequestToExecutionStartMs: number | null;
   readonly minRequestToExecutionStartMs: number | null;
-  readonly potentialCompletionHeadroomMs: number | null;
-  readonly potentialFirstResultHeadroomMs: number | null;
 } {
   const firstRequestAtMs = minimum(
     calls.map((call) => eventTimestampMs(call.requestedAt)).filter(isDefined),
@@ -159,31 +155,20 @@ function summarizeToolFanoutTiming(calls: readonly ToolFanoutTraceCall[]): {
     return {
       currentCompletionFromFirstRequestMs: null,
       currentFirstResultFromFirstRequestMs: null,
-      estimatedEagerCompletionFromFirstRequestMs: null,
-      estimatedEagerFirstResultFromFirstRequestMs: null,
+      executionOverlapHeadroomMs: null,
+      firstExecutionStartFromFirstRequestMs: null,
       executionStartSpreadMs: null,
+      lastExecutionStartFromFirstRequestMs: null,
       maxRequestToExecutionStartMs: null,
       minRequestToExecutionStartMs: null,
-      potentialCompletionHeadroomMs: null,
-      potentialFirstResultHeadroomMs: null,
     };
   }
 
   const observedResultTimesMs = calls
     .map((call) => eventTimestampMs(call.resultAt))
     .filter(isDefined);
-  const estimatedEagerResultTimesMs = calls.flatMap((call) => {
-    const requestedAtMs = eventTimestampMs(call.requestedAt);
-    if (
-      requestedAtMs === undefined ||
-      call.executionDurationMs === null ||
-      call.executionToResultMs === null
-    ) {
-      return [];
-    }
-    return [requestedAtMs + call.executionDurationMs + call.executionToResultMs];
-  });
   const executionStartsMs = calls.map((call) => call.executionStartedAt).filter(isDefined);
+  const executionCompletedMs = calls.map((call) => call.executionCompletedAt).filter(isDefined);
   const requestToExecutionStartMs = calls
     .map((call) => call.requestToExecutionStartMs)
     .filter(isDefined);
@@ -195,36 +180,24 @@ function summarizeToolFanoutTiming(calls: readonly ToolFanoutTraceCall[]): {
     maximum(observedResultTimesMs),
     firstRequestAtMs,
   );
-  const estimatedEagerFirstResultFromFirstRequestMs = relativeTo(
-    minimum(estimatedEagerResultTimesMs),
-    firstRequestAtMs,
-  );
-  const estimatedEagerCompletionFromFirstRequestMs = relativeTo(
-    maximum(estimatedEagerResultTimesMs),
-    firstRequestAtMs,
-  );
 
   return {
     currentCompletionFromFirstRequestMs,
     currentFirstResultFromFirstRequestMs,
-    estimatedEagerCompletionFromFirstRequestMs,
-    estimatedEagerFirstResultFromFirstRequestMs,
+    executionOverlapHeadroomMs: difference(
+      minimum(executionCompletedMs),
+      maximum(executionStartsMs),
+    ),
+    firstExecutionStartFromFirstRequestMs: relativeTo(minimum(executionStartsMs), firstRequestAtMs),
     executionStartSpreadMs: spread(executionStartsMs),
+    lastExecutionStartFromFirstRequestMs: relativeTo(maximum(executionStartsMs), firstRequestAtMs),
     maxRequestToExecutionStartMs: maximum(requestToExecutionStartMs) ?? null,
     minRequestToExecutionStartMs: minimum(requestToExecutionStartMs) ?? null,
-    potentialCompletionHeadroomMs: difference(
-      currentCompletionFromFirstRequestMs,
-      estimatedEagerCompletionFromFirstRequestMs,
-    ),
-    potentialFirstResultHeadroomMs: difference(
-      currentFirstResultFromFirstRequestMs,
-      estimatedEagerFirstResultFromFirstRequestMs,
-    ),
   };
 }
 
-function difference(left: number | null, right: number | null): number | null {
-  return left === null || right === null ? null : left - right;
+function difference(left: number | undefined, right: number | undefined): number | null {
+  return left === undefined || right === undefined ? null : left - right;
 }
 
 function isDefined<T>(value: T | undefined | null): value is T {

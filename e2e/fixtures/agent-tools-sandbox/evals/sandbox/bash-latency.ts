@@ -2,9 +2,10 @@ import type { HandleMessageStreamEvent } from "eve/client";
 
 interface BashLatencyMeasurement {
   readonly callId: string;
-  readonly clientCompletedAtMs: number;
-  readonly clientStartedAtMs: number;
+  readonly clientDurationNs: number;
   readonly completedAtMs: number;
+  readonly executionCompletedAt: number;
+  readonly executionStartedAt: number;
   readonly label: string;
   readonly query: string;
   readonly receivedAtMs: number;
@@ -22,9 +23,14 @@ interface BashLatencyTraceCall {
   readonly callId: string;
   readonly clientDurationMs: number;
   readonly completedAtMs: number;
+  readonly executionCompletedAt: number;
+  readonly executionDurationMs: number;
+  readonly executionStartedAt: number;
+  readonly executionToResultMs: number | null;
   readonly label: string;
   readonly observedLatencyMs: number | null;
   readonly query: string;
+  readonly requestToExecutionStartMs: number | null;
   readonly receivedAtMs: number;
   readonly requestedAt: string | null;
   readonly resultAt: string | null;
@@ -47,7 +53,7 @@ export function bashCurlLatencyCallsMatch(input: {
     measurements.every(
       (measurement) =>
         expectedQueryByLabel.get(measurement.label) === measurement.query &&
-        measurement.clientStartedAtMs < measurement.clientCompletedAtMs &&
+        measurement.clientDurationNs > 0 &&
         measurement.receivedAtMs < measurement.completedAtMs,
     )
   );
@@ -56,11 +62,22 @@ export function bashCurlLatencyCallsMatch(input: {
 export function formatBashCurlLatencyTrace(events: readonly HandleMessageStreamEvent[]): string {
   const calls = bashLatencyMeasurements(events).map((measurement) => ({
     callId: measurement.callId,
-    clientDurationMs: measurement.clientCompletedAtMs - measurement.clientStartedAtMs,
+    clientDurationMs: measurement.clientDurationNs / NANOSECONDS_PER_MILLISECOND,
     completedAtMs: measurement.completedAtMs,
+    executionCompletedAt: measurement.executionCompletedAt,
+    executionDurationMs: measurement.executionCompletedAt - measurement.executionStartedAt,
+    executionStartedAt: measurement.executionStartedAt,
+    executionToResultMs: durationFromEpochToEvent(
+      measurement.executionCompletedAt,
+      measurement.resultAt,
+    ),
     label: measurement.label,
     observedLatencyMs: durationMs(measurement.requestedAt, measurement.resultAt),
     query: measurement.query,
+    requestToExecutionStartMs: durationFromEventToEpoch(
+      measurement.requestedAt,
+      measurement.executionStartedAt,
+    ),
     receivedAtMs: measurement.receivedAtMs,
     requestedAt: measurement.requestedAt ?? null,
     resultAt: measurement.resultAt ?? null,
@@ -69,7 +86,10 @@ export function formatBashCurlLatencyTrace(events: readonly HandleMessageStreamE
   return JSON.stringify({
     calls,
     kind: "bash-curl-latency-trace",
-    timing: summarizeBashLatency(calls),
+    timing: {
+      ...summarizeBashLatency(calls),
+      requestSpreadMs: durationMs(calls[0]?.requestedAt, calls.at(-1)?.requestedAt),
+    },
   });
 }
 
@@ -125,8 +145,9 @@ function parseBashLatencyMeasurement(
 
   for (const line of stdout.split("\n")) {
     const parsed = parseJson(line);
-    const clientStartedAtMs = readFiniteNumberField(parsed, "clientStartedAtMs");
-    const clientCompletedAtMs = readFiniteNumberField(parsed, "clientCompletedAtMs");
+    const clientDurationNs = readPositiveSafeIntegerField(parsed, "clientDurationNs");
+    const executionCompletedAt = readFiniteNumberField(value, "executionCompletedAt");
+    const executionStartedAt = readFiniteNumberField(value, "executionStartedAt");
     const server = readField(parsed, "server");
     const label = readStringField(server, "label");
     const query = readStringField(server, "query");
@@ -134,17 +155,20 @@ function parseBashLatencyMeasurement(
     const completedAtMs = readFiniteNumberField(server, "completedAtMs");
 
     if (
-      clientStartedAtMs !== undefined &&
-      clientCompletedAtMs !== undefined &&
+      clientDurationNs !== undefined &&
       completedAtMs !== undefined &&
+      executionCompletedAt !== undefined &&
+      executionStartedAt !== undefined &&
+      executionStartedAt <= executionCompletedAt &&
       label !== undefined &&
       query !== undefined &&
       receivedAtMs !== undefined
     ) {
       return {
-        clientCompletedAtMs,
-        clientStartedAtMs,
+        clientDurationNs,
         completedAtMs,
+        executionCompletedAt,
+        executionStartedAt,
         label,
         query,
         receivedAtMs,
@@ -155,20 +179,17 @@ function parseBashLatencyMeasurement(
   return undefined;
 }
 
-/**
- * Uses host-clock stream timestamps for observed latency and the sandbox's
- * own duration for the eager estimate. The clocks never mix as absolute
- * values, only as a request-relative duration.
- */
 function summarizeBashLatency(calls: readonly BashLatencyTraceCall[]): {
   readonly currentCompletionFromFirstRequestMs: number | null;
   readonly currentFirstResultFromFirstRequestMs: number | null;
-  readonly estimatedEagerCompletionFromFirstRequestMs: number | null;
-  readonly estimatedEagerFirstResultFromFirstRequestMs: number | null;
+  readonly executionOverlapHeadroomMs: number | null;
+  readonly executionStartSpreadMs: number | null;
+  readonly firstExecutionStartFromFirstRequestMs: number | null;
+  readonly lastExecutionStartFromFirstRequestMs: number | null;
   readonly maxObservedLatencyMs: number | null;
+  readonly maxRequestToExecutionStartMs: number | null;
   readonly minObservedLatencyMs: number | null;
-  readonly potentialCompletionHeadroomMs: number | null;
-  readonly potentialFirstResultHeadroomMs: number | null;
+  readonly minRequestToExecutionStartMs: number | null;
 } {
   const firstRequestAtMs = minimum(
     calls.map((call) => eventTimestampMs(call.requestedAt)).filter(isDefined),
@@ -177,23 +198,26 @@ function summarizeBashLatency(calls: readonly BashLatencyTraceCall[]): {
     return {
       currentCompletionFromFirstRequestMs: null,
       currentFirstResultFromFirstRequestMs: null,
-      estimatedEagerCompletionFromFirstRequestMs: null,
-      estimatedEagerFirstResultFromFirstRequestMs: null,
+      executionOverlapHeadroomMs: null,
+      executionStartSpreadMs: null,
+      firstExecutionStartFromFirstRequestMs: null,
+      lastExecutionStartFromFirstRequestMs: null,
       maxObservedLatencyMs: null,
+      maxRequestToExecutionStartMs: null,
       minObservedLatencyMs: null,
-      potentialCompletionHeadroomMs: null,
-      potentialFirstResultHeadroomMs: null,
+      minRequestToExecutionStartMs: null,
     };
   }
 
   const observedResultTimesMs = calls
     .map((call) => eventTimestampMs(call.resultAt))
     .filter(isDefined);
-  const estimatedEagerResultTimesMs = calls.flatMap((call) => {
-    const requestedAtMs = eventTimestampMs(call.requestedAt);
-    return requestedAtMs === undefined ? [] : [requestedAtMs + call.clientDurationMs];
-  });
+  const executionStartsMs = calls.map((call) => call.executionStartedAt);
+  const executionCompletedMs = calls.map((call) => call.executionCompletedAt);
   const observedLatenciesMs = calls.map((call) => call.observedLatencyMs).filter(isDefined);
+  const requestToExecutionStartMs = calls
+    .map((call) => call.requestToExecutionStartMs)
+    .filter(isDefined);
   const currentFirstResultFromFirstRequestMs = relativeTo(
     minimum(observedResultTimesMs),
     firstRequestAtMs,
@@ -202,35 +226,22 @@ function summarizeBashLatency(calls: readonly BashLatencyTraceCall[]): {
     maximum(observedResultTimesMs),
     firstRequestAtMs,
   );
-  const estimatedEagerFirstResultFromFirstRequestMs = relativeTo(
-    minimum(estimatedEagerResultTimesMs),
-    firstRequestAtMs,
-  );
-  const estimatedEagerCompletionFromFirstRequestMs = relativeTo(
-    maximum(estimatedEagerResultTimesMs),
-    firstRequestAtMs,
-  );
 
   return {
     currentCompletionFromFirstRequestMs,
     currentFirstResultFromFirstRequestMs,
-    estimatedEagerCompletionFromFirstRequestMs,
-    estimatedEagerFirstResultFromFirstRequestMs,
+    executionOverlapHeadroomMs: difference(
+      minimum(executionCompletedMs),
+      maximum(executionStartsMs),
+    ),
+    executionStartSpreadMs: spread(executionStartsMs),
+    firstExecutionStartFromFirstRequestMs: relativeTo(minimum(executionStartsMs), firstRequestAtMs),
+    lastExecutionStartFromFirstRequestMs: relativeTo(maximum(executionStartsMs), firstRequestAtMs),
     maxObservedLatencyMs: maximum(observedLatenciesMs) ?? null,
+    maxRequestToExecutionStartMs: maximum(requestToExecutionStartMs) ?? null,
     minObservedLatencyMs: minimum(observedLatenciesMs) ?? null,
-    potentialCompletionHeadroomMs: difference(
-      currentCompletionFromFirstRequestMs,
-      estimatedEagerCompletionFromFirstRequestMs,
-    ),
-    potentialFirstResultHeadroomMs: difference(
-      currentFirstResultFromFirstRequestMs,
-      estimatedEagerFirstResultFromFirstRequestMs,
-    ),
+    minRequestToExecutionStartMs: minimum(requestToExecutionStartMs) ?? null,
   };
-}
-
-function difference(left: number | null, right: number | null): number | null {
-  return left === null || right === null ? null : left - right;
 }
 
 function durationMs(
@@ -242,6 +253,22 @@ function durationMs(
   return startedAtMs === undefined || completedAtMs === undefined
     ? null
     : completedAtMs - startedAtMs;
+}
+
+function durationFromEventToEpoch(
+  startedAt: string | null | undefined,
+  completedAt: number,
+): number | null {
+  const startedAtMs = eventTimestampMs(startedAt);
+  return startedAtMs === undefined ? null : completedAt - startedAtMs;
+}
+
+function durationFromEpochToEvent(
+  startedAt: number,
+  completedAt: string | null | undefined,
+): number | null {
+  const completedAtMs = eventTimestampMs(completedAt);
+  return completedAtMs === undefined ? null : completedAtMs - startedAt;
 }
 
 function eventTimestampMs(value: string | null | undefined): number | undefined {
@@ -263,6 +290,16 @@ function minimum(values: readonly number[]): number | undefined {
   return values.length === 0 ? undefined : Math.min(...values);
 }
 
+function spread(values: readonly number[]): number | null {
+  const min = minimum(values);
+  const max = maximum(values);
+  return min === undefined || max === undefined ? null : max - min;
+}
+
+function difference(left: number | undefined, right: number | undefined): number | null {
+  return left === undefined || right === undefined ? null : left - right;
+}
+
 function parseJson(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -281,6 +318,13 @@ function readFiniteNumberField(value: unknown, field: string): number | undefine
   return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
 }
 
+function readPositiveSafeIntegerField(value: unknown, field: string): number | undefined {
+  const candidate = readField(value, field);
+  return typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate > 0
+    ? candidate
+    : undefined;
+}
+
 function readStringField(value: unknown, field: string): string | undefined {
   const candidate = readField(value, field);
   return typeof candidate === "string" ? candidate : undefined;
@@ -289,3 +333,5 @@ function readStringField(value: unknown, field: string): string | undefined {
 function relativeTo(value: number | undefined, origin: number): number | null {
   return value === undefined ? null : value - origin;
 }
+
+const NANOSECONDS_PER_MILLISECOND = 1_000_000;

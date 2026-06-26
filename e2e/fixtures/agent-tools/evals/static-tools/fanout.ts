@@ -8,31 +8,6 @@ interface RequestedToolCall {
   readonly input: unknown;
 }
 
-/**
- * Checks the visible fan-out boundary: every requested call must have reached
- * the stream before the first matching result. This is the observable provider
- * contract; the provider's own network execution is outside eve's process.
- */
-export function fanoutRequestsPrecedeFirstResult(input: {
-  readonly events: readonly HandleMessageStreamEvent[];
-  readonly toolName: string;
-}): boolean {
-  const requests = requestedToolCalls(input);
-  const firstResultIndex = input.events.findIndex(
-    (event) =>
-      event.type === "action.result" &&
-      event.data.result.kind === "tool-result" &&
-      event.data.result.toolName === input.toolName,
-  );
-
-  return (
-    firstResultIndex >= 0 &&
-    requests.length === FANOUT_SIZE &&
-    new Set(requests.map((request) => request.callId)).size === FANOUT_SIZE &&
-    requests.every((request) => request.eventIndex < firstResultIndex)
-  );
-}
-
 export function fanoutRequestsUseExpectedLabels(input: {
   readonly events: readonly HandleMessageStreamEvent[];
   readonly labels: readonly string[];

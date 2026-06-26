@@ -48,9 +48,10 @@ function commandForRequest(request: (typeof REQUESTS)[number]): string {
   url.searchParams.set("q", request.query);
 
   return [
-    "started=$(date +%s%3N)",
+    "started=$(date +%s%N)",
     `response=$(curl -fsS --max-time 20 '${url.href}')`,
-    "completed=$(date +%s%3N)",
-    'printf \'{"clientStartedAtMs":%s,"clientCompletedAtMs":%s,"server":%s}\\n\' "$started" "$completed" "$response"',
+    "completed=$(date +%s%N)",
+    "duration=$((completed - started))",
+    'printf \'{"clientDurationNs":%s,"server":%s}\\n\' "$duration" "$response"',
   ].join("; ");
 }
