@@ -44,8 +44,7 @@ type ResolvedCredentialEntry =
     };
 
 export function getVercelSandboxFetch(createOptions: VercelCreateOptions): typeof globalThis.fetch {
-  const fetchOverride = (createOptions as { readonly fetch?: typeof globalThis.fetch }).fetch;
-  return fetchOverride ?? globalThis.fetch;
+  return createOptions.fetch ?? globalThis.fetch;
 }
 
 export async function getVercelSandboxCredentials(
@@ -91,15 +90,15 @@ export function extractVercelCredentialBrokering(options: VercelSandboxCreateOpt
   readonly createOptions: VercelCreateOptions;
 } {
   const { networkPolicy, ...createOptions } = options ?? {};
-  const authoredPolicy = networkPolicy as VercelSandboxNetworkPolicy | undefined;
+  const authoredPolicy = networkPolicy;
   const discovered = discoverManagedRules(authoredPolicy);
   if (discovered.length === 0) {
     return {
       brokering: undefined,
       createOptions:
         authoredPolicy === undefined
-          ? (createOptions as VercelCreateOptions)
-          : ({ ...createOptions, networkPolicy: authoredPolicy } as VercelCreateOptions),
+          ? toVercelCreateOptions(createOptions)
+          : toVercelCreateOptions({ ...createOptions, networkPolicy: authoredPolicy }),
     };
   }
   const rules = new Map(discovered.map((rule) => [rule.id, rule]));
@@ -111,7 +110,7 @@ export function extractVercelCredentialBrokering(options: VercelSandboxCreateOpt
       clearedPolicy: buildPolicy(new Map()),
       rules,
     },
-    createOptions: createOptions as VercelCreateOptions,
+    createOptions: toVercelCreateOptions(createOptions),
   };
 }
 
@@ -261,7 +260,11 @@ function buildManagedPolicy(
   for (const [domain, domainRules] of Object.entries(policy.allow ?? {})) {
     const compiled = domainRules.flatMap((authoredRule, index): NetworkPolicyRule[] => {
       if (!isAuthRule(authoredRule)) return [authoredRule];
-      const managed = managedByLocation.get(`${domain}:${index}`)!;
+      const location = `${domain}:${index}`;
+      const managed = managedByLocation.get(location);
+      if (managed === undefined) {
+        throw new Error(`vercel(): managed egress rule at "${location}" was not discovered.`);
+      }
       const token = credentials.get(managed.id);
       if (token !== undefined) {
         const compiledRule: NetworkPolicyRule = {
@@ -278,7 +281,7 @@ function buildManagedPolicy(
 }
 
 function readNonEmptyString(object: object, key: string): string | undefined {
-  const value = (object as Record<string, unknown>)[key];
+  const value = Reflect.get(object, key);
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
@@ -293,9 +296,12 @@ function getVercelSandboxCredentialsFromOidcToken(token: string): VercelSandboxC
     throw new Error("Invalid Vercel OIDC token: missing payload.");
   }
 
-  const payload = JSON.parse(
+  const payload: unknown = JSON.parse(
     Buffer.from(base64UrlToBase64(payloadSegment), "base64").toString("utf8"),
-  ) as { owner_id?: unknown; project_id?: unknown };
+  );
+  if (!isRecord(payload)) {
+    throw new Error("Invalid Vercel OIDC token: payload must be an object.");
+  }
   const teamId = typeof payload.owner_id === "string" ? payload.owner_id : undefined;
   const projectId = typeof payload.project_id === "string" ? payload.project_id : undefined;
 
@@ -304,6 +310,14 @@ function getVercelSandboxCredentialsFromOidcToken(token: string): VercelSandboxC
   }
 
   return { projectId, teamId, token };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toVercelCreateOptions(options: VercelSandboxCreateOptions): VercelCreateOptions {
+  return options as VercelCreateOptions;
 }
 
 function base64UrlToBase64(value: string): string {

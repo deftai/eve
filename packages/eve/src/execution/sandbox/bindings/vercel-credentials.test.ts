@@ -1,13 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { AuthKey, SessionIdKey } from "#context/keys.js";
 import {
   extractVercelCredentialBrokering,
+  getVercelSandboxCredentials,
   resolveVercelCredentialPolicy,
 } from "#execution/sandbox/bindings/vercel-credentials.js";
 import { isSandboxAuthorizationInterrupt } from "#execution/sandbox/authorization-interrupt.js";
 import { CallbackBaseUrlKey } from "#harness/authorization.js";
+import type { VercelSandboxNetworkPolicyRule } from "#public/sandbox/vercel-sandbox.js";
+
+vi.mock("#compiled/@vercel/oidc/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("#compiled/@vercel/oidc/index.js")>()),
+  getVercelOidcToken: vi.fn(),
+}));
+
+afterEach(() => {
+  vi.mocked(getVercelOidcToken).mockReset();
+  vi.unstubAllEnvs();
+});
 
 function requiredError(): Error {
   const error = new Error("auth required");
@@ -16,6 +29,24 @@ function requiredError(): Error {
 }
 
 describe("Vercel sandbox route auth", () => {
+  it("rejects a non-object Vercel OIDC payload", async () => {
+    for (const key of [
+      "VERCEL_TEAM_ID",
+      "VERCEL_ORG_ID",
+      "VERCEL_PROJECT_ID",
+      "VERCEL_OIDC_TOKEN",
+      "VERCEL_TOKEN",
+    ]) {
+      vi.stubEnv(key, undefined);
+    }
+    const payload = Buffer.from("null").toString("base64url");
+    vi.mocked(getVercelOidcToken).mockResolvedValue(`header.${payload}.signature`);
+
+    await expect(getVercelSandboxCredentials({})).rejects.toThrow(
+      "Invalid Vercel OIDC token: payload must be an object.",
+    );
+  });
+
   it("resolves authenticated rules and builds native firewall transforms", async () => {
     const getToken = vi.fn(async () => ({ token: "secret" }));
     const { brokering } = extractVercelCredentialBrokering({
@@ -73,6 +104,23 @@ describe("Vercel sandbox route auth", () => {
       },
       subnets: undefined,
     });
+  });
+
+  it("rejects a managed rule moved after discovery", () => {
+    const managedRule = {
+      auth: { getToken: async () => ({ token: "secret" }) },
+      transform: () => [],
+    };
+    const domainRules: VercelSandboxNetworkPolicyRule[] = [managedRule];
+    const { brokering } = extractVercelCredentialBrokering({
+      networkPolicy: { allow: { "api.example.com": domainRules } },
+    });
+
+    domainRules.unshift({ match: { method: ["GET"] }, transform: [] });
+
+    expect(() => brokering?.buildPolicy(new Map())).toThrow(
+      'vercel(): managed egress rule at "api.example.com:1" was not discovered.',
+    );
   });
 
   it("leaves a managed route closed when a non-interactive credential is unavailable", async () => {
