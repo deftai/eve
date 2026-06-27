@@ -44,6 +44,7 @@ class FakeSession extends ClientSession {
         host: "http://fake.invalid",
         maxReconnectAttempts: 0,
         preserveCompletedSessions: false,
+        streamIdleTimeoutMs: undefined,
         resolveHeaders: async () => new Headers(),
       },
       { streamIndex: 0 },
