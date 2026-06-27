@@ -4,6 +4,7 @@ import type { Socket } from "node:net";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Nitro } from "nitro/types";
 
 import type {
   DevelopmentServerHandle,
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => {
   const authoredSourceWatcher = {
     close: vi.fn(async () => undefined),
     flush: vi.fn(async () => undefined),
+    rebuild: vi.fn(async () => undefined),
   };
   const listenerServer = {
     close: vi.fn(async () => undefined),
@@ -30,6 +32,7 @@ const mocks = vi.hoisted(() => {
     upgrade: vi.fn(async (_req: unknown, _socket: unknown, _head: unknown) => undefined),
   };
   const files = new Map<string, string>();
+  const devHandlers: Nitro["options"]["devHandlers"] = [];
   const nitro = {
     close: vi.fn(async () => undefined),
     options: {
@@ -40,6 +43,7 @@ const mocks = vi.hoisted(() => {
       },
       experimental: {},
       features: {},
+      devHandlers,
     },
   };
 
@@ -321,6 +325,8 @@ describe("createDevelopmentServer", () => {
     mocks.fsControl.stateReadError = undefined;
     mocks.fsControl.stateWriteError = undefined;
     mocks.authoredSourceWatcher.close.mockResolvedValue(undefined);
+    mocks.authoredSourceWatcher.flush.mockResolvedValue(undefined);
+    mocks.authoredSourceWatcher.rebuild.mockResolvedValue(undefined);
     mocks.devServer.close.mockResolvedValue(undefined);
     mocks.nitro.close.mockResolvedValue(undefined);
     mocks.stopDevelopmentSandboxResources.mockResolvedValue(undefined);
@@ -333,6 +339,7 @@ describe("createDevelopmentServer", () => {
       async (_req: unknown, _socket: unknown, _head: unknown) => undefined,
     );
     Object.assign(mocks.nitro.options, {
+      devHandlers: [],
       experimental: {},
       features: {},
     });
@@ -464,6 +471,53 @@ describe("createDevelopmentServer", () => {
     await server.close();
 
     expect(mocks.files.has(developmentServerStatePath)).toBe(false);
+  });
+
+  async function callDevHandler(
+    handler: Nitro["options"]["devHandlers"][number]["handler"],
+    url: string,
+  ): Promise<unknown> {
+    if (typeof handler !== "function") throw new Error("Expected a callable dev handler.");
+    return await handler({
+      node: { req: { url } },
+    } as Parameters<typeof handler>[0]);
+  }
+
+  it("registers a host-owned runtime rebuild handler that forces the live watcher", async () => {
+    const startDevelopmentServer = await loadStartDevelopmentServer();
+    const server = await startDevelopmentServer("/tmp/eve-test");
+    const rebuildHandler = mocks.nitro.options.devHandlers.find(
+      (handler) => handler.route === "/eve/v1/dev/runtime-artifacts/rebuild",
+    );
+    if (rebuildHandler === undefined) throw new Error("Missing runtime rebuild handler.");
+
+    const response = await callDevHandler(
+      rebuildHandler.handler,
+      "/eve/v1/dev/runtime-artifacts/rebuild?force=1",
+    );
+
+    expect(mocks.authoredSourceWatcher.rebuild).toHaveBeenCalledOnce();
+    expect(mocks.authoredSourceWatcher.flush).not.toHaveBeenCalled();
+    if (!(response instanceof Response)) throw new Error("Expected a Response.");
+    await expect(response.json()).resolves.toEqual({ revision: "/tmp/eve-test" });
+
+    await server.close();
+  });
+
+  it("registers a host-owned runtime rebuild handler that flushes queued changes", async () => {
+    const startDevelopmentServer = await loadStartDevelopmentServer();
+    const server = await startDevelopmentServer("/tmp/eve-test");
+    const rebuildHandler = mocks.nitro.options.devHandlers.find(
+      (handler) => handler.route === "/eve/v1/dev/runtime-artifacts/rebuild",
+    );
+    if (rebuildHandler === undefined) throw new Error("Missing runtime rebuild handler.");
+
+    await callDevHandler(rebuildHandler.handler, "/eve/v1/dev/runtime-artifacts/rebuild");
+
+    expect(mocks.authoredSourceWatcher.flush).toHaveBeenCalledOnce();
+    expect(mocks.authoredSourceWatcher.rebuild).not.toHaveBeenCalled();
+
+    await server.close();
   });
 
   it("attempts every cleanup step when the authored-source watcher fails to close", async () => {

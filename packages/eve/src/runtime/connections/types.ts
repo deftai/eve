@@ -227,10 +227,10 @@ interface AuthorizationDefinitionBase {
    * that surfaces connector identifiers in build output, or the Vercel
    * dashboard rendering deep links to a connector's settings page.
    *
-   * The runtime token-fetch path ignores this field; it is purely
-   * provider attribution. Authors writing their own `getToken`
-   * callbacks (raw bearer tokens, custom callbacks) should leave it
-   * unset.
+   * The runtime uses this marker for Connect-specific authorization behavior,
+   * including its local callback URL contract. Authors writing their own
+   * `getToken` callbacks (raw bearer tokens, custom callbacks) should leave
+   * it unset.
    *
    * `connector` carries whatever value the author passed to
    * `connect()`: a UID like `"oauth/mcp-linear-app"` or opaque

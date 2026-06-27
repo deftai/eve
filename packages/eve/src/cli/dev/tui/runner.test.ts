@@ -303,6 +303,39 @@ describe("EveTUIRunner agent header", () => {
     expect(headers[0]?.name).toBe("Weather Agent");
   });
 
+  it("retries a transient info failure before rendering the startup header", async () => {
+    vi.useFakeTimers();
+    const headers: AgentTUIAgentHeader[] = [];
+    const renderer = fakeRenderer({
+      renderAgentHeader: (header) => headers.push(header),
+    });
+    const client = stubClient();
+    vi.spyOn(client, "info")
+      .mockRejectedValueOnce(new ClientError(500, "Runner did not become ready in time"))
+      .mockResolvedValueOnce(AGENT_INFO);
+    const runner = new EveTUIRunner({
+      session: stubSession(),
+      client,
+      renderer,
+      serverUrl: "http://localhost:3000",
+      name: "Weather Agent",
+    });
+
+    const running = runner.run();
+    await settleAsyncWork();
+    await vi.advanceTimersByTimeAsync(100);
+    await running;
+
+    expect(client.info).toHaveBeenCalledTimes(2);
+    expect(headers).toEqual([
+      {
+        name: "Weather Agent",
+        serverUrl: "http://localhost:3000",
+        info: AGENT_INFO,
+      },
+    ]);
+  });
+
   it("refreshes the agent header when a dev artifact refresh changes the model", async () => {
     const headers: AgentTUIAgentHeader[] = [];
     const prompts: Array<string | undefined> = ["first", "second", undefined];
@@ -353,7 +386,7 @@ describe("EveTUIRunner agent header", () => {
     expect(session.send).toHaveBeenCalledTimes(2);
   });
 
-  it("refreshes the agent header while waiting for prompt input", async () => {
+  it("retries a transient info failure while refreshing the agent header", async () => {
     vi.useFakeTimers();
     const headers: AgentTUIAgentHeader[] = [];
     const prompt = createDeferred<string | undefined>();
@@ -367,7 +400,10 @@ describe("EveTUIRunner agent header", () => {
       },
     };
     const client = stubClient();
-    vi.spyOn(client, "info").mockResolvedValueOnce(AGENT_INFO).mockResolvedValueOnce(nextInfo);
+    vi.spyOn(client, "info")
+      .mockResolvedValueOnce(AGENT_INFO)
+      .mockRejectedValueOnce(new ClientError(500, "Runner did not become ready in time"))
+      .mockResolvedValueOnce(nextInfo);
     const revisions = ["snapshot-a", "snapshot-b"];
     const fetchMock = vi.fn(async () =>
       Response.json({ revision: revisions.shift() ?? "snapshot-b" }),
@@ -396,9 +432,12 @@ describe("EveTUIRunner agent header", () => {
 
     await vi.advanceTimersByTimeAsync(500);
     await settleAsyncWork();
+    await vi.advanceTimersByTimeAsync(100);
+    await settleAsyncWork();
 
     expect(headers).toHaveLength(2);
     expect(headers[1]?.info?.agent.model.id).toBe("anthropic/claude-sonnet-4.6");
+    expect(client.info).toHaveBeenCalledTimes(3);
     expect(session.send).not.toHaveBeenCalled();
 
     prompt.resolve(undefined);
@@ -1774,6 +1813,58 @@ describe("EveTUIRunner Vercel status line", () => {
     });
     await runner.run();
 
+    expect(
+      requests.some(
+        (url) =>
+          url.pathname === "/eve/v1/dev/runtime-artifacts/rebuild" &&
+          url.searchParams.get("force") === "1",
+      ),
+    ).toBe(true);
+  });
+
+  it("forces a runtime rebuild through the /connect command path", async () => {
+    const client = stubClient();
+    vi.spyOn(client, "info").mockResolvedValue(AGENT_INFO);
+    const requests: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        const url = new URL(
+          typeof input === "string" ? input : input instanceof URL ? input : input.url,
+        );
+        requests.push(url);
+        return Response.json({ revision: url.searchParams.get("force") === "1" ? "next" : "base" });
+      }),
+    );
+    const runConnectionsFlow = vi.fn(async () => ({
+      kind: "done" as const,
+      addedConnections: ["linear"],
+    }));
+    const prompts: Array<string | undefined> = ["/connect", undefined];
+    const renderer = fakeRenderer({
+      readPrompt: vi.fn(async () => prompts.shift()),
+      setupFlow: idleSetupFlow(),
+    });
+
+    const runner = new EveTUIRunner({
+      session: stubSession(),
+      client,
+      renderer,
+      serverUrl: "http://localhost:3000",
+      name: "Weather Agent",
+      appRoot: "/tmp/weather-agent",
+      promptCommandHandler: createPromptCommandHandler({
+        target: {
+          kind: "local",
+          serverUrl: "http://localhost:3000",
+          workspaceRoot: "/tmp/weather-agent",
+        },
+        flows: { runConnectionsFlow },
+      }),
+    });
+    await runner.run();
+
+    expect(runConnectionsFlow).toHaveBeenCalledTimes(1);
     expect(
       requests.some(
         (url) =>
