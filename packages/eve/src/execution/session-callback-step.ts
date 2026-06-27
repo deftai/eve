@@ -1,11 +1,19 @@
 import type { SessionCallback } from "#channel/types.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { SessionCallbackKey } from "#context/keys.js";
+import { readDurableSession, type DurableSessionState } from "#execution/durable-session-store.js";
+import { getTurnUsageState } from "#harness/turn-tag-state.js";
 import { createLogger } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 const SESSION_CALLBACK_TIMEOUT_MS = 30_000;
 const log = createLogger("execution.session-callback");
+
+export interface SessionCallbackUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+}
 
 /**
  * Sends the configured session terminal callback.
@@ -21,6 +29,7 @@ export async function fireSessionCallbackStep(input: {
   readonly error?: unknown;
   readonly output?: unknown;
   readonly serializedContext: Record<string, unknown>;
+  readonly sessionState?: DurableSessionState;
   readonly status: "completed" | "failed";
 }): Promise<void> {
   "use step";
@@ -33,25 +42,47 @@ export async function fireSessionCallbackStep(input: {
 
   try {
     const callback = parseSerializedSessionCallback(value);
-    const body =
-      input.status === "completed"
-        ? {
-            callId: callback.callId,
-            kind: "session.completed" as const,
-            output: input.output ?? "",
-            sessionId,
-            subagentName: callback.subagentName,
-          }
-        : {
-            callId: callback.callId,
-            error: {
-              code: "SESSION_FAILED",
-              message: toErrorMessage(input.error),
-            },
-            kind: "session.failed" as const,
-            sessionId,
-            subagentName: callback.subagentName,
-          };
+    let body:
+      | {
+          callId: string;
+          kind: "session.completed";
+          output: unknown;
+          sessionId: string;
+          subagentName: string;
+          usage?: SessionCallbackUsage;
+        }
+      | {
+          callId: string;
+          error: { code: string; message: string };
+          kind: "session.failed";
+          sessionId: string;
+          subagentName: string;
+        };
+    if (input.status === "completed") {
+      body = {
+        callId: callback.callId,
+        kind: "session.completed",
+        output: input.output ?? "",
+        sessionId,
+        subagentName: callback.subagentName,
+      };
+      const usage =
+        input.sessionState !== undefined ? await readCompletedUsage(input.sessionState) : undefined;
+      if (usage !== undefined) {
+        body.usage = usage;
+      }
+    } else {
+      body = {
+        callId: callback.callId,
+        error: {
+          code: "SESSION_FAILED",
+          message: toErrorMessage(input.error),
+        },
+        kind: "session.failed",
+        sessionId,
+        subagentName: callback.subagentName,
+      };
+    }
 
     const response = await fetch(callback.url, {
       body: JSON.stringify(body),
@@ -75,6 +106,26 @@ export async function fireSessionCallbackStep(input: {
       sessionId,
     });
     throw error;
+  }
+}
+
+async function readCompletedUsage(
+  state: DurableSessionState,
+): Promise<SessionCallbackUsage | undefined> {
+  try {
+    const durable = await readDurableSession(state);
+    const turn = getTurnUsageState(durable.state);
+    if (turn === undefined) {
+      return undefined;
+    }
+    return {
+      inputTokens: turn.inputTokens,
+      outputTokens: turn.outputTokens,
+      cacheReadTokens: turn.cacheReadTokens,
+    };
+  } catch (error) {
+    log.warn("failed to read remote-agent usage for session callback", { error });
+    return undefined;
   }
 }
 

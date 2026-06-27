@@ -1,4 +1,7 @@
+import { trace } from "#compiled/@opentelemetry/api/index.js";
 import { resumeHook } from "#internal/workflow/runtime.js";
+import { z } from "#compiled/zod/index.js";
+import { createLogger } from "#internal/logging.js";
 import { EVE_CALLBACK_ROUTE_PATTERN } from "#protocol/routes.js";
 import type { ChannelMethod, RouteContext } from "#public/definitions/channel.js";
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
@@ -9,6 +12,16 @@ export const HTTP_SESSION_CALLBACK_CHANNEL_NAME_PREFIX = "eve/v1/callback";
 
 const HANDLED_METHODS: readonly ChannelMethod[] = ["POST"];
 
+const log = createLogger("runtime.session-callback");
+
+const sessionCallbackUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+});
+
+type SessionCallbackUsage = z.infer<typeof sessionCallbackUsageSchema>;
+
 type SessionTerminalCallbackPayload =
   | {
       readonly callId: string;
@@ -16,6 +29,7 @@ type SessionTerminalCallbackPayload =
       readonly output: string;
       readonly sessionId: string;
       readonly subagentName: string;
+      readonly usage?: SessionCallbackUsage;
     }
   | {
       readonly callId: string;
@@ -71,6 +85,8 @@ export async function handleSessionCallbackRequest(
     return result;
   }
 
+  recordRemoteAgentUsageSpan(body);
+
   try {
     await resumeHook(token, {
       kind: "runtime-action-result",
@@ -81,6 +97,39 @@ export async function handleSessionCallbackRequest(
   }
 
   return Response.json({ ok: true }, { status: 202 });
+}
+
+function recordRemoteAgentUsageSpan(body: unknown): void {
+  if (body === null || typeof body !== "object") {
+    return;
+  }
+  const payload = body as Partial<SessionTerminalCallbackPayload>;
+  if (payload.kind !== "session.completed" || typeof payload.subagentName !== "string") {
+    return;
+  }
+  const usage = parseSessionCallbackUsage((payload as { usage?: unknown }).usage);
+  if (usage === undefined) {
+    return;
+  }
+  try {
+    const span = trace.getTracer("eve").startSpan(`invoke_agent ${payload.subagentName}`, {
+      attributes: {
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.agent.name": payload.subagentName,
+        "gen_ai.usage.input_tokens": usage.inputTokens,
+        "gen_ai.usage.output_tokens": usage.outputTokens,
+        "gen_ai.usage.cache_read.input_tokens": usage.cacheReadTokens,
+      },
+    });
+    span.end();
+  } catch (error) {
+    log.warn("failed to emit remote-agent usage span", { error });
+  }
+}
+
+function parseSessionCallbackUsage(value: unknown): SessionCallbackUsage | undefined {
+  const parsed = sessionCallbackUsageSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function projectSessionCallbackResult(

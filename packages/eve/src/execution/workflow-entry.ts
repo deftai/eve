@@ -292,6 +292,7 @@ async function finalizeDone(input: {
     error: failed ? output : undefined,
     output: failed ? undefined : output,
     serializedContext,
+    sessionState: failed ? undefined : input.action.sessionState,
     status: failed ? "failed" : "completed",
   });
   await notifyDelegatedParentStep({
