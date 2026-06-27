@@ -6,7 +6,6 @@ import { clearCompiledRuntimeAgentBundleCache } from "#runtime/sessions/compiled
 import { toErrorMessage } from "#shared/errors.js";
 import { resolveTsConfigDependencyPaths } from "#internal/application/tsconfig-dependencies.js";
 import { createNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
-import { registerDevelopmentRuntimeRebuilder } from "#internal/nitro/host/dev-runtime-rebuild.js";
 import { resolveDevelopmentSourceSnapshotWatchPaths } from "#internal/nitro/dev-runtime-source-snapshot.js";
 import { startDevelopmentSandboxPrewarmInBackground } from "#execution/sandbox/development-prewarm.js";
 import {
@@ -226,15 +225,10 @@ export async function startAuthoredSourceWatcher(input: {
   });
   await watcherReady;
   isWatcherReady = true;
-  const unregisterRuntimeRebuilder = registerDevelopmentRuntimeRebuilder({
-    appRoot: currentHost.appRoot,
-    rebuild: forceRebuild,
-  });
 
   return {
     async close() {
       closed = true;
-      unregisterRuntimeRebuilder();
 
       if (debounceTimer !== undefined) {
         clearTimeout(debounceTimer);

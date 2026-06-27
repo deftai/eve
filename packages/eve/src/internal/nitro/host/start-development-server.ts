@@ -10,11 +10,13 @@ import { createApplicationNitro } from "#internal/nitro/host/create-application-
 import { createNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
 import type { AuthoredSourceWatcherHandle } from "#internal/nitro/host/dev-authored-source-watcher.js";
 import { prepareApplicationHost } from "#internal/nitro/host/prepare-application-host.js";
+import { EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH } from "#protocol/routes.js";
 import { resolveDiscoveryProject } from "#discover/project.js";
 import { DevelopmentServerState } from "#internal/nitro/host/dev-server-state.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { isEveServerHealthy } from "#shared/eve-server-health.js";
 import { isLoopbackServerUrl } from "#shared/network-address.js";
+import { handleDevRuntimeArtifactsRequest } from "#internal/nitro/routes/dev-runtime-artifacts.js";
 import { resolveNitroCompiledArtifactsSource } from "#internal/nitro/routes/runtime-artifacts.js";
 import {
   pruneLocalSandboxTemplatesInBackground,
@@ -276,6 +278,26 @@ function guardDevelopmentServerWebSocketUpgrades(
   devServer.upgrade = guardedUpgrade;
 }
 
+function addDevelopmentRuntimeArtifactsRebuildHandler(input: {
+  readonly appRoot: string;
+  readonly nitro: Nitro;
+  readonly watcher: AuthoredSourceWatcherHandle;
+}): void {
+  input.nitro.options.devHandlers.push({
+    route: EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH,
+    handler: async (event) => {
+      const requestUrl = event.node?.req.url ?? "";
+      const url = new URL(requestUrl, "http://localhost");
+      if (url.searchParams.get("force") === "1") {
+        await input.watcher.rebuild();
+      } else {
+        await input.watcher.flush();
+      }
+      return handleDevRuntimeArtifactsRequest({ appRoot: input.appRoot });
+    },
+  });
+}
+
 async function closeDevelopmentServerResources(input: {
   readonly authoredSourceWatcher: AuthoredSourceWatcherHandle | undefined;
   readonly devServer: NitroDevelopmentServer | undefined;
@@ -502,6 +524,11 @@ async function startNitroDevelopmentServer(
       },
       options.onBootProgress,
     );
+    addDevelopmentRuntimeArtifactsRebuildHandler({
+      appRoot: project.appRoot,
+      nitro: activeNitro,
+      watcher: authoredSourceWatcher,
+    });
     await state.write(serverUrl);
     const restoreWorkflowLocalQueueEnvironmentOnClose = restoreWorkflowLocalQueueEnvironment;
     if (restoreWorkflowLocalQueueEnvironmentOnClose === undefined) {

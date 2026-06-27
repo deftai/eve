@@ -259,7 +259,7 @@ describe("configureNitroRoutes", () => {
     expect(readWriteFileSourceMatching("/workflow/steps-handler.mjs")).toBeUndefined();
   });
 
-  it("registers the dev runtime artifact revision and rebuild routes only in dev mode", async () => {
+  it("registers the dev runtime artifact revision route only in dev mode", async () => {
     const devNitro = createNitroStub({ dev: true });
     const prodNitro = createNitroStub({ dev: false });
 
@@ -275,11 +275,11 @@ describe("configureNitroRoutes", () => {
       method: "GET",
       route: "/eve/v1/dev/runtime-artifacts",
     });
-    expect(devNitro.options.handlers).toContainEqual({
-      handler: "#eve-route/eve/v1/dev/runtime-artifacts/rebuild",
-      method: "POST",
-      route: "/eve/v1/dev/runtime-artifacts/rebuild",
-    });
+    expect(devNitro.options.handlers).not.toContainEqual(
+      expect.objectContaining({
+        route: "/eve/v1/dev/runtime-artifacts/rebuild",
+      }),
+    );
     expect(prodNitro.options.handlers).not.toContainEqual(
       expect.objectContaining({
         route: "/eve/v1/dev/runtime-artifacts",

@@ -1,5 +1,4 @@
 import { readDevelopmentRuntimeArtifactsRevision } from "#internal/nitro/dev-runtime-artifacts.js";
-import { rebuildDevelopmentRuntimeArtifacts } from "#internal/nitro/host/dev-runtime-rebuild.js";
 
 /**
  * Builds the dev-only runtime artifact revision response.
@@ -14,21 +13,4 @@ export function handleDevRuntimeArtifactsRequest(input: { appRoot: string }): Re
       "cache-control": "no-store",
     },
   });
-}
-
-/**
- * Flushes the live authored-source watcher before returning the revision that
- * a local TUI uses to rotate its session after setup writes a connection.
- */
-export async function handleDevRuntimeArtifactsRebuildRequest(input: {
-  appRoot: string;
-}): Promise<Response> {
-  const rebuilt = await rebuildDevelopmentRuntimeArtifacts(input.appRoot);
-  if (!rebuilt) {
-    return Response.json(
-      { error: "Development runtime watcher is not ready." },
-      { headers: { "cache-control": "no-store" }, status: 503 },
-    );
-  }
-  return handleDevRuntimeArtifactsRequest(input);
 }
