@@ -176,10 +176,21 @@ curl https://<your-app>/eve/v1/session/<sessionId>/stream
 Or drive the deployment interactively with the dev TUI, which is handy for preview and production smoke tests:
 
 ```bash
-eve dev https://<your-app>
+eve dev https://agent.example.com
 ```
 
-(Set `VERCEL_AUTOMATION_BYPASS_SECRET` locally first if the deployment uses preview protection.)
+If the deployment uses Vercel Deployment Protection, run `vercel link` so the CLI can mint a Vercel OIDC token, or set `VERCEL_AUTOMATION_BYPASS_SECRET` locally before launch. Use a Protection Bypass for Automation token from **Project Settings** > **Deployment Protection**.
+
+## Use protected deployments from Model Context Protocol clients
+
+Claude Code, Codex, and other Model Context Protocol (MCP) clients cannot point directly at a deployed eve app. The app does not publish an MCP server route; it publishes the eve HTTP API under `/eve/v1/*`. Use `eve dev https://agent.example.com` for an interactive terminal client, or run an MCP adapter that calls the eve HTTP API and registers with the MCP client.
+
+When Vercel Deployment Protection is enabled, the adapter must pass two checks:
+
+- **Vercel Deployment Protection**: send `x-vercel-protection-bypass` with a Protection Bypass for Automation token, or send `x-vercel-trusted-oidc-idp-token` with a Vercel OIDC token
+- **eve route auth**: send the credential your `eveChannel({ auth })` accepts. If the channel uses `vercelOidc()`, send the same Vercel OIDC token as the `Authorization` bearer value
+
+Prefer the bypass header. Vercel also accepts `x-vercel-protection-bypass` as a query parameter, but URLs are more likely to be logged and pasted, so use the query form only when the MCP client cannot send headers. Keep Deployment Protection bypass tokens and route-auth credentials out of prompts, source files, and committed MCP config. Load them from local environment variables or your adapter's secret store.
 
 ## View runs in the dashboard
 
