@@ -286,7 +286,7 @@ function addDevelopmentRuntimeArtifactsRebuildHandler(input: {
   input.nitro.options.devHandlers.push({
     route: EVE_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH,
     handler: async (event) => {
-      const requestUrl = event.node?.req.url ?? "";
+      const requestUrl = event.req.url;
       const url = new URL(requestUrl, "http://localhost");
       if (url.searchParams.get("force") === "1") {
         await input.watcher.rebuild();

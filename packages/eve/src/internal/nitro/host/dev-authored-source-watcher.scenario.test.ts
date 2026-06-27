@@ -197,6 +197,31 @@ describe("startAuthoredSourceWatcher", () => {
     }
   });
 
+  it("does not flush without queued watcher events, but forced rebuild still compiles", async () => {
+    const previousHost = createPreparedHost();
+    const nextHost = createPreparedHost();
+    const nitroStub = createNitroStub();
+    prepareApplicationHostMock.mockResolvedValueOnce(nextHost);
+
+    const watcher = await startAuthoredSourceWatcher({
+      nitro: nitroStub.nitro,
+      preparedHost: previousHost,
+    });
+
+    try {
+      await watcher.flush();
+
+      expect(prepareApplicationHostMock).not.toHaveBeenCalled();
+
+      await watcher.rebuild();
+
+      expect(prepareApplicationHostMock).toHaveBeenCalledWith(previousHost.appRoot, { dev: true });
+      expect(clearCompiledRuntimeAgentBundleCacheMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await watcher.close();
+    }
+  });
+
   it("ignores generated output directories while watching authored source roots", async () => {
     const watcher = await startAuthoredSourceWatcher({
       nitro: createNitroStub().nitro,

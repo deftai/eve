@@ -479,7 +479,7 @@ describe("createDevelopmentServer", () => {
   ): Promise<unknown> {
     if (typeof handler !== "function") throw new Error("Expected a callable dev handler.");
     return await handler({
-      node: { req: { url } },
+      req: { url },
     } as Parameters<typeof handler>[0]);
   }
 
