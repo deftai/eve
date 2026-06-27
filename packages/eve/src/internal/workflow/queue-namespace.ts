@@ -1,4 +1,5 @@
 export const WORKFLOW_QUEUE_NAMESPACE_ENV = "WORKFLOW_QUEUE_NAMESPACE";
+export const LEGACY_EVE_WORKFLOW_QUEUE_NAMESPACE = "eve";
 
 /** Derives a stable Workflow queue namespace from an eve agent's unique name. */
 export function deriveEveWorkflowQueueNamespace(agentName: string): string {
