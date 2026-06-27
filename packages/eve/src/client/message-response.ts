@@ -1,4 +1,4 @@
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import { isCurrentTurnBoundaryEvent, type HandleMessageStreamEvent } from "#protocol/message.js";
 import { extractCompletedResult } from "#client/output-schema.js";
 import {
   deriveResultStatus,
@@ -55,6 +55,10 @@ export class MessageResponse<TOutput = unknown> implements AsyncIterable<HandleM
       events.push(event);
     }
 
+    if (!events.some(isCurrentTurnBoundaryEvent)) {
+      throw new MessageStreamBoundaryError(this.sessionId, events);
+    }
+
     return {
       data: extractCompletedResult<TOutput>(events),
       events,
@@ -77,5 +81,26 @@ export class MessageResponse<TOutput = unknown> implements AsyncIterable<HandleM
     this.#consumed = true;
 
     return this.#createStream();
+  }
+}
+
+/**
+ * Error thrown when a turn stream closes before a `session.*` boundary for
+ * the submitted turn. This normally points at a transport timeout, platform
+ * stream cutoff, or workflow/control-plane stall.
+ */
+export class MessageStreamBoundaryError extends Error {
+  readonly events: readonly HandleMessageStreamEvent[];
+  readonly sessionId: string;
+
+  constructor(sessionId: string, events: readonly HandleMessageStreamEvent[]) {
+    const last = events.at(-1);
+    const lastType = last === undefined ? "none" : last.type;
+    super(
+      `Message stream for session "${sessionId}" closed before the turn boundary after ${events.length} event(s); last event: ${lastType}.`,
+    );
+    this.name = "MessageStreamBoundaryError";
+    this.events = events;
+    this.sessionId = sessionId;
   }
 }

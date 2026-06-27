@@ -14,6 +14,7 @@ const STREAM_OPEN_RETRYABLE_STATUS = new Set([404, 409, 425, 500, 502, 503, 504]
  */
 interface OpenStreamInput {
   readonly host: string;
+  readonly idleTimeoutMs?: number;
   readonly maxReconnectAttempts: number;
   readonly resolveHeaders: () => Promise<Headers>;
   readonly redirect?: ClientRedirectPolicy;
@@ -26,7 +27,7 @@ type OpenStreamBodyInput = Omit<OpenStreamInput, "maxReconnectAttempts">;
 
 /**
  * Opens a durable NDJSON event stream with automatic reconnection on socket
- * disconnection. Used by {@link ClientSession.stream}.
+ * disconnection and idle stream reads. Used by {@link ClientSession.stream}.
  */
 export async function* openStreamIterable(
   input: OpenStreamInput,
@@ -40,8 +41,9 @@ export async function* openStreamIterable(
     let disconnected = false;
 
     try {
-      for await (const event of readNdjsonStream(body)) {
+      for await (const event of readNdjsonStream(body, { idleTimeoutMs: input.idleTimeoutMs })) {
         startIndex += 1;
+        remainingReconnectAttempts = input.maxReconnectAttempts;
         yield event;
       }
     } catch (error) {
@@ -51,7 +53,7 @@ export async function* openStreamIterable(
       disconnected = true;
     }
 
-    // Only reconnect on socket disconnection, not clean EOF or a
+    // Only reconnect on socket disconnection/idle timeout, not clean EOF or a
     // caller-initiated abort.
     if (!disconnected || input.signal?.aborted || remainingReconnectAttempts <= 0) {
       return;

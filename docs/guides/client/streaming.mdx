@@ -89,11 +89,17 @@ The client reconnects after transient stream disconnects. It resumes from the nu
 ```ts
 const client = new Client({
   host: "https://agent.example.com",
-  maxReconnectAttempts: 5,
+  maxReconnectAttempts: 10,
+  streamIdleTimeoutMs: 30_000,
 });
 ```
 
-`maxReconnectAttempts` is per turn. The default is `3`.
+`streamIdleTimeoutMs` controls how long the client waits for the next event
+before reopening the stream from the last consumed event index. The default is
+`30000`; set it to `0` to disable idle reconnects. `maxReconnectAttempts`
+limits consecutive reconnects that do not produce another event. The default is
+`10`, so a fully silent stream is tolerated for more than five minutes before
+the client fails the turn.
 
 ## Open a stream manually
 

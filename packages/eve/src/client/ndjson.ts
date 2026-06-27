@@ -5,6 +5,10 @@ import type { HandleMessageStreamEvent } from "#protocol/message.js";
  * can be recovered via reconnection.
  */
 export function isStreamDisconnectError(error: unknown): boolean {
+  if (error instanceof StreamIdleTimeoutError) {
+    return true;
+  }
+
   if (error instanceof DOMException) {
     return error.name === "AbortError";
   }
@@ -24,6 +28,26 @@ export function isStreamDisconnectError(error: unknown): boolean {
 }
 
 /**
+ * Error thrown when a stream produces no bytes before its configured idle
+ * deadline. Callers treat this as a reconnectable transport condition.
+ */
+export class StreamIdleTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Message stream produced no events for ${timeoutMs}ms.`);
+    this.name = "StreamIdleTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+interface ReadNdjsonStreamOptions {
+  readonly idleTimeoutMs?: number;
+}
+
+type StreamReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
+
+/**
  * Reads newline-delimited JSON events from a `ReadableStream<Uint8Array>`.
  *
  * Yields one parsed {@link HandleMessageStreamEvent} per complete NDJSON line.
@@ -34,6 +58,7 @@ export function isStreamDisconnectError(error: unknown): boolean {
  */
 export async function* readNdjsonStream(
   body: ReadableStream<Uint8Array>,
+  options: ReadNdjsonStreamOptions = {},
 ): AsyncGenerator<HandleMessageStreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -42,7 +67,7 @@ export async function* readNdjsonStream(
 
   try {
     while (true) {
-      const result = await reader.read();
+      const result = await readWithIdleTimeout(reader, options.idleTimeoutMs);
 
       if (result.done) {
         reachedEof = true;
@@ -81,5 +106,27 @@ export async function* readNdjsonStream(
       await reader.cancel().catch(() => {});
     }
     reader.releaseLock();
+  }
+}
+
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number | undefined,
+): Promise<StreamReadResult> {
+  if (idleTimeoutMs === undefined) {
+    return await reader.read();
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new StreamIdleTimeoutError(idleTimeoutMs)), idleTimeoutMs);
+  });
+
+  try {
+    return await Promise.race([reader.read(), timeoutPromise]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
   }
 }

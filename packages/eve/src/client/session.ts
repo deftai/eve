@@ -5,7 +5,7 @@ import {
   createEveContinueSessionRoutePath,
 } from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
-import { MessageResponse } from "#client/message-response.js";
+import { MessageResponse, MessageStreamBoundaryError } from "#client/message-response.js";
 import { isStreamDisconnectError, readNdjsonStream } from "#client/ndjson.js";
 import { openStreamBody, openStreamIterable } from "#client/open-stream.js";
 import { normalizeOutputSchemaForRequest } from "#client/output-schema.js";
@@ -32,6 +32,7 @@ interface SessionContext {
   readonly preserveCompletedSessions: boolean;
   readonly redirect?: ClientRedirectPolicy;
   resolveHeaders(perRequest?: Readonly<Record<string, string>>): Promise<Headers>;
+  readonly streamIdleTimeoutMs: number | undefined;
 }
 
 /**
@@ -68,13 +69,18 @@ export class ClientSession {
    */
   async send<TOutput = unknown>(input: SendTurnInput<TOutput>): Promise<MessageResponse<TOutput>> {
     const payload = normalizeSendTurnInput(input);
+    const streamIdleTimeoutMs = resolveStreamIdleTimeoutMs(
+      payload.streamIdleTimeoutMs,
+      this.#context.streamIdleTimeoutMs,
+    );
     const state = this.#state;
     const postResult = await this.#postTurn(payload, state);
     const { continuationToken, sessionId } = postResult;
 
     return new MessageResponse<TOutput>({
       continuationToken,
-      createStream: () => this.#createEventStream(sessionId, continuationToken, state, payload),
+      createStream: () =>
+        this.#createEventStream(sessionId, continuationToken, state, payload, streamIdleTimeoutMs),
       sessionId,
     });
   }
@@ -84,7 +90,8 @@ export class ClientSession {
    *
    * Resumes from the session's stored stream cursor unless `options.startIndex`
    * overrides it. The returned iterable reconnects on transient socket
-   * disconnects, up to the client's `maxReconnectAttempts`.
+   * disconnects or sits idle, up to the client's consecutive reconnect
+   * budget.
    *
    * @throws {Error} If the session has no session ID (no message has been sent
    *   yet).
@@ -96,7 +103,12 @@ export class ClientSession {
       throw new Error("Session has no session ID. Send a message first.");
     }
 
-    return this.#streamAndAdvance(sessionId, options);
+    const streamIdleTimeoutMs = resolveStreamIdleTimeoutMs(
+      options?.streamIdleTimeoutMs,
+      this.#context.streamIdleTimeoutMs,
+    );
+
+    return this.#streamAndAdvance(sessionId, options, streamIdleTimeoutMs);
   }
 
   // ---------------------------------------------------------------------------
@@ -159,8 +171,11 @@ export class ClientSession {
     continuationToken: string | undefined,
     initialState: SessionState,
     input: SendTurnPayload,
+    streamIdleTimeoutMs: number | undefined,
   ): AsyncGenerator<HandleMessageStreamEvent> {
     const events: HandleMessageStreamEvent[] = [];
+    let reachedBoundary = false;
+    let stoppedByAbort = false;
 
     try {
       let currentStreamIndex = initialState.sessionId === sessionId ? initialState.streamIndex : 0;
@@ -177,9 +192,12 @@ export class ClientSession {
         let foundBoundary = false;
 
         try {
-          for await (const event of readNdjsonStream(body)) {
+          for await (const event of readNdjsonStream(body, {
+            idleTimeoutMs: streamIdleTimeoutMs,
+          })) {
             events.push(event);
             currentStreamIndex += 1;
+            remainingReconnectAttempts = this.#context.maxReconnectAttempts;
             yield event;
 
             if (isCurrentTurnBoundaryEvent(event)) {
@@ -194,12 +212,14 @@ export class ClientSession {
         }
 
         if (foundBoundary) {
+          reachedBoundary = true;
           break;
         }
 
         // A caller-initiated abort is a stop signal, not a transient socket
         // disconnect — do not reconnect.
         if (input.signal?.aborted) {
+          stoppedByAbort = true;
           break;
         }
 
@@ -217,6 +237,10 @@ export class ClientSession {
         sessionId,
         session: initialState,
       });
+    }
+
+    if (!reachedBoundary && !stoppedByAbort) {
+      throw new MessageStreamBoundaryError(sessionId, events);
     }
   }
 
@@ -239,6 +263,7 @@ export class ClientSession {
   async *#streamAndAdvance(
     sessionId: string,
     options?: StreamOptions,
+    streamIdleTimeoutMs?: number,
   ): AsyncGenerator<HandleMessageStreamEvent> {
     const initialState = this.#state;
     const streamIndex = options?.startIndex ?? initialState.streamIndex;
@@ -253,6 +278,7 @@ export class ClientSession {
         sessionId,
         signal: options?.signal,
         startIndex: streamIndex,
+        idleTimeoutMs: streamIdleTimeoutMs,
       })) {
         events.push(event);
         yield event;
@@ -317,6 +343,21 @@ async function sleep(ms: number): Promise<void> {
 
 function normalizeSendTurnInput<TOutput>(input: SendTurnInput<TOutput>): SendTurnPayload<TOutput> {
   return typeof input === "string" ? { message: input } : input;
+}
+
+function resolveStreamIdleTimeoutMs(
+  override: number | undefined,
+  fallback: number | undefined,
+): number | undefined {
+  if (override === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(override) || override < 0) {
+    throw new Error("streamIdleTimeoutMs must be a non-negative finite number.");
+  }
+
+  return override === 0 ? undefined : override;
 }
 
 function createHandleMessageBody(input: {

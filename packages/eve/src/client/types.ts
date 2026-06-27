@@ -94,11 +94,23 @@ export interface ClientOptions {
   readonly redirect?: ClientRedirectPolicy;
 
   /**
-   * Maximum number of stream reconnection attempts per message turn.
+   * Maximum consecutive stream reconnection attempts that may occur without
+   * receiving another event.
    *
-   * @default 3
+   * @default 10
    */
   readonly maxReconnectAttempts?: number;
+
+  /**
+   * Milliseconds to wait for the next stream event before reopening the stream
+   * from the last consumed event index. This keeps realtime clients from
+   * sitting on an idle serverless stream until the platform closes it.
+   *
+   * Set to `0` to disable idle reconnects.
+   *
+   * @default 30000
+   */
+  readonly streamIdleTimeoutMs?: number;
 
   /**
    * Keep a session's continuation token after a normal `session.completed`
@@ -166,6 +178,12 @@ export interface SendTurnPayload<TOutput = unknown> {
    * Additional headers for this request only.
    */
   readonly headers?: Readonly<Record<string, string>>;
+
+  /**
+   * Per-turn override for the client's stream idle reconnect timeout. Set to
+   * `0` to disable idle reconnects for this turn.
+   */
+  readonly streamIdleTimeoutMs?: number;
 }
 
 /**
@@ -182,6 +200,12 @@ export interface StreamOptions {
    * Abort signal for cancelling the stream.
    */
   readonly signal?: AbortSignal;
+
+  /**
+   * Per-stream override for the client's stream idle reconnect timeout. Set to
+   * `0` to disable idle reconnects for this stream.
+   */
+  readonly streamIdleTimeoutMs?: number;
 }
 
 /**

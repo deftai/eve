@@ -17,6 +17,9 @@ import type {
 } from "#client/types.js";
 import { VERCEL_TRUSTED_OIDC_IDP_TOKEN_HEADER } from "#client/types.js";
 
+const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+
 /**
  * HTTP client for talking to a deployed eve agent.
  *
@@ -31,14 +34,18 @@ export class Client {
   readonly #maxReconnectAttempts: number;
   readonly #preserveCompletedSessions: boolean;
   readonly #redirect: ClientRedirectPolicy | undefined;
+  readonly #streamIdleTimeoutMs: number | undefined;
 
   constructor(options: ClientOptions) {
     this.#host = options.host;
     this.#auth = options.auth;
     this.#headers = options.headers;
-    this.#maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
+    this.#maxReconnectAttempts = options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
     this.#preserveCompletedSessions = options.preserveCompletedSessions ?? false;
     this.#redirect = options.redirect;
+    this.#streamIdleTimeoutMs = normalizeStreamIdleTimeoutMs(
+      options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+    );
   }
 
   /**
@@ -139,6 +146,7 @@ export class Client {
         preserveCompletedSessions: this.#preserveCompletedSessions,
         redirect: this.#redirect,
         resolveHeaders: (perRequest) => this.#resolveHeaders(perRequest),
+        streamIdleTimeoutMs: this.#streamIdleTimeoutMs,
       },
       resolved,
     );
@@ -240,6 +248,14 @@ function withRedirectPolicy(
   redirect: ClientRedirectPolicy | undefined,
 ): RequestInit {
   return redirect === undefined ? init : { ...init, redirect };
+}
+
+function normalizeStreamIdleTimeoutMs(value: number): number | undefined {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("streamIdleTimeoutMs must be a non-negative finite number.");
+  }
+
+  return value === 0 ? undefined : value;
 }
 
 /**

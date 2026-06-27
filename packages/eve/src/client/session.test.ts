@@ -4,20 +4,26 @@ import { ClientSession } from "#client/session.js";
 import type { SessionState } from "#client/types.js";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 function createSession(
   state: SessionState = { streamIndex: 0 },
-  options: { readonly preserveCompletedSessions?: boolean } = {},
+  options: {
+    readonly maxReconnectAttempts?: number;
+    readonly preserveCompletedSessions?: boolean;
+    readonly streamIdleTimeoutMs?: number;
+  } = {},
 ) {
   const context: ConstructorParameters<typeof ClientSession>[0] = {
     host: "https://eve.test",
-    maxReconnectAttempts: 0,
+    maxReconnectAttempts: options.maxReconnectAttempts ?? 0,
     preserveCompletedSessions: options.preserveCompletedSessions ?? false,
     async resolveHeaders() {
       return new Headers();
     },
+    streamIdleTimeoutMs: options.streamIdleTimeoutMs,
   };
 
   return new ClientSession(context, state);
@@ -43,6 +49,22 @@ function createStreamResponse(events: readonly unknown[]) {
           controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         }
         controller.close();
+      },
+    }),
+  );
+}
+
+function createOpenStreamResponse(events: readonly unknown[], onCancel?: () => void) {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        }
+      },
+      cancel() {
+        onCancel?.();
       },
     }),
   );
@@ -169,6 +191,110 @@ describe("ClientSession", () => {
 
     expect(result.status).toBe("waiting");
     expect(cancelled).toBe(true);
+  });
+
+  it("rejects a consumed turn stream that closes before a boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return createAcceptedResponse();
+      }
+
+      return createStreamResponse([]);
+    });
+    const session = createSession();
+
+    await expect((await session.send("first")).result()).rejects.toThrow(
+      'Message stream for session "session_1" closed before the turn boundary after 0 event(s); last event: none.',
+    );
+  });
+
+  it("rejects async iteration when a turn stream closes before a boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return createAcceptedResponse();
+      }
+
+      return createStreamResponse([]);
+    });
+    const session = createSession();
+    const response = await session.send("first");
+
+    const drain = async () => {
+      for await (const _event of response) {
+        // Drain the stream so the generator can observe the missing boundary.
+      }
+    };
+
+    await expect(drain()).rejects.toThrow(
+      'Message stream for session "session_1" closed before the turn boundary after 0 event(s); last event: none.',
+    );
+  });
+
+  it("reopens an idle turn stream from the latest event index", async () => {
+    vi.useFakeTimers();
+    const getUrls: string[] = [];
+    let cancelled = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return createAcceptedResponse();
+      }
+
+      const url =
+        typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+      getUrls.push(url);
+
+      if (getUrls.length === 1) {
+        return createOpenStreamResponse(
+          [{ type: "message.received", data: { turnId: "turn_1" } }],
+          () => {
+            cancelled = true;
+          },
+        );
+      }
+
+      return createStreamResponse([{ type: "session.completed", data: {} }]);
+    });
+    const session = createSession(
+      { streamIndex: 0 },
+      { maxReconnectAttempts: 1, streamIdleTimeoutMs: 1 },
+    );
+
+    const resultPromise = (await session.send("first")).result();
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await resultPromise;
+
+    expect(result.status).toBe("completed");
+    expect(cancelled).toBe(true);
+    expect(getUrls.map((url) => new URL(url).searchParams.get("startIndex"))).toEqual([null, "1"]);
+  });
+
+  it("rejects an idle turn stream after the reconnect budget is exhausted", async () => {
+    vi.useFakeTimers();
+    let cancels = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return createAcceptedResponse();
+      }
+
+      return createOpenStreamResponse([], () => {
+        cancels += 1;
+      });
+    });
+    const session = createSession(
+      { streamIndex: 0 },
+      { maxReconnectAttempts: 1, streamIdleTimeoutMs: 1 },
+    );
+
+    const resultPromise = (await session.send("first")).result();
+    const expectation = expect(resultPromise).rejects.toThrow(
+      'Message stream for session "session_1" closed before the turn boundary after 0 event(s); last event: none.',
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expectation;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(cancels).toBe(2);
   });
 
   it("resets the session by default after consuming through session.completed", async () => {

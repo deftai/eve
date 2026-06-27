@@ -8,7 +8,7 @@ export { AgentInfoResponseError } from "#client/agent-info-error.js";
 export { ClientError } from "#client/client-error.js";
 export { defaultMessageReducer } from "#client/message-reducer.js";
 export { createDataUrlFilePart, createTextWithFileContent } from "#client/file-parts.js";
-export { MessageResponse } from "#client/message-response.js";
+export { MessageResponse, MessageStreamBoundaryError } from "#client/message-response.js";
 export { ClientSession } from "#client/session.js";
 
 // ---------------------------------------------------------------------------

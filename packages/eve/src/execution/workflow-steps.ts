@@ -643,6 +643,8 @@ export async function dispatchTurnStep(
 ): Promise<{ readonly runId: string }> {
   "use step";
 
+  const requestId = input.delivery.kind === "deliver" ? input.delivery.requestId : undefined;
+  const rootSessionId = readRootSessionId(input.serializedContext) ?? input.sessionState.sessionId;
   const run = await startWorkflowPreferLatest(
     turnWorkflowReference,
     [createTurnWorkflowInput(input)],
@@ -651,12 +653,19 @@ export async function dispatchTurnStep(
       attributes: normalizeEveAttributes(
         buildTurnAttributes({
           parentSessionId: input.sessionState.sessionId,
-          requestId: input.delivery.kind === "deliver" ? input.delivery.requestId : undefined,
-          rootSessionId: readRootSessionId(input.serializedContext) ?? input.sessionState.sessionId,
+          requestId,
+          rootSessionId,
         }),
       ),
     },
   );
+
+  log.info("dispatched turn workflow", {
+    parentSessionId: input.sessionState.sessionId,
+    requestId,
+    rootSessionId,
+    turnRunId: run.runId,
+  });
 
   return { runId: run.runId };
 }

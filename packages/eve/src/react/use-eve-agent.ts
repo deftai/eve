@@ -70,6 +70,7 @@ export interface UseEveAgentOptions<TData> extends EveAgentStoreCallbacks<TData>
   readonly initialEvents?: readonly HandleMessageStreamEvent[];
   readonly initialSession?: SessionState;
   readonly maxReconnectAttempts?: number;
+  readonly streamIdleTimeoutMs?: number;
   /**
    * Project submitted user messages before eve confirms them with a
    * `message.received` stream event.
@@ -102,10 +103,10 @@ export function useEveAgent<TData>(
  * infer `TData`.
  *
  * Session-shaping options (`host`, `reducer`, `session`, `initialEvents`,
- * `initialSession`, `auth`, `headers`, `maxReconnectAttempts`, `optimistic`) are
- * read once when the store is created; remount to change them. Lifecycle
- * callbacks (`onError`, `onEvent`, `onFinish`, `onSessionChange`, `prepareSend`)
- * refresh on every render.
+ * `initialSession`, `auth`, `headers`, `maxReconnectAttempts`,
+ * `streamIdleTimeoutMs`, `optimistic`) are read once when the store is created;
+ * remount to change them. Lifecycle callbacks (`onError`, `onEvent`,
+ * `onFinish`, `onSessionChange`, `prepareSend`) refresh on every render.
  */
 export function useEveAgent<TData>(
   options: UseEveAgentOptions<TData> = {},
@@ -124,6 +125,7 @@ export function useEveAgent<TData>(
       optimistic: options.optimistic,
       reducer,
       session: options.session,
+      streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     });
   }
 

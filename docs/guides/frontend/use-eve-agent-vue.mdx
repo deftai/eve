@@ -180,10 +180,11 @@ const agent = useEveAgent({
 });
 ```
 
-Two more options tune turn behavior:
+Three more options tune turn behavior:
 
 - `optimistic` (default `true`): projects submitted user messages into `data` before eve confirms them with a `message.received` event. These are reducer-facing projection events only; `events` stays the authoritative eve stream.
-- `maxReconnectAttempts` (default `3`): stream reconnection budget per turn.
+- `streamIdleTimeoutMs` (default `30000`): milliseconds of stream silence before the client reconnects from the last event index. Set to `0` to disable idle reconnects.
+- `maxReconnectAttempts` (default `10`): consecutive reconnect budget for a turn when reconnects do not produce another event.
 
 ## Custom reducer
 

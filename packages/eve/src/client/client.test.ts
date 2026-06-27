@@ -40,11 +40,44 @@ const AGENT_INFO: AgentInfoResult = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
 describe("Client request policy", () => {
+  it("tolerates more than five minutes of default idle stream reconnects", async () => {
+    vi.useFakeTimers();
+    let streamCancels = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      if ((init?.method ?? "GET") === "POST") {
+        return Response.json({ continuationToken: "eve:test", sessionId: "session_1" });
+      }
+
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            streamCancels += 1;
+          },
+        }),
+      );
+    });
+    const client = new Client({ host: "https://eve.test" });
+
+    const resultPromise = (await client.session().send("hello")).result();
+    const expectation = expect(resultPromise).rejects.toThrow(
+      'Message stream for session "session_1" closed before the turn boundary after 0 event(s); last event: none.',
+    );
+
+    for (let i = 0; i < 11; i += 1) {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+
+    await expectation;
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(streamCancels).toBe(11);
+  });
+
   it("enforces its redirect policy for info, health, raw fetch, and sessions", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

@@ -54,8 +54,9 @@ export interface EveAgentStoreCallbacks<TData> {
  * Configuration for constructing an {@link EveAgentStore}.
  *
  * Requires a {@link EveAgentReducer | reducer}, plus either connection options
- * (`host`, `auth`, `headers`, `maxReconnectAttempts`, `initialSession`) for a
- * store-owned session or an existing {@link ClientSession} via `session`.
+ * (`host`, `auth`, `headers`, `maxReconnectAttempts`,
+ * `streamIdleTimeoutMs`, `initialSession`) for a store-owned session or an
+ * existing {@link ClientSession} via `session`.
  *
  * `optimistic` (default `true`) projects submitted user messages before the
  * server confirms them. `host` defaults to `""`. `initialEvents` and
@@ -72,6 +73,7 @@ export interface EveAgentStoreInit<TData> {
   readonly optimistic?: boolean;
   readonly reducer: EveAgentReducer<TData>;
   readonly session?: ClientSession;
+  readonly streamIdleTimeoutMs?: number;
 }
 
 interface PendingMessageSubmission {
@@ -119,6 +121,7 @@ export class EveAgentStore<TData> {
             headers: init.headers,
             host: init.host ?? "",
             maxReconnectAttempts: init.maxReconnectAttempts,
+            streamIdleTimeoutMs: init.streamIdleTimeoutMs,
           }).session(init.initialSession);
     this.#events = [...(init.initialEvents ?? [])];
     this.#projectionEvents = [...this.#events];
