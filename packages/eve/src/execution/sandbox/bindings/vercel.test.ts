@@ -569,6 +569,61 @@ describe("createVercelSandbox", () => {
     expect(sessionSandbox.snapshot).not.toHaveBeenCalled();
   });
 
+  it("adopts a concurrently-created session when Vercel reports a duplicate sandbox name", async () => {
+    const sessionSandbox = createMockSandbox({ name: "session-key" });
+    const duplicateNameError = Object.assign(new Error("Status code 400 is not ok"), {
+      json: {
+        error: {
+          code: "bad_request",
+          message:
+            'Sandbox name "session-key" already exists. Use GET /sandboxes/:name to resume it.',
+        },
+      },
+      response: { status: 400 },
+    });
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(sessionSandbox)
+      .mockRejectedValueOnce(duplicateNameError);
+    const get = vi.fn().mockImplementation(async ({ name }: { name: string }) => {
+      if (name !== "session-key") {
+        return null;
+      }
+      const lookupCount = get.mock.calls.length;
+      return lookupCount <= 2 ? null : sessionSandbox;
+    });
+    const sandboxModule = {
+      Sandbox: {
+        create,
+        get,
+      },
+    };
+
+    const backend = createTestVercelSandbox({
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+
+    const [firstHandle, secondHandle] = await Promise.all([
+      backend.create({
+        runtimeContext: { appRoot: "/tmp/test-app-root" },
+        sessionKey: "session-key",
+        templateKey: null,
+      }),
+      backend.create({
+        runtimeContext: { appRoot: "/tmp/test-app-root" },
+        sessionKey: "session-key",
+        templateKey: null,
+      }),
+    ]);
+
+    expect(firstHandle.session).toBeDefined();
+    expect(secondHandle.session).toBeDefined();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(get).toHaveBeenNthCalledWith(3, { name: "session-key", resume: false });
+    expect(sessionSandbox.runCommand).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps author createOptions on template-less fresh sessions", async () => {
     const sessionSandbox = createMockSandbox({ name: "session" });
     const create = vi.fn().mockResolvedValueOnce(sessionSandbox);

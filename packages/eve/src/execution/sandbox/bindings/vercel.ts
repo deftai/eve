@@ -37,6 +37,7 @@ import {
   type VercelSandboxCreateParams,
 } from "#execution/sandbox/bindings/vercel-create-sdk.js";
 import {
+  isVercelSandboxAlreadyExistsError,
   isVercelSandboxMissingError,
   isVercelSnapshotUnavailableError,
 } from "#execution/sandbox/bindings/vercel-errors.js";
@@ -127,7 +128,7 @@ export function createVercelSandbox(
         );
       }
 
-      if (template === null && session.created) {
+      if (session.requiresBaseRuntimeSetup) {
         await ensureVercelSandboxBaseRuntime(session.sandbox);
         await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
       }
@@ -364,7 +365,7 @@ interface EnsureSessionInput {
 }
 
 interface VercelSandboxSessionCreateResult {
-  readonly created: boolean;
+  readonly requiresBaseRuntimeSetup: boolean;
   readonly sandbox: VercelSandbox;
 }
 
@@ -378,7 +379,7 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
 
   if (existing !== null) {
     await ensureVercelSandboxTags(existing, input.tags);
-    return { created: false, sandbox: existing };
+    return { requiresBaseRuntimeSetup: false, sandbox: existing };
   }
 
   const createParams = createSessionCreateParams(input, sandboxName);
@@ -386,13 +387,34 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
     createParams.tags = input.tags;
   }
 
-  return {
-    created: true,
-    sandbox: await input.createSandbox({
-      createOptions: createParams,
+  const requiresBaseRuntimeSetup = input.snapshotId === undefined;
+
+  try {
+    return {
+      requiresBaseRuntimeSetup,
+      sandbox: await input.createSandbox({
+        createOptions: createParams,
+        sandboxModule: input.sandboxModule,
+      }),
+    };
+  } catch (error) {
+    if (!isVercelSandboxAlreadyExistsError(error)) {
+      throw error;
+    }
+
+    const sandbox = await getNamedVercelSandbox({
+      createOptions: input.createOptions,
       sandboxModule: input.sandboxModule,
-    }),
-  };
+      sandboxName,
+    });
+
+    if (sandbox === null) {
+      throw error;
+    }
+
+    await ensureVercelSandboxTags(sandbox, input.tags);
+    return { requiresBaseRuntimeSetup, sandbox };
+  }
 }
 
 function createSessionCreateParams(
