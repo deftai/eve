@@ -31,7 +31,7 @@ interface ScheduleHandlerArgs {
 
 ## Markdown form (fire-and-forget)
 
-This is the minimal schedule. eve runs the agent on the prompt and throws away the output, though the agent can still call tools, write to backends, and log along the way. We call this task mode. A task-mode session runs to completion or fails, and cannot park to wait for a person or an OAuth sign-in.
+This is the minimal schedule. eve runs the agent on the prompt and throws away the output, though the agent can still call tools, write to backends, and log along the way. We call this task mode. A task-mode session runs to completion or fails unless it parks for a framework callback such as connection authorization. It cannot ask the channel for human input, so human-in-the-loop (HITL) approvals and `ask_question` prompts fail instead of waiting.
 
 ```ts title="agent/schedules/heartbeat.ts"
 import { defineSchedule } from "eve/schedules";
@@ -83,7 +83,7 @@ The agent does not have to deliver a message on every run. When a prompt makes d
 - `waitUntil(promise)`: extends the cron task's lifetime so the parked session and any in-flight fetches settle before the task ends. Wrap the `receive` call in it.
 - `appAuth`: the app principal (`{ authenticator: "app", principalId: "eve:app", principalType: "runtime" }`). Pass it as `receive(..., { auth: appAuth })` for work the agent does on its own behalf.
 
-A handler-form session runs on the same durable runtime engine as any other session, so it can park (durably suspend), for instance when the channel handoff is waiting for a Slack reply. Only markdown task mode is barred from waiting.
+A handler-form session runs on the same durable runtime engine as any other session, so it can park (durably suspend), for instance when the channel handoff is waiting for a Slack reply. Markdown task mode still cannot wait for channel-delivered human input.
 
 ## Trigger a schedule while iterating
 
