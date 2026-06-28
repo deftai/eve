@@ -22,7 +22,7 @@ export default defineMcpClientConnection({
 });
 ```
 
-The `url` must speak Streamable HTTP or SSE. Write the `description` for the model, not for yourself: it is the main signal `connection_search` uses when deciding which connection to query.
+The `url` must speak Streamable HTTP or SSE. Write the `description` for the model, not for yourself. eve lists it in the Connections prompt and in `connection_search` summaries. Tool matches come from the remote MCP tool names and descriptions.
 
 ## Use Vercel Connect for OAuth
 
@@ -34,13 +34,13 @@ From the Vercel project or agent app that will run the connection:
 npm install @vercel/connect
 vercel link
 vercel connect create mcp.linear.app --name linear
-vercel connect attach <connector-uid> --yes
+vercel connect attach connector_uid --yes
 vercel env pull
 ```
 
-Use the connector UID returned by the CLI in `connect("<connector-uid>")`. For Linear, the MCP runtime endpoint is `https://mcp.linear.app/mcp`, while the managed Connect service identifier is `mcp.linear.app`; those are related but not interchangeable.
+Use the connector UID returned by the CLI in `connect("connector_uid")`. For Linear, the MCP runtime endpoint is `https://mcp.linear.app/mcp`, while the managed Connect service identifier is `mcp.linear.app`; those are related but not interchangeable.
 
-By default, `connect("...")` is user-scoped. The first tool call for a new user emits an `authorization.required` event with a URL to visit, parks the turn, and resumes after the callback completes. The active eve session must already have a user principal from route auth or from a platform channel. If there is no authenticated user, the connection fails with `reason: "principal_required"`.
+By default, `connect("connector_uid")` is user-scoped. The first search or tool call that needs the connection resolves a token for the active user. If no grant exists, eve emits an `authorization.required` event with a URL to visit, parks the turn, and resumes after the callback completes. The active eve session must already have a user principal from route auth or from a platform channel. If there is no authenticated user, the connection fails with `reason: "principal_required"`.
 
 If the MCP server should act as the agent itself instead of the signed-in user, make the connector app-scoped:
 
@@ -73,6 +73,8 @@ export default defineMcpClientConnection({
 });
 ```
 
+`getToken`-only auth defaults to `principalType: "app"`, so eve shares one credential across callers. Set `principalType: "user"` when `getToken` should resolve a per-user token and receive the current user principal.
+
 Use `headers` for non-Bearer auth schemes or extra server configuration:
 
 ```ts title="agent/connections/private-docs.ts"
@@ -87,7 +89,7 @@ export default defineMcpClientConnection({
 });
 ```
 
-`auth` and `headers` can also be functions that receive the active session context. Use that when credentials, tenants, or routing depend on the caller.
+`auth` and `headers` can also be functions that receive the active session context. Use that when credentials, tenants, or routing depend on the caller. If you combine `auth` and `headers`, do not include an `Authorization` header in `headers`; eve reserves that header for the bearer returned by `auth.getToken`.
 
 ## No auth
 
@@ -120,6 +122,8 @@ export default defineMcpClientConnection({
 });
 ```
 
+Filter on the bare remote MCP tool name, not the qualified eve name. For a discovered tool called `linear__get_issue`, use `get_issue` in `tools.allow` or `tools.block`.
+
 Prefer `allow` for the smallest safe surface, especially when the server exposes write tools. Use `block` when the server has a broad stable surface and only a few tools should be hidden.
 
 ## Approval gates
@@ -145,16 +149,16 @@ The `once()`, `always()`, and `never()` helpers from `eve/tools/approval` gate e
 
 ### Gate specific tools by name or input
 
-A remote MCP server usually mixes read tools with destructive or publishing ones, so a blanket `always()` would prompt on every harmless call. Pass a custom policy instead — the same [`Approval`](/docs/human-in-the-loop#approvals) shape authored tools use — to gate only the calls that matter. The policy receives `{ session, toolName, toolInput, approvedTools }` and returns an approval status, synchronously or as a promise.
+A remote MCP server usually mixes read tools with destructive or publishing ones, so a blanket `always()` would prompt on every harmless call. Pass a custom policy with the same [`Approval`](/docs/human-in-the-loop#approvals) shape authored tools use to gate only the calls that matter. The policy receives `{ session, toolName, toolInput, approvedTools }` and returns an approval status, synchronously or as a promise.
 
 This connection always gates deletes, gates a publish only when the call actually schedules a post, and lets everything else through:
 
 ```ts title="agent/connections/social.ts"
 import { defineMcpClientConnection } from "eve/connections";
 
-// Bare tool names whose effects are irreversible — always gate these.
+// Bare tool names whose effects are irreversible. Always gate these.
 const DELETE_TOOLS = ["delete_draft", "delete_thread"];
-// Tools that can publish — gate only when the call schedules a post.
+// Tools that can publish. Gate only when the call schedules a post.
 const PUBLISH_TOOLS = ["create_draft", "edit_draft"];
 
 // Read `requestBody.publish_at` without trusting the input's shape.
@@ -180,7 +184,7 @@ export default defineMcpClientConnection({
 Two details are specific to connection tools:
 
 - **`toolName` arrives qualified**, not as the bare remote name. An MCP tool surfaces to the policy as `<connection>__<tool>` (e.g. `social__delete_draft`), so match the bare tool name with `.includes()` or `.endsWith()` rather than `===`.
-- **`toolInput` is the raw input the model produced**, typed as `Record<string, unknown> | undefined`. With an authored tool you define the `inputSchema`, so its approval policy gets input typed and checked against your schema; a connection tool's schema is published by the remote MCP server, not you, so the shape is one you neither own nor can rely on. It is also `undefined` whenever the model's input isn't an object. Read nested fields defensively — as `publishesNow` does — instead of trusting the shape.
+- **`toolInput` is the raw input the model produced**, typed as `Record<string, unknown> | undefined`. With an authored tool you define the `inputSchema`, so its approval policy gets input typed and checked against your schema; a connection tool's schema is published by the remote MCP server, not you, so the shape is one you neither own nor can rely on. It is also `undefined` whenever the model's input isn't an object. Read nested fields defensively, as `publishesNow` does, instead of trusting the shape.
 
 Return `"user-approval"` (or `true`) to pause for a person and `"not-applicable"` (or `false`) to run without a prompt; return `"approved"` or `"denied"` to decide automatically without involving anyone.
 
@@ -190,9 +194,9 @@ Return `"user-approval"` (or `true`) to pause for a person and `"not-applicable"
 
 | Symptom                                    | Check                                                                                                                                     |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `principal_required`                       | A user-scoped `connect("...")` ran without an authenticated user. Return `principalType: "user"` from route auth, or use app-scoped auth. |
+| `principal_required`                       | A user-scoped `connect("connector_uid")` ran without an authenticated user. Return `principalType: "user"` from route auth, or use app-scoped auth. |
 | The model does not find the remote tool    | Improve the connection `description`, then check `tools.allow` / `tools.block`.                                                           |
-| OAuth works locally but fails after deploy | Attach the Connect connector to the deployed Vercel project and verify the UID in `connect("...")`.                                       |
+| OAuth works locally but fails after deploy | Attach the Connect connector to the deployed Vercel project and verify the UID in `connect("connector_uid")`.                                       |
 | The server rejects requests                | Confirm the MCP URL, transport support, auth scheme, and any required headers.                                                            |
 
 ## What to read next
