@@ -30,7 +30,16 @@ export default defineNuxtConfig({
 });
 ```
 
-The `eve` key accepts only two options, `eveRoot` and `eveBuildCommand`.
+### `eve` options
+
+All fields are optional.
+
+| Option                | Type      | Default                | Purpose                                                                                                                                                                         |
+| --------------------- | --------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eveRoot`             | `string`  | Nuxt project root      | Path to the eve app root, relative to the Nuxt project root unless absolute. Set it when the agent lives outside the Nuxt project.                                              |
+| `eveBuildCommand`     | `string`  | `"eve build"`          | Build command for the generated eve Vercel service. Use it when the eve service needs project-specific prework.                                                                |
+| `configureVercelJson` | `boolean` | `true`                 | Creates or updates `vercel.json` with experimental services for the Nuxt app and eve app. Set it to `false` when you manage `vercel.json` yourself.                            |
+| `servicePrefix`       | `string`  | `"/_eve_internal/eve"` | Private Vercel route namespace for the eve service. When `configureVercelJson` runs, the module writes it as `routePrefix` unless `vercel.json` already has one. It cannot be `/`. |
 
 ## Call the composable
 

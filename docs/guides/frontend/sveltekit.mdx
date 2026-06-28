@@ -38,7 +38,16 @@ export default defineConfig({
 });
 ```
 
-The plugin accepts only two options, `eveRoot` and `eveBuildCommand`.
+### `eveSvelteKit` options
+
+All fields are optional.
+
+| Option                | Type      | Default                    | Purpose                                                                                                                                              |
+| --------------------- | --------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eveRoot`             | `string`  | SvelteKit project root     | Path to the eve app root, relative to the SvelteKit project root unless absolute. Set it when the agent lives outside the SvelteKit project.          |
+| `eveBuildCommand`     | `string`  | `"eve build"`              | Build command for the generated eve Vercel service. Use it when the eve service needs project-specific prework.                                      |
+| `configureVercelJson` | `boolean` | `true`                     | Creates or updates `vercel.json` with experimental services for the SvelteKit app and eve app. Set it to `false` when you manage `vercel.json` yourself. |
+| `servicePrefix`       | `string`  | `"/_eve_internal/eve"`     | Private Vercel route namespace for the eve service. Use the same value as the eve service `routePrefix` when you manage `vercel.json` yourself.      |
 
 ## Call the binding
 
