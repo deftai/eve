@@ -288,6 +288,7 @@
   },
   "devDependencies": {
     "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/gateway": "catalog:",
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/mcp": "catalog:",
     "@ai-sdk/openai": "catalog:",

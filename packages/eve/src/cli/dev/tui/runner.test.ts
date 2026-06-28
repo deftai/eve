@@ -1940,10 +1940,12 @@ describe("EveTUIRunner gateway-auth failure rendering", () => {
     );
   });
 
-  it("keeps the full failure message when the TUI has no local project to link", async () => {
+  it("uses compact fallback text when the TUI has no local project to link", async () => {
     const errors = await errorTextsFor(undefined);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain("MODEL_CALL_FAILED");
+    expect(errors[0]).toBe(
+      "AI Gateway received no credentials. Link a Vercel project or set AI_GATEWAY_API_KEY, then retry.",
+    );
     expect(errors[0]).not.toContain("/model");
   });
 });

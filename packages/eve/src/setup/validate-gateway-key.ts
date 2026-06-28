@@ -1,5 +1,9 @@
 import { createGateway } from "ai";
 
+import {
+  AI_GATEWAY_ERROR_NAMES,
+  AI_GATEWAY_ERROR_TYPES,
+} from "#internal/model-call-error-catalog.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 /**
@@ -11,8 +15,8 @@ function isGatewayAuthRejection(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const candidate = error as { type?: unknown; name?: unknown; statusCode?: unknown };
   return (
-    candidate.type === "authentication_error" ||
-    candidate.name === "GatewayAuthenticationError" ||
+    candidate.type === AI_GATEWAY_ERROR_TYPES.authentication ||
+    candidate.name === AI_GATEWAY_ERROR_NAMES.authentication ||
     candidate.statusCode === 401
   );
 }

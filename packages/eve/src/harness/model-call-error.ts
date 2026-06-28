@@ -1,3 +1,14 @@
+import {
+  AI_GATEWAY_ERROR_NAMES,
+  AI_GATEWAY_ERROR_TYPES,
+  AI_SDK_CORE_ERROR_NAMES,
+  AI_SDK_PROVIDER_ERROR_NAMES,
+  EMPTY_MODEL_RESPONSE_SUMMARY_NAME,
+  GATEWAY_AUTH_FAILURE_SUMMARY_NAME,
+  GATEWAY_AUTHENTICATION_ERROR_NAME,
+  LEGACY_AI_SDK_ERROR_NAMES,
+  MODEL_PROVIDER_API_KEY_MISSING_SUMMARY_NAME,
+} from "#internal/model-call-error-catalog.js";
 import { isObject } from "#shared/guards.js";
 import type { JsonObject, JsonValue } from "#shared/json.js";
 
@@ -5,19 +16,7 @@ const RESPONSE_BODY_SNIPPET_LIMIT = 1_000;
 const GATEWAY_MODEL_REQUEST_REJECTED_MESSAGE =
   "AI Gateway rejected the model request before the agent produced a response.";
 
-/**
- * The upstream error name the AI Gateway uses for authentication failures.
- * Exported so consumers of `step.failed` details (the dev TUI's `/model`
- * hint) match the same identifier this module classifies on.
- */
-export const GATEWAY_AUTHENTICATION_ERROR_NAME = "GatewayAuthenticationError";
-
-/**
- * The summary `name` this module assigns to recognized gateway-auth
- * failures, carried into failure-event details. Exported for the same
- * consumers as {@link GATEWAY_AUTHENTICATION_ERROR_NAME}.
- */
-export const GATEWAY_AUTH_FAILURE_SUMMARY_NAME = "AI Gateway authentication failed";
+export { GATEWAY_AUTH_FAILURE_SUMMARY_NAME, GATEWAY_AUTHENTICATION_ERROR_NAME };
 
 /**
  * Anchored regex for the upstream "unsupported tool" rejection message
@@ -98,9 +97,13 @@ export function summarizeKnownModelCallConfigError(
     };
   }
 
-  if (rawName === "LoadAPIKeyError" || /API key is missing/i.test(rawMessage)) {
+  if (
+    rawName === AI_SDK_PROVIDER_ERROR_NAMES.loadApiKey ||
+    rawName === LEGACY_AI_SDK_ERROR_NAMES.loadApiKey ||
+    /API key is missing/i.test(rawMessage)
+  ) {
     return {
-      name: "Model provider API key missing",
+      name: MODEL_PROVIDER_API_KEY_MISSING_SUMMARY_NAME,
       message:
         "The model provider could not load an API key. Export the provider's API key environment variable (for example `AI_GATEWAY_API_KEY` or `OPENAI_API_KEY`) and try again.",
     };
@@ -121,7 +124,7 @@ export function summarizeKnownModelCallRequestError(
   // point at the harness's own throw site, not upstream evidence).
   if (error instanceof EmptyModelResponseError) {
     return {
-      name: "Empty model response",
+      name: EMPTY_MODEL_RESPONSE_SUMMARY_NAME,
       message: error.message,
     };
   }
@@ -278,7 +281,7 @@ export class EmptyModelResponseError extends Error {
  */
 export function isNoOutputGeneratedError(error: unknown): boolean {
   for (const candidate of walkCauseChain(error)) {
-    if (readErrorName(candidate) === "AI_NoOutputGeneratedError") {
+    if (readErrorName(candidate) === AI_SDK_CORE_ERROR_NAMES.noOutputGenerated) {
       return true;
     }
   }
@@ -316,7 +319,7 @@ export function classifyModelCallError(error: unknown): "retry" | "recoverable" 
   if (
     isTerminalGatewayType(signals.gatewayType) ||
     isTerminalGatewayType(signals.upstreamType) ||
-    signals.gatewayName === "GatewayInvalidRequestError"
+    signals.gatewayName === AI_GATEWAY_ERROR_NAMES.invalidRequest
   ) {
     return "terminal";
   }
@@ -393,7 +396,11 @@ function findGatewayError(error: unknown): unknown {
   for (const candidate of walkCauseChain(error)) {
     const name = readErrorName(candidate);
     const type = readStringField(candidate, "type");
-    if (name?.startsWith("Gateway") || type?.endsWith("_error") || type === "rate_limit_exceeded") {
+    if (
+      name?.startsWith("Gateway") ||
+      type?.endsWith("_error") ||
+      type === AI_GATEWAY_ERROR_TYPES.rateLimit
+    ) {
       return candidate;
     }
   }
@@ -404,7 +411,7 @@ function findUpstreamApiCallError(error: unknown): unknown {
   for (const candidate of walkCauseChain(error)) {
     const name = readErrorName(candidate);
     if (
-      name === "AI_APICallError" ||
+      name === AI_SDK_PROVIDER_ERROR_NAMES.apiCall ||
       readStringField(candidate, "responseBody") !== undefined ||
       readObjectField(candidate, "data") !== undefined ||
       readObjectField(candidate, "requestBodyValues") !== undefined
@@ -485,14 +492,14 @@ function readObjectField(value: unknown, key: string): Record<string, unknown> |
 }
 
 function isRetryableGatewayType(type: string | undefined): boolean {
-  return type === "rate_limit_exceeded" || type === "timeout_error";
+  return type === AI_GATEWAY_ERROR_TYPES.rateLimit || type === AI_GATEWAY_ERROR_TYPES.timeout;
 }
 
 function isTerminalGatewayType(type: string | undefined): boolean {
   return (
-    type === "authentication_error" ||
-    type === "invalid_request_error" ||
-    type === "model_not_found"
+    type === AI_GATEWAY_ERROR_TYPES.authentication ||
+    type === AI_GATEWAY_ERROR_TYPES.invalidRequest ||
+    type === AI_GATEWAY_ERROR_TYPES.modelNotFound
   );
 }
 
@@ -503,9 +510,10 @@ function isGatewayErrorSignal(signals: ModelCallErrorSignals): boolean {
 function isAmbiguousGatewayInternalBadRequest(signals: ModelCallErrorSignals): boolean {
   return (
     signals.statusCode === 400 &&
-    (signals.gatewayName === "GatewayInternalServerError" ||
-      signals.gatewayType === "internal_server_error") &&
-    (signals.upstreamType === undefined || signals.upstreamType === "internal_server_error")
+    (signals.gatewayName === AI_GATEWAY_ERROR_NAMES.internalServer ||
+      signals.gatewayType === AI_GATEWAY_ERROR_TYPES.internalServer) &&
+    (signals.upstreamType === undefined ||
+      signals.upstreamType === AI_GATEWAY_ERROR_TYPES.internalServer)
   );
 }
 

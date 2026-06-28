@@ -10,9 +10,17 @@ import type {
   TurnFailedStreamEvent,
 } from "#client/index.js";
 import {
+  AI_GATEWAY_ERROR_NAMES,
+  AI_GATEWAY_ERROR_TYPES,
+  AI_GATEWAY_INTERNAL_ERROR_NAMES,
+  AI_SDK_CORE_ERROR_NAMES,
+  AI_SDK_PROVIDER_ERROR_NAMES,
+  EMPTY_MODEL_RESPONSE_SUMMARY_NAME,
   GATEWAY_AUTH_FAILURE_SUMMARY_NAME,
   GATEWAY_AUTHENTICATION_ERROR_NAME,
-} from "#harness/model-call-error.js";
+  LEGACY_AI_SDK_ERROR_NAMES,
+  MODEL_PROVIDER_API_KEY_MISSING_SUMMARY_NAME,
+} from "#internal/model-call-error-catalog.js";
 
 /**
  * One of the failure events a session stream can carry. All three share the
@@ -98,6 +106,200 @@ export function formatFailureDetail(event: FailureStreamEvent): string | undefin
   return trimmed;
 }
 
+export interface ModelCallFailureNoticeOptions {
+  readonly canConfigureModel?: boolean;
+}
+
+interface ModelCallFailureDetails {
+  readonly gatewayName?: string;
+  readonly gatewayType?: string;
+  readonly name?: string;
+  readonly statusCode?: number;
+  readonly upstreamMessage?: string;
+  readonly upstreamStatusCode?: number;
+  readonly upstreamType?: string;
+}
+
+interface ModelCallFailureMappingInput {
+  readonly canConfigureModel: boolean;
+  readonly details: ModelCallFailureDetails;
+  readonly event: FailureStreamEvent;
+}
+
+interface ModelCallFailureMapping {
+  readonly matches: (input: ModelCallFailureMappingInput) => boolean;
+  readonly format: (input: ModelCallFailureMappingInput) => string;
+}
+
+const MODEL_CALL_FAILURE_MAPPINGS: readonly ModelCallFailureMapping[] = [
+  {
+    matches: ({ event }) => isGatewayAuthFailure(event),
+    format: ({ canConfigureModel, event }) =>
+      formatGatewayAuthFailureNotice(event, { canConfigureModel }),
+  },
+  {
+    matches: ({ details, event }) =>
+      details.name === MODEL_PROVIDER_API_KEY_MISSING_SUMMARY_NAME ||
+      details.name === LEGACY_AI_SDK_ERROR_NAMES.loadApiKey ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.loadApiKey ||
+      /api key is missing/i.test(event.data.message),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "The model provider could not find an API key. Add it in .env.local or switch providers with /model."
+        : "The model provider could not find an API key. Add the provider API key and retry.",
+  },
+  {
+    matches: ({ details, event }) =>
+      details.name === EMPTY_MODEL_RESPONSE_SUMMARY_NAME ||
+      details.name === AI_SDK_CORE_ERROR_NAMES.noOutputGenerated ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.noContentGenerated ||
+      /model did not return a response|no (?:output|content) generated/i.test(event.data.message),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "The model returned no content. Retry. If it repeats, choose another model with /model."
+        : "The model returned no content. Retry. If it repeats, choose another model.",
+  },
+  {
+    matches: ({ details, event }) =>
+      textMatches(
+        [details.upstreamMessage, event.data.message],
+        /context|maximum token|too many tokens/i,
+      ),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "The prompt is too large for this model. Reduce context, or choose a larger context model with /model."
+        : "The prompt is too large for this model. Reduce context, or choose a larger context model.",
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.modelNotFound ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.modelNotFound ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.modelNotFound ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.noSuchModel ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.noSuchProviderReference ||
+      hasAnyStatus(details, 404),
+    format: ({ canConfigureModel, details }) => {
+      const subject = isGatewayDetails(details) ? "AI Gateway" : "The model provider";
+      return canConfigureModel
+        ? `${subject} could not find this model. Choose another model with /model, or update the model id in agent.ts.`
+        : `${subject} could not find this model. Update the model id and retry.`;
+    },
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.rateLimit ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.rateLimit ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.rateLimit ||
+      hasAnyStatus(details, 429),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "The model provider rate limited the request. Wait and retry, or choose another model with /model."
+        : "The model provider rate limited the request. Wait and retry, or choose another model.",
+  },
+  {
+    matches: ({ details, event }) =>
+      details.gatewayName === AI_GATEWAY_INTERNAL_ERROR_NAMES.timeout ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.timeout ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.timeout ||
+      hasAnyStatus(details, 408, 504) ||
+      /\btimeout|timed out\b/i.test(event.data.message),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "The model request timed out. Retry, or choose another model with /model if it keeps happening."
+        : "The model request timed out. Retry, or choose another model if it keeps happening.",
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.forbidden ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.forbidden,
+    format: () =>
+      "AI Gateway rejected the request by policy. Check project access, routing policy, or model access, then retry.",
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.failedDependency ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.failedDependency ||
+      hasAnyStatus(details, 424),
+    format: ({ canConfigureModel, details }) => {
+      const reason = formatUpstreamReason(details.upstreamMessage);
+      return canConfigureModel
+        ? `AI Gateway could not fulfill the request with the selected provider credentials${reason}. Check provider options and tools, or choose another model with /model.`
+        : `AI Gateway could not fulfill the request with the selected provider credentials${reason}. Check provider options, tools, or model configuration.`;
+    },
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.authentication ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.authentication ||
+      hasAnyStatus(details, 401),
+    format: ({ details }) =>
+      isGatewayDetails(details)
+        ? "AI Gateway rejected the credentials. Update AI Gateway credentials and retry."
+        : "The model provider rejected credentials. Update the provider API key in .env.local, then retry.",
+  },
+  {
+    matches: ({ details }) => hasAnyStatus(details, 403),
+    format: ({ details }) =>
+      isGatewayDetails(details)
+        ? "AI Gateway rejected access to the request. Check project access, routing policy, or model access, then retry."
+        : "The model provider rejected access to the request. Check the provider API key and model access, then retry.",
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.invalidRequest ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.invalidRequest ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.invalidRequest ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.invalidArgument ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.invalidPrompt ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.unsupportedFunctionality ||
+      details.name === AI_SDK_CORE_ERROR_NAMES.unsupportedModelVersion ||
+      hasAnyStatus(details, 400, 413, 422),
+    format: ({ details }) => {
+      const subject = isGatewayDetails(details) ? "AI Gateway" : "The model provider";
+      const reason = formatUpstreamReason(details.upstreamMessage);
+      return `${subject} rejected the model request${reason}. Check the model, tools, and provider options, then retry.`;
+    },
+  },
+  {
+    matches: ({ details }) =>
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.internalServer ||
+      details.gatewayName === AI_GATEWAY_ERROR_NAMES.response ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.internalServer ||
+      details.gatewayType === AI_GATEWAY_ERROR_TYPES.response ||
+      details.upstreamType === AI_GATEWAY_ERROR_TYPES.internalServer ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.emptyResponseBody ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.invalidResponseData ||
+      details.name === AI_SDK_PROVIDER_ERROR_NAMES.jsonParse ||
+      statusAtLeast(details, 500),
+    format: ({ canConfigureModel }) =>
+      canConfigureModel
+        ? "AI Gateway or the model provider returned a server error. Retry in a moment, or choose another model with /model if it keeps happening."
+        : "AI Gateway or the model provider returned a server error. Retry in a moment, or choose another model if it keeps happening.",
+  },
+];
+
+/**
+ * Maps AI SDK and AI Gateway model-call failures into compact TUI recovery text.
+ * The mapping keys off structured `details` fields produced by the harness, not
+ * the large SDK inspector dump.
+ */
+export function formatModelCallFailureNotice(
+  event: FailureStreamEvent,
+  options: ModelCallFailureNoticeOptions = {},
+): string | undefined {
+  if (event.data.code !== "MODEL_CALL_FAILED") return undefined;
+  const details = readModelCallFailureDetails(event.data.details);
+  if (details === undefined) return undefined;
+
+  const input: ModelCallFailureMappingInput = {
+    canConfigureModel: options.canConfigureModel === true,
+    details,
+    event,
+  };
+
+  return MODEL_CALL_FAILURE_MAPPINGS.find((mapping) => mapping.matches(input))?.format(input);
+}
+
 /**
  * Minimal TUI rendering for a gateway-auth failure when `/model` is available
  * locally. Replaces the harness's full summary — whose remediation names CLI
@@ -106,15 +308,25 @@ export function formatFailureDetail(event: FailureStreamEvent): string | undefin
  * message the harness wrote, so a stale key, an expired OIDC token, and
  * missing credentials each get the fix that actually applies.
  */
-export function formatGatewayAuthFailureNotice(event: FailureStreamEvent): string {
+export function formatGatewayAuthFailureNotice(
+  event: FailureStreamEvent,
+  options: ModelCallFailureNoticeOptions = {},
+): string {
   const message = event.data.message;
+  const canConfigureModel = options.canConfigureModel !== false;
   if (/rejected the provided API key|Invalid API key/i.test(message)) {
-    return "AI Gateway rejected your AI_GATEWAY_API_KEY. Run /model to refresh credentials, or update it in .env.local (a stale shell export can shadow it).";
+    return canConfigureModel
+      ? "AI Gateway rejected your AI_GATEWAY_API_KEY. Run /model to refresh credentials, or update it in .env.local (a stale shell export can shadow it)."
+      : "AI Gateway rejected your AI_GATEWAY_API_KEY. Update credentials and retry.";
   }
   if (/rejected the OIDC token|Invalid OIDC token/i.test(message)) {
-    return "Your AI Gateway OIDC token is invalid or expired. Run /model to refresh it, or set AI_GATEWAY_API_KEY in .env.local.";
+    return canConfigureModel
+      ? "Your AI Gateway OIDC token is invalid or expired. Run /model to refresh it, or set AI_GATEWAY_API_KEY in .env.local."
+      : "AI Gateway rejected the OIDC token. Refresh Vercel project credentials, or set AI_GATEWAY_API_KEY.";
   }
-  return "There is no AI_GATEWAY_API_KEY set. Run /model to connect this to a project and refresh AI Gateway credentials, or set it manually in .env.local.";
+  return canConfigureModel
+    ? "There is no AI_GATEWAY_API_KEY set. Run /model to connect this to a project and refresh AI Gateway credentials, or set it manually in .env.local."
+    : "AI Gateway received no credentials. Link a Vercel project or set AI_GATEWAY_API_KEY, then retry.";
 }
 
 /**
@@ -126,11 +338,63 @@ export function formatGatewayAuthFailureNotice(event: FailureStreamEvent): strin
  * harness module that writes them, so the two sides cannot drift.
  */
 export function isGatewayAuthFailure(event: FailureStreamEvent): boolean {
-  const details: unknown = event.data.details;
-  if (details === null || typeof details !== "object") return false;
-  const record = details as { gatewayName?: unknown; name?: unknown };
+  const details = readModelCallFailureDetails(event.data.details);
+  if (details === undefined) return false;
   return (
-    record.gatewayName === GATEWAY_AUTHENTICATION_ERROR_NAME ||
-    record.name === GATEWAY_AUTH_FAILURE_SUMMARY_NAME
+    details.gatewayName === GATEWAY_AUTHENTICATION_ERROR_NAME ||
+    details.name === GATEWAY_AUTH_FAILURE_SUMMARY_NAME
   );
+}
+
+function readModelCallFailureDetails(details: unknown): ModelCallFailureDetails | undefined {
+  if (details === null || typeof details !== "object") return undefined;
+  const record = details as Record<string, unknown>;
+  return {
+    gatewayName: readString(record, "gatewayName"),
+    gatewayType: readString(record, "gatewayType"),
+    name: readString(record, "name"),
+    statusCode: readNumber(record, "statusCode"),
+    upstreamMessage: readString(record, "upstreamMessage"),
+    upstreamStatusCode: readNumber(record, "upstreamStatusCode"),
+    upstreamType: readString(record, "upstreamType"),
+  };
+}
+
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function textMatches(values: readonly (string | undefined)[], pattern: RegExp): boolean {
+  return values.some((value) => value !== undefined && pattern.test(value));
+}
+
+function hasAnyStatus(details: ModelCallFailureDetails, ...statuses: readonly number[]): boolean {
+  return statuses.some(
+    (status) => details.statusCode === status || details.upstreamStatusCode === status,
+  );
+}
+
+function statusAtLeast(details: ModelCallFailureDetails, floor: number): boolean {
+  return (
+    (details.statusCode !== undefined && details.statusCode >= floor) ||
+    (details.upstreamStatusCode !== undefined && details.upstreamStatusCode >= floor)
+  );
+}
+
+function isGatewayDetails(details: ModelCallFailureDetails): boolean {
+  return details.gatewayName !== undefined || details.gatewayType !== undefined;
+}
+
+function formatUpstreamReason(message: string | undefined): string {
+  if (message === undefined) return "";
+  const normalized = message.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0 || /^bad request$/i.test(normalized)) return "";
+  const truncated = normalized.length > 160 ? `${normalized.slice(0, 157)}…` : normalized;
+  return `: ${truncated.replace(/[.!?]+$/u, "")}`;
 }

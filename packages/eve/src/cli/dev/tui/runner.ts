@@ -34,9 +34,8 @@ import {
   failureKey,
   formatFailureDetail,
   formatFailureMessage,
-  formatGatewayAuthFailureNotice,
+  formatModelCallFailureNotice,
   isAbortLikeError,
-  isGatewayAuthFailure,
   isInterruptedError,
 } from "./errors.js";
 
@@ -1038,11 +1037,8 @@ export class EveTUIRunner {
         onTerminalFailure: () => {
           this.#sessionFailed = true;
         },
-        failureOverride:
-          this.#appRoot === undefined
-            ? undefined
-            : (event) =>
-                isGatewayAuthFailure(event) ? formatGatewayAuthFailureNotice(event) : undefined,
+        failureOverride: (event) =>
+          formatModelCallFailureNotice(event, { canConfigureModel: this.#appRoot !== undefined }),
       }),
       turnState,
     };
