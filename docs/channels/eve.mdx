@@ -1,11 +1,11 @@
 ---
 title: "eve"
-description: "The default HTTP API for an agent, covering session routes, auth, and customization."
+description: "The default HTTP API for an agent, covering framework routes, session routes, auth, and customization."
 ---
 
-The eve channel is the framework's default HTTP API. It's what the terminal UI, [`useEveAgent`](../guides/frontend/overview), `curl`, and any SDK client talk to when they start sessions, send messages, and stream events. `eveChannel()` mounts the canonical session routes under `/eve/v1/session*`, and they are enabled by default even when `agent/channels/eve.ts` does not exist.
+The eve channel is the framework's default HTTP API. It's what the terminal UI, [`useEveAgent`](../guides/frontend/overview), `curl`, and the TypeScript client use to start sessions, send messages, and stream events. `eveChannel()` mounts the canonical session routes under `/eve/v1/session*`. The framework also mounts `/eve/v1/health` and `/eve/v1/info`.
 
-Reach for it when something needs HTTP access to your agent, including local tooling, a browser frontend, the terminal UI, or another API client. Most apps never write this file. Add `agent/channels/eve.ts` only to override the defaults, usually the route auth policy.
+Use this channel when something needs HTTP access to your agent, including local tooling, a browser frontend, the terminal UI, or another API client. You don't need `agent/channels/eve.ts` unless you want to override the defaults, usually the session-route auth policy.
 
 ```ts title="agent/channels/eve.ts"
 import { eveChannel } from "eve/channels/eve";
@@ -18,41 +18,81 @@ export default eveChannel({
 
 ## Routes
 
-The channel exposes routes that create sessions, send follow-ups, and stream events:
+The default HTTP surface includes framework routes for readiness and inspection, plus channel routes for session traffic:
 
-- `GET /eve/v1/health`
-- `POST /eve/v1/session` (start a session)
-- `POST /eve/v1/session/:sessionId` (send a follow-up)
-- `GET /eve/v1/session/:sessionId/stream` (stream events, NDJSON)
+| Route                                   | Auth                                 | Purpose                                                |
+| --------------------------------------- | ------------------------------------ | ------------------------------------------------------ |
+| `GET /eve/v1/health`                    | Public                               | Check whether the agent server is ready                |
+| `GET /eve/v1/info`                      | Default `[vercelOidc(), localDev()]` | Fetch the agent inspection payload                     |
+| `POST /eve/v1/session`                  | `eveChannel({ auth })`               | Start a session                                        |
+| `POST /eve/v1/session/:sessionId`       | `eveChannel({ auth })`               | Send a follow-up or answer a human-in-the-loop request |
+| `GET /eve/v1/session/:sessionId/stream` | `eveChannel({ auth })`               | Stream session events as newline-delimited JSON        |
 
-Start a session with a minimal body. The response returns `sessionId` and the `continuationToken` you reuse for follow-ups:
+`GET /eve/v1/health` returns public readiness JSON for load balancers and uptime checks. `GET /eve/v1/info` returns authenticated agent inspection JSON for the terminal UI, evals, and `client.info()`. The conversation transport does not depend on the info route, so clients can still talk to the session routes when inspection is unavailable.
+
+### Session request bodies
+
+Use these JSON fields with the session routes:
+
+| Field               | Create   | Continue | Details                                                                       |
+| ------------------- | -------- | -------- | ----------------------------------------------------------------------------- |
+| `message`           | Required | Optional | Non-empty string or an array of text and file parts                           |
+| `continuationToken` | Not used | Required | Resume token from the create response                                         |
+| `inputResponses`    | Not used | Optional | Non-empty array of human-in-the-loop responses                                |
+| `clientContext`     | Optional | Optional | String, string array, or JSON object added as ephemeral context for this turn |
+| `outputSchema`      | Optional | Optional | JSON object scoped to this turn's structured result                           |
+| `mode`              | Optional | Not used | `conversation` or `task`                                                      |
+| `callback`          | Optional | Not used | Task-session callback metadata for remote callers                             |
+
+A continue request must include a non-empty `message`, a non-empty `inputResponses` array, or both.
+
+Start a session with a minimal body. The response is `202 Accepted` and returns `sessionId` plus the `continuationToken` you reuse for follow-ups. It also sets the `x-eve-session-id` response header.
 
 ```bash
-curl -X POST https://<deployment>/eve/v1/session \
+curl -X POST https://deployment.example.com/eve/v1/session \
   -H "Content-Type: application/json" \
   -d '{"message":"What is the weather in Paris?"}'
-# {"continuationToken":"eve:7f3c...","ok":true,"sessionId":"ses_01h..."}
+# {
+#   "continuationToken": "eve:12345678-1234-4234-9234-123456789012",
+#   "ok": true,
+#   "sessionId": "wrun_1234567890123"
+# }
 ```
 
-Stream that session's events as newline-delimited JSON (`application/x-ndjson; charset=utf-8`), one event object per line:
+Send a follow-up to the same session with the returned continuation token:
 
 ```bash
-curl -N https://<deployment>/eve/v1/session/ses_01h.../stream
-# {"type":"turn.started",...}
-# {"type":"message.appended","data":{"messageDelta":"It is ",...}}
-# {"type":"message.completed",...}
+curl -X POST \
+  https://deployment.example.com/eve/v1/session/wrun_1234567890123 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "continuationToken": "eve:12345678-1234-4234-9234-123456789012",
+    "message": "Now compare Berlin."
+  }'
+# {"ok":true,"sessionId":"wrun_1234567890123"}
+```
+
+Stream that session's events as newline-delimited JSON (`application/x-ndjson; charset=utf-8`), one event object per line. Add `startIndex` to skip events you already consumed during reconnects.
+
+```bash
+host=https://deployment.example.com
+session_id=wrun_1234567890123
+
+curl -N "${host}/eve/v1/session/${session_id}/stream" \
+  -G \
+  --data-urlencode 'startIndex=0'
+# {"type":"turn.started","data":{"turnId":"turn_1"}}
+# {"type":"message.appended","data":{"messageDelta":"It is "}}
+# {"type":"message.completed","data":{"message":"It is mild."}}
 ```
 
 See [Sessions, runs & streaming](../concepts/sessions-runs-and-streaming) for the full request and stream flow, including the complete event set.
 
 ## CORS
 
-The eve channel leaves CORS untouched by default. Pass `cors: true` to enable
-permissive browser CORS with preflight handling, or pass an options object to
-narrow origins, methods, and headers. Route auth still runs on the actual
-session requests.
+The eve channel leaves CORS untouched by default. Pass `cors: true` to enable permissive browser CORS with preflight handling, or pass an options object to narrow origins, methods, and headers. Route auth still runs on the actual session requests.
 
-Enable or narrow CORS only when browser clients call the channel directly:
+Enable or narrow CORS only when browser clients call the session routes directly:
 
 ```ts title="agent/channels/eve.ts"
 import { eveChannel } from "eve/channels/eve";
@@ -64,20 +104,23 @@ export default eveChannel({
     origin: "https://app.example.com",
     methods: ["GET", "POST"],
     allowedHeaders: ["authorization", "content-type"],
+    exposedHeaders: ["x-eve-session-id"],
   },
 });
 ```
 
 ## Authentication
 
-The `auth` option decides who can call these routes. The built-in helpers cover development and trusted infrastructure:
+The `auth` option decides who can call the session routes. The built-in helpers cover development and trusted infrastructure:
 
-- `localDev()` accepts requests during local development.
-- `vercelOidc()` lets the local CLI reach a deployed agent, and lets other internal deployments from your team call it.
+- `localDev()` accepts loopback requests and Vercel development requests.
+- `vercelOidc()` accepts valid Vercel OIDC bearer tokens for the current project. Add `subjects` when you want to allow other Vercel projects.
 
-Neither admits browser users or external clients in production. For a public app, wire the channel to your own auth (Clerk, Auth.js, your own OIDC/JWT verification, an API-key verifier, or any custom `AuthFn`). Vercel OIDC is optional; use it only when Vercel-issued deployment tokens are part of your trust model.
+Neither helper admits browser users or external clients in production. For a public app, wire the channel to your own auth, such as Clerk, Auth.js, your own OIDC or JWT verification, an API-key verifier, or any custom `AuthFn`. Vercel OIDC is optional. Use it when Vercel-issued deployment tokens are part of your trust model.
 
-`eve init` scaffolds an `agent/channels/eve.ts` with a production placeholder so you replace it before going live. The generated channel checks Vercel OIDC before falling back to localhost access, and includes `placeholderAuth()`, which returns a setup-focused 401 in production until you swap it for real auth. Delete the file and eve falls back to `[vercelOidc(), localDev()]`, which still does not admit browser users in production.
+This session-route policy does not affect the framework routes. `GET /eve/v1/health` stays public, and `GET /eve/v1/info` uses the default `[vercelOidc(), localDev()]` auth chain.
+
+`eve init` scaffolds `agent/channels/eve.ts` with a production placeholder so you replace it before going live. The generated channel checks Vercel OIDC before falling back to localhost access, and includes `placeholderAuth()`, which returns a setup-focused 401 in production until you swap it for real auth. Delete the file and eve falls back to `[vercelOidc(), localDev()]`, which still does not admit browser users in production.
 
 For the full auth model and helper list, see [Auth & route protection](../guides/auth-and-route-protection).
 
@@ -109,6 +152,8 @@ export default eveChannel({
 });
 ```
 
+`onMessage` runs after session-route auth and body parsing, before runtime dispatch. Return `auth: defaultEveAuth(ctx)` to preserve the route-auth result while adding context. Return `null` to accept the HTTP request without dispatching a turn. Continue requests that contain only `inputResponses` do not run `onMessage` because they have no user message.
+
 ## Clients
 
 The browser side of this API lives in the [Frontend](../guides/frontend/overview) docs, where `useEveAgent` drives the eve channel from React UI.
@@ -119,5 +164,5 @@ For scripts, server-to-server calls, evals, tests, and custom clients, use the [
 
 - [Frontend](../guides/frontend/overview): drive the eve channel from browser UI with `useEveAgent`
 - [TypeScript SDK](../guides/client/overview): call the eve channel from TypeScript
-- [Auth & route protection](../guides/auth-and-route-protection): the route auth policy
-- [Sessions, runs & streaming](../concepts/sessions-runs-and-streaming): the routes this channel exposes
+- [Auth & route protection](../guides/auth-and-route-protection): configure route auth
+- [Sessions, runs & streaming](../concepts/sessions-runs-and-streaming): understand sessions and events
