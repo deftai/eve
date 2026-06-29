@@ -137,7 +137,7 @@ import {
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
-import { applySubagentLimits } from "#harness/subagent-limits.js";
+import { applySubagentLimits, filterAdvertisedSubagentTools } from "#harness/subagent-limits.js";
 import {
   buildStepHooks,
   emitStepActions,
@@ -642,12 +642,16 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         ? [...modelMessages, { role: "user" as const, content: opts.trailingUserNote }]
         : modelMessages;
 
+      const advertisedTools = filterAdvertisedSubagentTools({
+        session,
+        tools: config.tools,
+      });
       const flatTools = await buildToolSetWithProviderTools({
         approvedTools,
         capabilities: config.capabilities,
         disabledProviderTools: opts.disabledProviderTools,
         modelReference: session.agent.modelReference,
-        tools: config.tools,
+        tools: advertisedTools,
       });
 
       if (ctx !== undefined) {
@@ -673,13 +677,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           ? (
               await applyWorkflowTool({
                 continuationSecurity: getWorkflowContinuationSecurity(session),
-                harnessTools: config.tools,
+                harnessTools: advertisedTools,
                 lifecycle:
                   emit !== undefined
                     ? createWorkflowLifecycle({
                         emit,
                         emissionState,
-                        tools: config.tools,
+                        tools: advertisedTools,
                       })
                     : undefined,
                 tools: flatTools,

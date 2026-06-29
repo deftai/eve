@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { jsonSchema } from "ai";
 
 import {
   applySubagentLimits,
   DEFAULT_MAX_SUBAGENT_CALLS_PER_STEP,
   DEFAULT_MAX_SUBAGENT_DEPTH,
+  filterAdvertisedSubagentTools,
   resolveEffectiveSubagentLimits,
   setSubagentLimitState,
 } from "#harness/subagent-limits.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
 
@@ -166,5 +169,75 @@ describe("applySubagentLimits", () => {
     ]);
     expect(nextStep.actions.map((action) => action.callId)).toEqual(["call-3"]);
     expect(nextStep.rejectedResults).toEqual([]);
+  });
+});
+
+describe("filterAdvertisedSubagentTools", () => {
+  const tools = new Map<string, HarnessToolDefinition>([
+    [
+      "search",
+      {
+        description: "Search locally.",
+        execute: () => "result",
+        inputSchema: jsonSchema({ type: "object" }),
+        name: "search",
+      },
+    ],
+    [
+      "delegate",
+      {
+        description: "Delegate to a subagent.",
+        inputSchema: jsonSchema({ type: "object" }),
+        name: "delegate",
+        runtimeAction: {
+          kind: "subagent-call",
+          nodeId: "worker",
+          subagentName: "worker",
+        },
+      },
+    ],
+    [
+      "remote_reviewer",
+      {
+        description: "Delegate to a remote agent.",
+        inputSchema: jsonSchema({ type: "object" }),
+        name: "remote_reviewer",
+        runtimeAction: {
+          kind: "remote-agent-call",
+          nodeId: "remote",
+          remoteAgentName: "reviewer",
+          subagentName: "reviewer",
+        },
+      },
+    ],
+  ]);
+
+  it("keeps subagent tools advertised while depth remains below the cap", () => {
+    const session = setSubagentLimitState({
+      depth: 1,
+      limits: {
+        maxCallsPerStep: 4,
+        maxDepth: 2,
+      },
+      session: createSession(),
+    });
+
+    expect(filterAdvertisedSubagentTools({ session, tools })).toBe(tools);
+  });
+
+  it("hides subagent tools from the model once the depth cap is reached", () => {
+    const session = setSubagentLimitState({
+      depth: 2,
+      limits: {
+        maxCallsPerStep: 4,
+        maxDepth: 2,
+      },
+      session: createSession(),
+    });
+
+    const filtered = filterAdvertisedSubagentTools({ session, tools });
+
+    expect([...filtered.keys()]).toEqual(["search"]);
+    expect(filtered).not.toBe(tools);
   });
 });

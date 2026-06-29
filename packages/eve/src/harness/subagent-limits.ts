@@ -1,4 +1,4 @@
-import type { HarnessSession, SessionStateMap } from "#harness/types.js";
+import type { HarnessSession, HarnessToolMap, SessionStateMap } from "#harness/types.js";
 import type {
   RuntimeActionRequest,
   RuntimeRemoteAgentCallActionRequest,
@@ -45,6 +45,28 @@ export interface ApplySubagentLimitsResult {
 export interface EffectiveSubagentLimits {
   readonly maxCallsPerStep: number;
   readonly maxDepth: number;
+}
+
+export function filterAdvertisedSubagentTools(input: {
+  readonly session: HarnessSession;
+  readonly tools: HarnessToolMap;
+}): HarnessToolMap {
+  const depth = getSubagentDepth(input.session.state);
+  const limits = getEffectiveSubagentLimits(input.session.state);
+
+  if (depth < limits.maxDepth) {
+    return input.tools;
+  }
+
+  const tools = new Map(input.tools);
+
+  for (const [name, definition] of input.tools) {
+    if (definition.runtimeAction !== undefined) {
+      tools.delete(name);
+    }
+  }
+
+  return tools;
 }
 
 export function applySubagentLimits(input: {
