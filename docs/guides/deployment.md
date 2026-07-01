@@ -153,7 +153,7 @@ The HTTP contract is unchanged: health, session creation, streaming, channels, t
 
 ## 9. Verify the deployment
 
-Smoke-test the live routes. Health first:
+Smoke-test the live routes. Health accepts `GET` and `HEAD`, so load balancers can probe without reading a body:
 
 ```bash
 curl https://<your-app>/eve/v1/health

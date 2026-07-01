@@ -241,6 +241,8 @@ To narrow a caught error, use `isConnectionAuthorizationRequiredError(err)` and 
 
 `getToken` only runs _before_ a tool call, so a grant revoked while a tool is mid-flight first surfaces as a downstream `401` inside your `execute`. A plain throw there is only a tool error, so the model sees a failure and the cached bearer sticks around. Instead, map a provider `401` to `ctx.requireAuth(provider)`. eve then evicts the rejected token from its per-step cache and re-runs the consent flow with a fresh one, exactly as it does for a connection whose server rejects the bearer.
 
+If a custom auth provider keeps its own token cache below eve's per-step cache, add `evict({ principal, connection })` to the auth definition. eve calls it after a rejected token, so the next `getToken` can refresh that cache. Leave it unset for static keys or providers without their own cache.
+
 ```ts title="agent/tools/list_issues.ts"
 import { connect } from "@vercel/connect/eve";
 import { defineTool } from "eve/tools";

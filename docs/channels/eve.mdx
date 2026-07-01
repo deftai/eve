@@ -20,7 +20,7 @@ export default eveChannel({
 
 The application exposes a health route plus eve channel routes that inspect the agent, create sessions, send follow-ups, and stream events:
 
-- `GET /eve/v1/health`
+- `GET /eve/v1/health` or `HEAD /eve/v1/health`
 - `GET /eve/v1/info`
 - `POST /eve/v1/session` (start a session)
 - `POST /eve/v1/session/:sessionId` (send a follow-up)

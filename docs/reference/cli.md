@@ -26,7 +26,7 @@ When `eve build` fails on discovery errors, it prints the full diagnostics repor
 ## `eve init`
 
 ```bash
-eve init [target] [--channel-web-nextjs]
+eve init [target] [--channel-web-nextjs] [-y|--yes]
 ```
 
 The optional `target` decides the mode:
@@ -40,6 +40,7 @@ Both scaffold modes install dependencies. A fresh project initializes Git; an ex
 | Flag                   | Type | Default | Description                                                                                                                            |
 | ---------------------- | ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `--channel-web-nextjs` | flag | off     | Add the Web Chat application (a Next.js app). Rejected when adding to an existing project; run `eve channels add web` there afterward. |
+| `-y, --yes`            | flag | off     | Accepted for compatibility; warns and has no effect.                                                                                   |
 
 ## `eve info`
 

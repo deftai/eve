@@ -20,7 +20,7 @@ The route-auth policy lives on the HTTP channel factory (`agent/channels/eve.ts`
 
 These routes are protected by the channel's auth policy. eve fails closed by default: production browser traffic is rejected unless you configure an authenticator that accepts it, and anonymous access requires an explicit `none()`.
 
-`GET /eve/v1/health` is always public and skips the walk entirely, so load balancers and uptime monitors can probe it without credentials.
+`GET /eve/v1/health` and `HEAD /eve/v1/health` are always public and skip the walk entirely, so load balancers and uptime monitors can probe without credentials.
 
 ```ts title="agent/channels/eve.ts"
 import { eveChannel } from "eve/channels/eve";
