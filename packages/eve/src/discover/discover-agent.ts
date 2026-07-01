@@ -1,15 +1,22 @@
 import { join, resolve } from "node:path";
 
 import { discoverConnectionSources } from "#discover/connections.js";
-import type { DiscoverDiagnostic } from "#discover/diagnostics.js";
+import { createDiscoverErrorDiagnostic, type DiscoverDiagnostic } from "#discover/diagnostics.js";
 import { discoverSubagents } from "#discover/discover-subagent.js";
+import {
+  DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED,
+  DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED,
+  locateExtensionMount,
+} from "#discover/extensions.js";
 import { classifyAgentRootEntry } from "#discover/filesystem.js";
 import {
   createChannelNameDiagnostic,
+  createExtensionNameDiagnostic,
   createHookNameDiagnostic,
   createToolNameDiagnostic,
   createUnsupportedRootDirectoryDiagnostics,
   DISCOVER_CHANNELS_DIRECTORY_INVALID,
+  DISCOVER_EXTENSIONS_DIRECTORY_INVALID,
   DISCOVER_HOOKS_DIRECTORY_INVALID,
   DISCOVER_TOOLS_DIRECTORY_INVALID,
   discoverFlatModuleSource,
@@ -22,6 +29,7 @@ import {
   type AgentSourceManifest,
   type CreateAgentSourceManifestInput,
   createAgentSourceManifest,
+  type ResolvedExtensionMount,
 } from "#discover/manifest.js";
 import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
 import { discoverSandboxSource } from "#discover/sandbox.js";
@@ -42,6 +50,13 @@ interface DiscoverAgentInput {
    * memory-backed source.
    */
   source?: ProjectSource;
+  /**
+   * Discovery role. `"agent"` (default) resolves mounted extensions and
+   * accepts agent-level config. `"extension"` discovers an extension's own
+   * source tree: it rejects `agent.ts`/`sandbox` (consumer-owned) and does
+   * not resolve further extensions (transitive mounting is a non-goal).
+   */
+  role?: "agent" | "extension";
 }
 
 /**
@@ -60,6 +75,7 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   const source = input.source ?? createDiskProjectSource();
   const appRoot = resolve(input.appRoot);
   const agentRoot = resolve(input.agentRoot);
+  const role = input.role ?? "agent";
   const diagnostics: DiscoverDiagnostic[] = [];
   const packageName = await tryReadPackageJsonName(source, appRoot);
   const rootEntries = await readSortedDirectoryEntries(source, agentRoot);
@@ -79,6 +95,7 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
     rootEntries,
     rootPath: agentRoot,
     source,
+    required: role !== "extension",
   });
   diagnostics.push(...instructionsResult.diagnostics);
 
@@ -129,6 +146,28 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   });
   diagnostics.push(...sandboxResult.diagnostics);
 
+  if (role === "extension") {
+    if (configModuleResult.module !== undefined) {
+      diagnostics.push(
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED,
+          message:
+            "An extension may not declare agent config (agent.ts) — model, limits, and sandbox are the consuming agent's to own.",
+          sourcePath: join(agentRoot, configModuleResult.module.logicalPath),
+        }),
+      );
+    }
+    if (sandboxResult.sandbox !== null) {
+      diagnostics.push(
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED,
+          message: "An extension may not declare a sandbox — it is the consuming agent's to own.",
+          sourcePath: join(agentRoot, sandboxResult.sandbox.logicalPath),
+        }),
+      );
+    }
+  }
+
   const toolsResult = await discoverNamedSourceDirectory({
     directoryName: "tools",
     invalidDirectoryCode: DISCOVER_TOOLS_DIRECTORY_INVALID,
@@ -153,6 +192,18 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   });
   diagnostics.push(...hooksResult.diagnostics);
 
+  const extensionsResult = await discoverNamedSourceDirectory({
+    directoryName: "extensions",
+    invalidDirectoryCode: DISCOVER_EXTENSIONS_DIRECTORY_INVALID,
+    invalidDirectoryMessage: `Expected "${join(agentRoot, "extensions")}" to be a directory of extension mounts.`,
+    recursive: false,
+    rootEntries,
+    rootPath: agentRoot,
+    source,
+    validateSegment: createExtensionNameDiagnostic,
+  });
+  diagnostics.push(...extensionsResult.diagnostics);
+
   const skillsResult = await discoverSkills({
     agentRoot,
     source,
@@ -166,6 +217,33 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   });
   diagnostics.push(...subagentsResult.diagnostics);
 
+  const resolvedExtensions: ResolvedExtensionMount[] = [];
+  if (role === "agent") {
+    for (const mount of extensionsResult.sources) {
+      const located = await locateExtensionMount({ source, agentRoot, appRoot, mount });
+      diagnostics.push(...located.diagnostics);
+      if (located.location === undefined) {
+        continue;
+      }
+
+      const extensionResult = await discoverAgent({
+        agentRoot: located.location.sourceRoot,
+        appRoot: located.location.packageRoot,
+        source,
+        role: "extension",
+      });
+      diagnostics.push(...extensionResult.diagnostics);
+      resolvedExtensions.push({
+        namespace: located.location.namespace,
+        specifier: located.location.specifier,
+        packageName: located.location.packageName,
+        packageRoot: located.location.packageRoot,
+        sourceRoot: located.location.sourceRoot,
+        manifest: extensionResult.manifest,
+      });
+    }
+  }
+
   const manifestInput: CreateAgentSourceManifestInput = {
     agentRoot,
     appRoot,
@@ -173,6 +251,8 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
     connections: connectionsResult.connections,
     packageName,
     diagnostics,
+    extensions: extensionsResult.sources,
+    resolvedExtensions,
     hooks: hooksResult.sources,
     lib: libResult.lib,
     instructions: instructionsResult.instructions,

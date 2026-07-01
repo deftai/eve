@@ -1,0 +1,211 @@
+import { dirname, isAbsolute, join, resolve } from "node:path";
+
+import { createDiscoverErrorDiagnostic, type DiscoverDiagnostic } from "#discover/diagnostics.js";
+import { parseExtensionMountSpecifier } from "#discover/extension-specifier.js";
+import { SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS } from "#discover/filesystem.js";
+import type { ExtensionSourceRef } from "#discover/manifest.js";
+import type { ProjectSource } from "#discover/project-source.js";
+
+/**
+ * Emitted when a mount file cannot be resolved to an extension package.
+ */
+export const DISCOVER_EXTENSION_MOUNT_UNRESOLVED = "discover/extension-mount-unresolved";
+
+/**
+ * Emitted when a resolved package is not a valid eve extension.
+ */
+export const DISCOVER_EXTENSION_PACKAGE_INVALID = "discover/extension-package-invalid";
+
+/**
+ * Emitted when an extension source tree declares agent-level config (`agent.ts`),
+ * which is the consuming agent's to own.
+ */
+export const DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED =
+  "discover/extension-agent-config-unsupported";
+
+/**
+ * Emitted when an extension source tree declares a `sandbox`, which is the
+ * consuming agent's to own.
+ */
+export const DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED = "discover/extension-sandbox-unsupported";
+
+/**
+ * Resolved on-disk location of one mounted extension package.
+ */
+export interface ExtensionMountLocation {
+  /** Mount namespace derived from the mount filename (e.g. `crm`). */
+  readonly namespace: string;
+  /** Package specifier the mount imports (e.g. `@acme/crm`). */
+  readonly specifier: string;
+  /** Package name from the resolved `package.json`, used to scope state. */
+  readonly packageName: string;
+  /** Absolute path to the resolved package root. */
+  readonly packageRoot: string;
+  /** Absolute path to the extension's agent-shaped source root. */
+  readonly sourceRoot: string;
+}
+
+/**
+ * Derives the mount namespace from an `extensions/<name>.<ext>` logical path.
+ */
+export function mountNamespace(logicalPath: string): string {
+  const base = logicalPath.slice(logicalPath.lastIndexOf("/") + 1);
+  for (const extension of SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS) {
+    if (base.toLowerCase().endsWith(extension)) {
+      return base.slice(0, base.length - extension.length);
+    }
+  }
+  return base;
+}
+
+/**
+ * Resolves one extension mount to its package and agent-shaped source root
+ * without importing the mount module. Reads the mount source text to extract
+ * the package specifier, resolves the package, and reads
+ * `package.json#eve.extension` for the source root.
+ */
+export async function locateExtensionMount(input: {
+  readonly source: ProjectSource;
+  readonly agentRoot: string;
+  readonly appRoot: string;
+  readonly mount: ExtensionSourceRef;
+}): Promise<{ location?: ExtensionMountLocation; diagnostics: DiscoverDiagnostic[] }> {
+  const mountPath = join(input.agentRoot, input.mount.logicalPath);
+  const namespace = mountNamespace(input.mount.logicalPath);
+
+  let text: string;
+  try {
+    text = await input.source.readTextFile(mountPath);
+  } catch {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message: `Could not read extension mount "${input.mount.logicalPath}".`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const specifier = parseExtensionMountSpecifier(text);
+  if (specifier === null) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message:
+            `Extension mount "${input.mount.logicalPath}" must default-export a mounted extension, ` +
+            `e.g. \`export default crm({ ... })\` or \`export { default } from "@acme/crm"\`.`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const packageRoot = await resolvePackageRoot({
+    source: input.source,
+    appRoot: input.appRoot,
+    mountDirectory: dirname(mountPath),
+    specifier,
+  });
+  if (packageRoot === null) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message: `Could not resolve extension package "${specifier}" mounted by "${input.mount.logicalPath}".`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const manifestPath = join(packageRoot, "package.json");
+  let pkg: { name?: unknown; eve?: { extension?: unknown } };
+  try {
+    pkg = JSON.parse(await input.source.readTextFile(manifestPath)) as typeof pkg;
+  } catch {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_PACKAGE_INVALID,
+          message: `Extension package "${specifier}" has no readable package.json at "${manifestPath}".`,
+          sourcePath: manifestPath,
+        }),
+      ],
+    };
+  }
+
+  const extensionRoot = pkg.eve?.extension;
+  if (typeof extensionRoot !== "string" || extensionRoot.length === 0) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_PACKAGE_INVALID,
+          message: `Package "${specifier}" is not an eve extension: its package.json is missing the \`eve.extension\` source-root field.`,
+          sourcePath: manifestPath,
+        }),
+      ],
+    };
+  }
+
+  const packageName = typeof pkg.name === "string" && pkg.name.length > 0 ? pkg.name : specifier;
+
+  return {
+    location: {
+      namespace,
+      specifier,
+      packageName,
+      packageRoot,
+      sourceRoot: resolve(packageRoot, extensionRoot),
+    },
+    diagnostics: [],
+  };
+}
+
+async function resolvePackageRoot(input: {
+  readonly source: ProjectSource;
+  readonly appRoot: string;
+  readonly mountDirectory: string;
+  readonly specifier: string;
+}): Promise<string | null> {
+  if (input.specifier.startsWith(".")) {
+    const target = resolve(input.mountDirectory, input.specifier);
+    return (await hasPackageJson(input.source, target)) ? target : null;
+  }
+
+  if (isAbsolute(input.specifier)) {
+    return (await hasPackageJson(input.source, input.specifier)) ? input.specifier : null;
+  }
+
+  const packageSubpath = bareSpecifierPackagePath(input.specifier);
+  let current = resolve(input.appRoot);
+  while (true) {
+    const candidate = join(current, "node_modules", packageSubpath);
+    if (await hasPackageJson(input.source, candidate)) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+/**
+ * Returns the package portion of a bare specifier, dropping any deep subpath.
+ * `@acme/crm/mount` → `@acme/crm`; `tavily/mount` → `tavily`.
+ */
+function bareSpecifierPackagePath(specifier: string): string {
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    return segments.slice(0, 2).join("/");
+  }
+  return segments[0] ?? specifier;
+}
+
+async function hasPackageJson(source: ProjectSource, packageRoot: string): Promise<boolean> {
+  return (await source.stat(join(packageRoot, "package.json"))) === "file";
+}

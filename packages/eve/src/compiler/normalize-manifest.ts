@@ -16,6 +16,7 @@ import { createCompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog
 import { compileAgentConfig } from "#compiler/normalize-agent-config.js";
 import { compileChannelDefinition } from "#compiler/normalize-channel.js";
 import { compileConnectionDefinition } from "#compiler/normalize-connection.js";
+import { compileExtensionContributions } from "#compiler/normalize-extension.js";
 import type { ManifestCompileContext } from "#compiler/normalize-helpers.js";
 import { compileHookEntry } from "#compiler/normalize-hook.js";
 import { compileSandboxDefinition } from "#compiler/normalize-sandbox.js";
@@ -145,16 +146,56 @@ async function compileAgentNodeManifest(
     }
   }
 
+  const connections = await Promise.all(
+    manifest.connections.map((connectionSource) =>
+      compileConnectionDefinition(manifest.agentRoot, connectionSource, { externalDependencies }),
+    ),
+  );
+  const hooks = manifest.hooks.map((hookSource) => compileHookEntry(hookSource));
+  const schedules = await Promise.all(
+    manifest.schedules.map((scheduleSource) =>
+      compileScheduleDefinition(manifest.agentRoot, scheduleSource, { externalDependencies }),
+    ),
+  );
+
+  // Compose mounted extensions, sorted by mount namespace for deterministic
+  // ordering. Contributions merge into this node under their namespaced names;
+  // instruction fragments append after the consumer's own instructions.
+  const extensionInstructionFragments: string[] = [];
+  for (const mount of [...manifest.resolvedExtensions].sort((left, right) =>
+    left.namespace.localeCompare(right.namespace),
+  )) {
+    const contributions = await compileExtensionContributions({
+      mount,
+      context,
+      consumerAgentRoot: manifest.agentRoot,
+      externalDependencies,
+    });
+    tools.push(...contributions.tools);
+    dynamicTools.push(...contributions.dynamicTools);
+    hooks.push(...contributions.hooks);
+    schedules.push(...contributions.schedules);
+    skills.push(...contributions.skills);
+    dynamicSkills.push(...contributions.dynamicSkills);
+    dynamicInstructions.push(...contributions.dynamicInstructions);
+    connections.push(...contributions.connections);
+    extensionInstructionFragments.push(...contributions.instructionFragments);
+  }
+
+  const composedMarkdown = [
+    ...staticInstructions.map((entry) => entry.markdown),
+    ...extensionInstructionFragments,
+  ];
   const composedInstructions: CompiledInstructions | undefined =
-    staticInstructions.length === 0
+    composedMarkdown.length === 0
       ? undefined
-      : staticInstructions.length === 1
+      : staticInstructions.length === 1 && extensionInstructionFragments.length === 0
         ? staticInstructions[0]
         : {
             name: "instructions",
             logicalPath: "instructions",
-            markdown: staticInstructions.map((i) => i.markdown).join("\n\n"),
-            sourceId: staticInstructions[0]!.sourceId,
+            markdown: composedMarkdown.join("\n\n"),
+            sourceId: staticInstructions[0]?.sourceId ?? "instructions",
             sourceKind: "module",
           };
 
@@ -163,17 +204,13 @@ async function compileAgentNodeManifest(
     appRoot: manifest.appRoot,
     channels: compiledChannels,
     config,
-    connections: await Promise.all(
-      manifest.connections.map((connectionSource) =>
-        compileConnectionDefinition(manifest.agentRoot, connectionSource, { externalDependencies }),
-      ),
-    ),
+    connections,
     diagnosticsSummary: manifest.diagnosticsSummary,
     disabledFrameworkTools,
     workflowEnabled,
     dynamicSkills,
     dynamicTools,
-    hooks: manifest.hooks.map((hookSource) => compileHookEntry(hookSource)),
+    hooks,
     sandbox:
       manifest.sandbox === null
         ? null
@@ -186,11 +223,7 @@ async function compileAgentNodeManifest(
       sourceId: workspace.sourceId,
       sourcePath: workspace.sourcePath,
     })),
-    schedules: await Promise.all(
-      manifest.schedules.map((scheduleSource) =>
-        compileScheduleDefinition(manifest.agentRoot, scheduleSource, { externalDependencies }),
-      ),
-    ),
+    schedules,
     dynamicInstructions,
     skills,
     instructions: composedInstructions,
