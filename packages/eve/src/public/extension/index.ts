@@ -14,8 +14,10 @@ export {
   type ExtensionConfigField,
   type ExtensionConfigFieldType,
   type ExtensionConfigHandle,
+  type ExtensionConfigInput,
   type ExtensionConfigSchema,
   type InferExtensionConfig,
+  type MountedExtension,
   type NumberConfigField,
   type StringConfigField,
 } from "#public/definitions/extension.js";

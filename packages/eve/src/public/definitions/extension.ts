@@ -69,12 +69,37 @@ export type InferExtensionConfig<S extends ExtensionConfigSchema> = {
   readonly [K in keyof S as FieldAlwaysPresent<S[K]> extends true ? never : K]?: FieldValue<S[K]>;
 };
 
+type FieldRequired<F extends ExtensionConfigField> = F extends { readonly required: true }
+  ? true
+  : false;
+
 /**
- * Typed handle returned by {@link defineConfig}. Tools read the mounted config
- * through {@link get}; the build reads {@link schema} to generate the mount
- * factory and record the config in the compiled artifact.
+ * The config a consumer passes at the mount site. Required fields are
+ * mandatory; everything else is optional.
+ */
+export type ExtensionConfigInput<S extends ExtensionConfigSchema> = {
+  readonly [K in keyof S as FieldRequired<S[K]> extends true ? K : never]: FieldValue<S[K]>;
+} & {
+  readonly [K in keyof S as FieldRequired<S[K]> extends true ? never : K]?: FieldValue<S[K]>;
+};
+
+/**
+ * Marker the consumer's mount file default-exports. The build reads the mount
+ * statically for its package specifier; the runtime evaluates it so the call
+ * binds config into the extension's scope.
+ */
+export interface MountedExtension {
+  readonly [MOUNTED_EXTENSION]: true;
+}
+
+/**
+ * Typed handle returned by {@link defineConfig}. It is the mount factory the
+ * consumer calls (`crm({ apiKey })`), which binds config; tools read the bound
+ * config through {@link get}; and the build reads {@link schema} to record the
+ * config in the compiled artifact.
  */
 export interface ExtensionConfigHandle<S extends ExtensionConfigSchema = ExtensionConfigSchema> {
+  (values?: ExtensionConfigInput<S>): MountedExtension;
   readonly schema: S;
   /**
    * Returns the config bound when the extension was mounted, with declared
@@ -83,9 +108,11 @@ export interface ExtensionConfigHandle<S extends ExtensionConfigSchema = Extensi
   get(): InferExtensionConfig<S>;
 }
 
-interface InternalConfigHandle<S extends ExtensionConfigSchema> extends ExtensionConfigHandle<S> {
+const MOUNTED_EXTENSION = Symbol.for("eve.mounted-extension");
+
+type InternalConfigHandle<S extends ExtensionConfigSchema> = ExtensionConfigHandle<S> & {
   [BOUND_VALUES]?: Record<string, unknown>;
-}
+};
 
 function validateSchema(schema: ExtensionConfigSchema): void {
   for (const [name, field] of Object.entries(schema)) {
@@ -122,17 +149,20 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
 ): ExtensionConfigHandle<S> {
   validateSchema(schema);
 
-  const handle: InternalConfigHandle<S> = {
-    schema,
-    get(): InferExtensionConfig<S> {
-      const bound = handle[BOUND_VALUES];
-      if (bound === undefined) {
-        throw new Error(
-          "Extension config is not bound. config.get() only works inside a mounted extension; ensure the extension was mounted through agent/extensions/.",
-        );
-      }
-      return applyDefaults(schema, bound) as InferExtensionConfig<S>;
-    },
+  const handle = ((values?: ExtensionConfigInput<S>): MountedExtension => {
+    bindExtensionConfig(handle, (values ?? {}) as Record<string, unknown>);
+    return { [MOUNTED_EXTENSION]: true };
+  }) as InternalConfigHandle<S>;
+
+  Object.defineProperty(handle, "schema", { value: schema, enumerable: true });
+  handle.get = (): InferExtensionConfig<S> => {
+    const bound = handle[BOUND_VALUES];
+    if (bound === undefined) {
+      throw new Error(
+        "Extension config is not bound. config.get() only works inside a mounted extension; ensure the extension was mounted through agent/extensions/.",
+      );
+    }
+    return applyDefaults(schema, bound) as InferExtensionConfig<S>;
   };
 
   return handle;
@@ -158,8 +188,8 @@ function applyDefaults(
  * calls this once per mounted extension. Validates required fields and types
  * before binding.
  */
-export function bindExtensionConfig(
-  handle: ExtensionConfigHandle,
+export function bindExtensionConfig<S extends ExtensionConfigSchema>(
+  handle: ExtensionConfigHandle<S>,
   values: Record<string, unknown>,
 ): void {
   const schema = handle.schema;

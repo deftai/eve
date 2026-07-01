@@ -37,6 +37,27 @@ describe("defineConfig", () => {
     });
   });
 
+  it("binds config when called as the mount factory", () => {
+    const config = defineConfig({
+      apiKey: { type: "string", required: true },
+      baseUrl: { type: "string", default: "https://api.acme.example" },
+    });
+
+    const mounted = config({ apiKey: "sk-456" });
+
+    expect(mounted).toBeDefined();
+    expect(config.get()).toEqual({
+      apiKey: "sk-456",
+      baseUrl: "https://api.acme.example",
+    });
+  });
+
+  it("supports a zero-config mount call", () => {
+    const config = defineConfig({ verbose: { type: "boolean", default: false } });
+    config();
+    expect(config.get()).toEqual({ verbose: false });
+  });
+
   it("lets a bound value override a default", () => {
     const config = defineConfig({ baseUrl: { type: "string", default: "https://default" } });
     bindExtensionConfig(config, { baseUrl: "https://override" });
