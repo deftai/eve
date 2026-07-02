@@ -1,8 +1,10 @@
 import type { AgentSourceManifest } from "#discover/manifest.js";
+import { mountNamespace } from "#discover/extensions.js";
 import {
   type CompiledAgentManifest,
   type CompiledAgentNodeManifest,
   type CompiledDynamicInstructionsDefinition,
+  type CompiledExtensionMount,
   type CompiledDynamicSkillDefinition,
   type CompiledDynamicToolDefinition,
   type CompiledInstructions,
@@ -45,8 +47,21 @@ export async function compileAgentManifest(
     subagents: manifest.subagents,
   });
 
+  const extensionMounts: CompiledExtensionMount[] = manifest.resolvedExtensions.map((mount) => {
+    const mountRef = manifest.extensions.find(
+      (entry) => mountNamespace(entry.logicalPath) === mount.namespace,
+    );
+    return {
+      namespace: mount.namespace,
+      packageName: mount.packageName,
+      mountSourceId: mountRef?.sourceId ?? `extensions/${mount.namespace}`,
+      mountLogicalPath: mountRef?.logicalPath ?? `extensions/${mount.namespace}`,
+    };
+  });
+
   return createCompiledAgentManifest({
     ...compiledNode,
+    extensionMounts,
     remoteAgents: subagentGraph.remoteAgents,
     subagentEdges: subagentGraph.edges,
     subagents: subagentGraph.nodes,

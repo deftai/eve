@@ -40,7 +40,7 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 32;
+export const COMPILED_AGENT_MANIFEST_VERSION = 33;
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -633,12 +633,34 @@ const compiledSubagentEdgeSchema: z.ZodType<CompiledSubagentEdge> = z
   .strict();
 
 /**
+ * One mounted extension recorded on the root compiled manifest. The runtime
+ * evaluates {@link mountLogicalPath} at module-map load so the mount's factory
+ * call binds the extension's config before any tool runs.
+ */
+export interface CompiledExtensionMount {
+  readonly namespace: string;
+  readonly packageName: string;
+  readonly mountSourceId: string;
+  readonly mountLogicalPath: string;
+}
+
+const compiledExtensionMountSchema: z.ZodType<CompiledExtensionMount> = z
+  .object({
+    namespace: z.string(),
+    packageName: z.string(),
+    mountSourceId: z.string(),
+    mountLogicalPath: z.string(),
+  })
+  .strict();
+
+/**
  * Zod schema for the versioned compiled manifest emitted by the compiler.
  */
 export const compiledAgentManifestSchema = z
   .object({
     agentRoot: z.string(),
     appRoot: z.string(),
+    extensionMounts: z.array(compiledExtensionMountSchema).default([]),
     channels: z.array(compiledChannelEntrySchema),
     config: compiledAgentConfigSchema,
     connections: z.array(compiledConnectionDefinitionSchema),
@@ -838,10 +860,12 @@ export function createCompiledAgentManifest(input: {
   readonly subagents?: readonly CompiledSubagentNode[];
   readonly instructions?: CompiledInstructions;
   readonly tools?: readonly CompiledToolDefinition[];
+  readonly extensionMounts?: readonly CompiledExtensionMount[];
 }): CompiledAgentManifest {
   return {
     ...createCompiledAgentNodeManifest(input),
     kind: COMPILED_AGENT_MANIFEST_KIND,
+    extensionMounts: [...(input.extensionMounts ?? [])],
     subagentEdges: [...(input.subagentEdges ?? [])],
     subagents: [...(input.subagents ?? [])],
     version: COMPILED_AGENT_MANIFEST_VERSION,
