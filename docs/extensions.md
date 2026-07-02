@@ -57,7 +57,7 @@ Config is bound once when the extension mounts and constant for the session. Val
 
 ### State
 
-`defineState` names are prefixed with the extension's package namespace automatically, so an extension's durable state never collides with the consumer's or another extension's. Author it exactly as in an agent — `defineState("budget", …)` — and eve scopes the key.
+`defineState` names are prefixed with the extension's package namespace automatically, so an extension's durable state never collides with the consumer's or another extension's. Author it exactly as in an agent — `defineState("budget", …)` — and eve scopes the key. State is keyed to the package (not the mount filename), so renaming the mount file never orphans persisted state. The scope is baked in at build time, so it holds no matter how the consumer imports the extension's modules — including an override that eagerly imports the extension's tools barrel.
 
 ## Publishing
 

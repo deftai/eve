@@ -18,20 +18,6 @@ export interface StateHandle<T> {
 const RESERVED_STATE_NAME_PREFIX = "eve.";
 
 /**
- * Global symbol the generated module map sets while an extension's modules are
- * evaluated. When present, {@link defineState} prefixes the durable key with the
- * extension's package-derived namespace so two extensions (or an extension and
- * the consumer) cannot collide on the same bare name. Set and cleared around
- * each extension module import, so consumer code always reads an empty scope.
- */
-const EXT_STATE_SCOPE = Symbol.for("eve.ext-state-scope");
-
-function currentExtensionStateScope(): string | undefined {
-  const scope = (globalThis as Record<symbol, unknown>)[EXT_STATE_SCOPE];
-  return typeof scope === "string" && scope.length > 0 ? scope : undefined;
-}
-
-/**
  * Creates a typed, named state slot backed by a durable `ContextKey`.
  * `initial()` produces the value on first access within a context.
  *
@@ -61,8 +47,7 @@ export function defineState<T>(name: string, initial: () => T): StateHandle<T> {
     );
   }
 
-  const scope = currentExtensionStateScope();
-  const key = new ContextKey<T>(scope === undefined ? name : `${scope}.${name}`);
+  const key = new ContextKey<T>(name);
 
   return {
     get(): T {

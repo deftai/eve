@@ -6,22 +6,10 @@
  */
 const BOUND_VALUES = Symbol.for("eve.extension-config-bound-values");
 
-/** Symbol carrying the extension namespace a handle captured at definition. */
+/** Symbol carrying the extension namespace a handle was defined under. */
 const CONFIG_NAMESPACE = Symbol.for("eve.extension-config-namespace");
 
-/**
- * Global symbol the loaders set while an extension's modules are evaluated
- * (shared with `defineState`). Config bound under a namespace resolves across
- * module-instance duplication introduced by source compilation.
- */
-const EXT_SCOPE = Symbol.for("eve.ext-state-scope");
-
 const CONFIG_REGISTRY = Symbol.for("eve.extension-config-registry");
-
-function extensionScope(): string | undefined {
-  const scope = (globalThis as Record<symbol, unknown>)[EXT_SCOPE];
-  return typeof scope === "string" && scope.length > 0 ? scope : undefined;
-}
 
 function configRegistry(): Map<string, Record<string, unknown>> {
   const container = globalThis as Record<symbol, unknown>;
@@ -182,13 +170,16 @@ function validateSchema(schema: ExtensionConfigSchema): void {
  */
 export function defineConfig<const S extends ExtensionConfigSchema>(
   schema: S,
+  namespace?: string,
 ): ExtensionConfigHandle<S> {
   validateSchema(schema);
 
-  // Captured at module evaluation: the loaders set the extension scope while
-  // this module (transitively imported by the mount and by every extension
-  // tool) evaluates, so both copies key their binding by the same namespace.
-  const namespace = extensionScope();
+  // The extension-scope bundler plugin rewrites an extension's `eve/extension`
+  // import to a shim that passes the extension's package-derived namespace here.
+  // The mount and every extension tool import the same shim, so all copies key
+  // their binding by the same namespace regardless of evaluation order. Outside
+  // an extension (no shim) the namespace is absent and binding falls back to the
+  // handle instance.
 
   const handle = ((values?: ExtensionConfigInput<S>): MountedExtension => {
     bindExtensionConfig(handle, (values ?? {}) as Record<string, unknown>);
@@ -196,7 +187,7 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
   }) as InternalConfigHandle<S>;
 
   Object.defineProperty(handle, "schema", { value: schema, enumerable: true });
-  if (namespace !== undefined) {
+  if (namespace !== undefined && namespace.length > 0) {
     handle[CONFIG_NAMESPACE] = namespace;
   }
   handle.get = (): InferExtensionConfig<S> => {

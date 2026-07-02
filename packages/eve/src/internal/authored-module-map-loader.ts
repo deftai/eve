@@ -6,6 +6,7 @@ import { collectModuleRefsForManifest, type CompiledModuleMap } from "#compiler/
 import type { RuntimeDiskCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
 import { loadAuthoredModuleNamespace } from "#internal/authored-module-loader.js";
+import type { ExtensionScope } from "#internal/bundler/extension-scope-plugin.js";
 
 /**
  * Loads a disk-backed module map by hydrating authored modules directly from
@@ -45,11 +46,17 @@ async function hydrateCompiledModuleMapFromManifest(
       })),
   ];
 
+  const extensionScopes: ExtensionScope[] = manifest.extensionMounts.map((mount) => ({
+    sourceRoot: mount.sourceRoot,
+    packageNamespace: mount.packageNamespace,
+  }));
+
   for (const nodeManifest of nodeManifests) {
     nodes[nodeManifest.nodeId] = {
       modules: await hydrateCompiledNodeScope({
         agentRoot: nodeManifest.agentRoot,
         manifest: nodeManifest.manifest,
+        extensionScopes,
       }),
     };
   }
@@ -59,61 +66,23 @@ async function hydrateCompiledModuleMapFromManifest(
   };
 }
 
-const EXT_STATE_SCOPE = Symbol.for("eve.ext-state-scope");
-
-/**
- * Namespace an extension-owned or mount module should evaluate under so
- * `defineState`/`defineConfig` scope by extension. Mount modules carry the
- * namespace on the manifest; composed modules encode it in their source id
- * (`ext:<ns>:…`).
- */
-function extensionScopeForModule(
-  sourceId: string,
-  mountNamespaceBySourceId: ReadonlyMap<string, string>,
-): string | undefined {
-  const mount = mountNamespaceBySourceId.get(sourceId);
-  if (mount !== undefined) {
-    return mount;
-  }
-  return sourceId.match(/^ext:([^:]+):/)?.[1];
-}
-
 async function hydrateCompiledNodeScope(input: {
   agentRoot: string;
   manifest: CompiledAgentNodeManifest;
+  extensionScopes: readonly ExtensionScope[];
 }): Promise<CompiledModuleMap["nodes"][string]["modules"]> {
   const refs = collectModuleRefsForManifest(input.manifest).sort((left, right) =>
     left.sourceId.localeCompare(right.sourceId),
   );
   const externalDependencies = input.manifest.config.build?.externalDependencies ?? [];
-  const mountNamespaceBySourceId = new Map(
-    (
-      (
-        input.manifest as {
-          extensionMounts?: readonly { mountSourceId: string; namespace: string }[];
-        }
-      ).extensionMounts ?? []
-    ).map((mount) => [mount.mountSourceId, mount.namespace]),
-  );
-  const container = globalThis as Record<symbol, unknown>;
   const modules: CompiledModuleMap["nodes"][string]["modules"] = {};
 
   for (const ref of refs) {
     const modulePath = join(input.agentRoot, ref.logicalPath);
-    const scope = extensionScopeForModule(ref.sourceId, mountNamespaceBySourceId);
-
-    if (scope !== undefined) {
-      container[EXT_STATE_SCOPE] = scope;
-    }
-    try {
-      modules[ref.sourceId] = await loadAuthoredModuleNamespace(modulePath, {
-        externalDependencies,
-      });
-    } finally {
-      if (scope !== undefined) {
-        container[EXT_STATE_SCOPE] = undefined;
-      }
-    }
+    modules[ref.sourceId] = await loadAuthoredModuleNamespace(modulePath, {
+      externalDependencies,
+      extensionScopes: input.extensionScopes,
+    });
   }
 
   return modules;

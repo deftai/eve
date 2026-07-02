@@ -6,6 +6,10 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { createAuthoredAssetImportPlugin } from "#internal/authored-asset-import-plugin.js";
 import { createAuthoredModuleBundleError } from "#internal/authored-module-bundle.js";
 import { createAuthoredPackageTsConfigPathsPlugin } from "#internal/authored-package-tsconfig-paths.js";
+import {
+  createExtensionScopePlugin,
+  type ExtensionScope,
+} from "#internal/bundler/extension-scope-plugin.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import {
   buildWithNitroRolldown,
@@ -50,6 +54,12 @@ type RolldownResolveContext = {
 
 export interface AuthoredModuleLoadOptions {
   readonly externalDependencies?: readonly string[];
+  /**
+   * Extension source roots and their namespaces. When the module being loaded
+   * lives under one of these roots, its `defineState`/`defineConfig` calls are
+   * scoped to the extension's namespace at bundle time.
+   */
+  readonly extensionScopes?: readonly ExtensionScope[];
 }
 
 function getChannelModuleCache(): Map<string, unknown> | undefined {
@@ -196,6 +206,7 @@ async function loadBundledAuthoredModule(
       : null;
   const plugins = [
     channelIdentityPlugin,
+    createExtensionScopePlugin(options.extensionScopes ?? []),
     createAuthoredRelativeExtensionResolverPlugin({ extensions: RESOLVE_EXTENSIONS }),
     createAuthoredAssetImportPlugin(),
     createAuthoredPackageTsConfigPathsPlugin({
@@ -233,6 +244,8 @@ async function loadBundledAuthoredModule(
     .update(modulePath)
     .update("\0")
     .update(externalDependencies.join("\0"))
+    .update("\0")
+    .update(fingerprintExtensionScopes(options.extensionScopes))
     .update("\0")
     .update(outputFile.code)
     .digest("hex");
@@ -400,7 +413,14 @@ function createInFlightModuleLoadKey(
 ): string {
   const externalDependencies = normalizeExternalDependencies(options.externalDependencies);
 
-  return `${modulePath}\0${externalDependencies.join("\0")}`;
+  return `${modulePath}\0${externalDependencies.join("\0")}\0${fingerprintExtensionScopes(options.extensionScopes)}`;
+}
+
+function fingerprintExtensionScopes(scopes: readonly ExtensionScope[] = []): string {
+  return [...scopes]
+    .map((scope) => `${scope.sourceRoot}=${scope.packageNamespace}`)
+    .sort()
+    .join("\0");
 }
 
 function normalizeExternalDependencies(externalDependencies: readonly string[] = []): string[] {

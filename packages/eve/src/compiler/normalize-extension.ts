@@ -71,6 +71,7 @@ export async function compileExtensionContributions(input: {
       dynamicTools.push({
         ...entry.definition,
         slug: `${prefix}${entry.definition.slug}`,
+        extensionNamespace: mount.namespace,
         sourceId: scopeSourceId(entry.definition.sourceId),
         logicalPath: rebase(entry.definition.logicalPath),
       });
