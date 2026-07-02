@@ -415,7 +415,9 @@ function readModelCallErrorSignals(error: unknown): ModelCallErrorSignals {
 
   return {
     apiCallError: upstreamError !== undefined,
-    apiErrorMessage: upstreamBody?.apiErrorMessage,
+    apiErrorMessage:
+      upstreamBody?.apiErrorMessage ??
+      firstInformativeApiMessage([readErrorMessage(upstreamError)]),
     gatewayName: readErrorName(gatewayError),
     gatewayType: readStringField(gatewayError, "type"),
     generationId: readStringField(gatewayError, "generationId") ?? upstreamBody?.generationId,

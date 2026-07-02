@@ -309,6 +309,20 @@ describe("summarizeKnownModelCallRequestError", () => {
     });
   });
 
+  it("uses the direct API error message when there is no response body", () => {
+    const summary = summarizeKnownModelCallRequestError(
+      directApiCallError({
+        message: "No endpoints found for anthropic/claude-3.5-haiku",
+        statusCode: 404,
+      }),
+    );
+
+    expect(summary).toEqual({
+      name: "Model provider API error",
+      message: "No endpoints found for anthropic/claude-3.5-haiku",
+    });
+  });
+
   it("falls back to HTTP status and response body for direct generic API call errors", () => {
     const responseBody = JSON.stringify({
       error: {
