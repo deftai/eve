@@ -176,6 +176,14 @@ async function compileAgentNodeManifest(
   // Compose mounted extensions, sorted by mount namespace for deterministic
   // ordering. Contributions merge into this node under their namespaced names;
   // instruction fragments append after the consumer's own instructions.
+  // Consumer-authored files shadow an extension contribution of the same name,
+  // and an earlier-sorted extension shadows a later one, so the first
+  // registration of a name wins.
+  const toolNames = new Set(tools.map((tool) => tool.name));
+  const dynamicToolSlugs = new Set(dynamicTools.map((tool) => tool.slug));
+  const connectionNames = new Set(connections.map((connection) => connection.connectionName));
+  const skillNames = new Set(skills.map((skill) => skill.name));
+  const scheduleNames = new Set(schedules.map((schedule) => schedule.name));
   const extensionInstructionFragments: string[] = [];
   for (const mount of [...manifest.resolvedExtensions].sort((left, right) =>
     left.namespace.localeCompare(right.namespace),
@@ -186,14 +194,39 @@ async function compileAgentNodeManifest(
       consumerAgentRoot: manifest.agentRoot,
       externalDependencies,
     });
-    tools.push(...contributions.tools);
-    dynamicTools.push(...contributions.dynamicTools);
+    for (const tool of contributions.tools) {
+      if (!toolNames.has(tool.name)) {
+        toolNames.add(tool.name);
+        tools.push(tool);
+      }
+    }
+    for (const tool of contributions.dynamicTools) {
+      if (!dynamicToolSlugs.has(tool.slug)) {
+        dynamicToolSlugs.add(tool.slug);
+        dynamicTools.push(tool);
+      }
+    }
+    for (const connection of contributions.connections) {
+      if (!connectionNames.has(connection.connectionName)) {
+        connectionNames.add(connection.connectionName);
+        connections.push(connection);
+      }
+    }
+    for (const skill of contributions.skills) {
+      if (!skillNames.has(skill.name)) {
+        skillNames.add(skill.name);
+        skills.push(skill);
+      }
+    }
+    for (const schedule of contributions.schedules) {
+      if (!scheduleNames.has(schedule.name)) {
+        scheduleNames.add(schedule.name);
+        schedules.push(schedule);
+      }
+    }
     hooks.push(...contributions.hooks);
-    schedules.push(...contributions.schedules);
-    skills.push(...contributions.skills);
     dynamicSkills.push(...contributions.dynamicSkills);
     dynamicInstructions.push(...contributions.dynamicInstructions);
-    connections.push(...contributions.connections);
     extensionInstructionFragments.push(...contributions.instructionFragments);
   }
 

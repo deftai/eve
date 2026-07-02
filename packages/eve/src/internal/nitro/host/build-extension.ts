@@ -40,10 +40,14 @@ export async function tryReadExtensionBuildConfig(
   }
 
   const packageName = typeof pkg.name === "string" && pkg.name.length > 0 ? pkg.name : "extension";
+  const bareName = packageName.slice(packageName.lastIndexOf("/") + 1);
+  const shortName = /^[A-Za-z_$]/.test(bareName)
+    ? bareName.replace(/[^A-Za-z0-9_$]/g, "_")
+    : `_${bareName.replace(/[^A-Za-z0-9_$]/g, "_")}`;
   return {
     sourceRoot: resolve(appRoot, extensionRoot),
     packageName,
-    shortName: packageName.slice(packageName.lastIndexOf("/") + 1),
+    shortName,
   };
 }
 
