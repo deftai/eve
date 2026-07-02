@@ -662,7 +662,7 @@ export async function createApplicationNitro(
     ).push(packageName);
   }
   const extensionScopePlugin = createExtensionScopePlugin(
-    preparedHost.compileResult.manifest.extensionMounts.map((mount) => ({
+    (preparedHost.compileResult.manifest.extensionMounts ?? []).map((mount) => ({
       sourceRoot: mount.sourceRoot,
       packageNamespace: mount.packageNamespace,
     })),
