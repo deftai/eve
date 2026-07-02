@@ -59,4 +59,40 @@ describe("extension build", () => {
       'export { default as crm_search } from "../../ext/tools/crm_search.mjs"',
     );
   });
+
+  it("fills the package exports map so authors do not hand-list it", async () => {
+    const root = await createExtensionPackage();
+    const config = await tryReadExtensionBuildConfig(root);
+    await buildExtensionPackage(root, config!);
+
+    const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+      exports?: Record<string, string>;
+    };
+    expect(pkg.exports).toEqual({
+      ".": "./dist/index.mjs",
+      "./tools": "./dist/tools/index.mjs",
+    });
+  });
+
+  it("leaves a deliberately customized export entry untouched", async () => {
+    const root = await createExtensionPackage();
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "@acme/crm",
+        type: "module",
+        eve: { extension: "ext" },
+        exports: { ".": "./custom/entry.mjs" },
+      }),
+      "utf8",
+    );
+    const config = await tryReadExtensionBuildConfig(root);
+    await buildExtensionPackage(root, config!);
+
+    const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+      exports?: Record<string, string>;
+    };
+    expect(pkg.exports?.["."]).toBe("./custom/entry.mjs");
+    expect(pkg.exports?.["./tools"]).toBe("./dist/tools/index.mjs");
+  });
 });

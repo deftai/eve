@@ -70,23 +70,19 @@ Config is bound once when the extension mounts and constant for the session; `co
 
 ## Publishing
 
-The mount calls the extension's factory, so the package exports one. `eve build` generates it — you never hand-write it. Wire `package.json` once:
+Point `eve.extension` at the source directory and run `eve build`. Wire `package.json` once:
 
 ```jsonc title="package.json"
 {
   "name": "@acme/crm",
   "type": "module",
   "eve": { "extension": "./ext" },
-  "exports": {
-    ".": "./dist/index.js",
-    "./tools": "./dist/tools/index.js",
-  },
   "peerDependencies": { "eve": "^x" },
   "scripts": { "build": "eve build", "prepare": "eve build" },
 }
 ```
 
-`eve build` emits the factory (re-exporting the config handle as `default` and the extension's short name) and named tool exports for consumer overrides. Local and workspace packages work without publishing.
+`eve build` emits the mount factory (`dist/index.mjs`, re-exporting the config handle as `default` and the extension's short name) and named tool exports for consumer overrides (`dist/tools/index.mjs`), then fills those two entries into the package's `exports` map (`.` and `./tools`) — so you never hand-list them. It only adds missing entries, so a deliberately customized export is left alone. Local and workspace packages work without publishing.
 
 ## Mounting
 

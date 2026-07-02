@@ -51,12 +51,51 @@ export async function tryReadExtensionBuildConfig(
   };
 }
 
+/** Subpath exports `eve build` manages for an extension package. */
+const MANAGED_EXTENSION_EXPORTS: Readonly<Record<string, string>> = {
+  ".": "./dist/index.mjs",
+  "./tools": "./dist/tools/index.mjs",
+};
+
+/**
+ * Fills the extension package's `exports` map with the entries the build emits —
+ * `.` (the mount factory) and `./tools` (tool re-exports for overrides) — so
+ * authors never hand-list them. Only missing keys are added, so an author who
+ * deliberately customizes an entry keeps it. Rewrites `package.json` only when a
+ * key was added.
+ */
+async function ensureExtensionExports(appRoot: string): Promise<void> {
+  const pkgPath = join(appRoot, "package.json");
+  const raw = await readFile(pkgPath, "utf8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+
+  const exports =
+    typeof pkg.exports === "object" && pkg.exports !== null && !Array.isArray(pkg.exports)
+      ? (pkg.exports as Record<string, unknown>)
+      : {};
+
+  let changed = false;
+  for (const [subpath, target] of Object.entries(MANAGED_EXTENSION_EXPORTS)) {
+    if (!(subpath in exports)) {
+      exports[subpath] = target;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return;
+  }
+  pkg.exports = exports;
+  await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+}
+
 /**
  * Builds an extension package: emits `dist/index.mjs` (the mount factory,
  * re-exporting the extension's config handle as `default` and its short name)
  * and `dist/tools/index.mjs` (named tool re-exports for consumer overrides).
  * Re-exports point at the authored source so the consumer's compiled tools and
- * the mount share one config-handle instance.
+ * the mount share one config-handle instance. Also fills the package's `exports`
+ * map with these entries so authors do not hand-list them.
  */
 export async function buildExtensionPackage(
   rootDir: string,
@@ -115,6 +154,8 @@ export async function buildExtensionPackage(
     );
   }
   await writeFile(join(outDir, "tools", "index.mjs"), `${toolLines.join("\n")}\n`, "utf8");
+
+  await ensureExtensionExports(appRoot);
 
   return outDir;
 }
