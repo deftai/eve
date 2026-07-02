@@ -53,7 +53,16 @@ export default defineConfig({
 });
 ```
 
-Config is bound once when the extension mounts and constant for the session. Values that vary per caller belong in connection auth.
+Read it from any tool, hook, or connection by importing the handle and calling `config.get()`. The result is typed from the schema — required fields and fields with a default are always present, the rest optional — and declared defaults are already applied.
+
+```ts title="ext/tools/search.ts"
+import config from "../config.js";
+
+// inside execute():
+const { apiKey, baseUrl } = config.get(); // baseUrl falls back to its default
+```
+
+Config is bound once when the extension mounts and constant for the session; `config.get()` throws if called outside a mounted extension. Values that vary per caller belong in connection auth.
 
 ### State
 
