@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./ext/config.ts",
-    "./tools/*": "./ext/tools/*.ts"
+    ".": "./ext/config.ts"
   },
   "dependencies": {
     "eve": "workspace:*",

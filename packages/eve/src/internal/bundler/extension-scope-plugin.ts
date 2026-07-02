@@ -22,11 +22,6 @@ const SCOPED_FRAMEWORK_MODULES: Record<ScopedFrameworkModule, "context" | "exten
   "eve/extension": "extension",
 };
 
-interface CanonicalScope {
-  readonly root: string;
-  readonly packageNamespace: string;
-}
-
 /** The subset of the rolldown/rollup plugin shape this plugin implements. */
 export interface ExtensionScopeBundlerPlugin {
   readonly name: string;
@@ -55,11 +50,11 @@ function isUnder(path: string, root: string): boolean {
 function shimSource(kind: "context" | "extension", namespace: string): string {
   const ns = JSON.stringify(namespace);
   if (kind === "context") {
-    // `export *` re-exports every other member; the explicit `defineState`
-    // shadows the star-exported one per ESM semantics, baking the namespace
-    // into the durable key regardless of evaluation order.
+    // `eve/context`'s only runtime export is `defineState`; the rest are types.
+    // Re-export it wrapped so the durable key is prefixed with the extension's
+    // namespace, baked into the bundle rather than read from evaluation-order-
+    // sensitive global state.
     return [
-      `export * from "eve/context";`,
       `import { defineState as __eveScopedDefineState } from "eve/context";`,
       `export function defineState(name, initial) {`,
       `  return __eveScopedDefineState(${ns} + "." + name, initial);`,
@@ -67,8 +62,8 @@ function shimSource(kind: "context" | "extension", namespace: string): string {
       "",
     ].join("\n");
   }
+  // `eve/extension`'s only runtime export is `defineConfig`.
   return [
-    `export * from "eve/extension";`,
     `import { defineConfig as __eveScopedDefineConfig } from "eve/extension";`,
     `export function defineConfig(schema, namespace) {`,
     `  return __eveScopedDefineConfig(schema, namespace === undefined ? ${ns} : namespace);`,
@@ -78,50 +73,22 @@ function shimSource(kind: "context" | "extension", namespace: string): string {
 }
 
 /**
- * Bundler plugin that scopes an extension's durable state and config to its
- * package namespace at bundle time.
- *
- * Any module physically under an extension's source root has its
- * `eve/context`/`eve/extension` imports redirected to a generated shim that
- * wraps `defineState`/`defineConfig` with the extension's namespace. Because the
- * namespace is baked into the bundled output — not read from ambient global
- * state during evaluation — scoping is independent of module evaluation order,
- * of how the consumer imports extension modules (including eager barrel
- * imports), and of module-instance duplication introduced by source compilation.
- *
- * Returns `null` when there are no extensions, so consumer-only builds carry no
- * extra plugin and their output is byte-identical to a non-extension build.
+ * Builds the resolveId/load hook pair shared by both plugin modes. `namespaceFor`
+ * returns the scope namespace for a given importer, or `undefined` to leave the
+ * import untouched.
  */
-export function createExtensionScopePlugin(
-  scopes: readonly ExtensionScope[],
-): ExtensionScopeBundlerPlugin | null {
-  if (scopes.length === 0) {
-    return null;
-  }
-
-  const canonicalScopes: CanonicalScope[] = scopes.map((scope) => ({
-    root: canonicalize(scope.sourceRoot),
-    packageNamespace: scope.packageNamespace,
-  }));
-
-  function namespaceForImporter(importer: string): string | undefined {
-    const path = importerPath(importer);
-    for (const scope of canonicalScopes) {
-      if (isUnder(path, scope.root)) {
-        return scope.packageNamespace;
-      }
-    }
-    return undefined;
-  }
-
+function scopeHooks(
+  name: string,
+  namespaceFor: (importer: string) => string | undefined,
+): ExtensionScopeBundlerPlugin {
   return {
-    name: "eve-extension-scope",
+    name,
     resolveId(source: string, importer: string | undefined) {
       const kind = SCOPED_FRAMEWORK_MODULES[source as ScopedFrameworkModule];
       if (kind === undefined || importer === undefined || importer.startsWith("\0")) {
         return undefined;
       }
-      const namespace = namespaceForImporter(importer);
+      const namespace = namespaceFor(importer);
       if (namespace === undefined) {
         return undefined;
       }
@@ -135,10 +102,48 @@ export function createExtensionScopePlugin(
       const separatorIndex = descriptor.indexOf(":");
       const kind = descriptor.slice(0, separatorIndex) as "context" | "extension";
       const namespace = descriptor.slice(separatorIndex + 1);
-      return {
-        code: shimSource(kind, namespace),
-        moduleType: "js" as const,
-      };
+      return { code: shimSource(kind, namespace), moduleType: "js" as const };
     },
   };
+}
+
+/**
+ * Path-containment scope plugin for the whole-application bundle (the production
+ * build). Any module physically under an extension's source root has its
+ * `eve/context`/`eve/extension` imports redirected to a generated shim that
+ * bakes the extension's package namespace into `defineState`/`defineConfig`.
+ *
+ * Returns `null` when there are no extensions, so consumer-only builds carry no
+ * extra plugin and their output is byte-identical to a non-extension build.
+ */
+export function createExtensionScopePlugin(
+  scopes: readonly ExtensionScope[],
+): ExtensionScopeBundlerPlugin | null {
+  if (scopes.length === 0) {
+    return null;
+  }
+  const canonicalScopes = scopes.map((scope) => ({
+    root: canonicalize(scope.sourceRoot),
+    packageNamespace: scope.packageNamespace,
+  }));
+  return scopeHooks("eve-extension-scope", (importer) => {
+    const path = importerPath(importer);
+    for (const scope of canonicalScopes) {
+      if (isUnder(path, scope.root)) {
+        return scope.packageNamespace;
+      }
+    }
+    return undefined;
+  });
+}
+
+/**
+ * Fixed-namespace scope plugin for a single extension-owned module bundle (the
+ * dev/eval per-module loader). The compiler already knows the loaded module is
+ * extension-owned and under which namespace, so every module in the bundle —
+ * the entry plus its same-package dependencies — is scoped, with no reliance on
+ * filesystem path matching (which is unreliable under workspace symlinks).
+ */
+export function createFixedNamespaceScopePlugin(namespace: string): ExtensionScopeBundlerPlugin {
+  return scopeHooks("eve-extension-scope-fixed", () => namespace);
 }

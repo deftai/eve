@@ -11,6 +11,20 @@ const CONFIG_NAMESPACE = Symbol.for("eve.extension-config-namespace");
 
 const CONFIG_REGISTRY = Symbol.for("eve.extension-config-registry");
 
+/**
+ * Ambient namespace set by the dev/eval loader around a mount module's
+ * evaluation. A mount imports its extension package cross-package, so the config
+ * handle loads unbundled and the bundler's scope shim never runs on it; reading
+ * this ambient value lets the mount still bind under the package namespace. The
+ * shim's explicit argument always takes precedence over this fallback.
+ */
+const EXT_CONFIG_SCOPE = Symbol.for("eve.ext-config-scope");
+
+function ambientConfigScope(): string | undefined {
+  const scope = (globalThis as Record<symbol, unknown>)[EXT_CONFIG_SCOPE];
+  return typeof scope === "string" && scope.length > 0 ? scope : undefined;
+}
+
 function configRegistry(): Map<string, Record<string, unknown>> {
   const container = globalThis as Record<symbol, unknown>;
   let registry = container[CONFIG_REGISTRY] as Map<string, Record<string, unknown>> | undefined;
@@ -175,11 +189,12 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
   validateSchema(schema);
 
   // The extension-scope bundler plugin rewrites an extension's `eve/extension`
-  // import to a shim that passes the extension's package-derived namespace here.
-  // The mount and every extension tool import the same shim, so all copies key
-  // their binding by the same namespace regardless of evaluation order. Outside
-  // an extension (no shim) the namespace is absent and binding falls back to the
-  // handle instance.
+  // import to a shim that passes the extension's package-derived namespace here,
+  // so a bundled config handle keys its binding by that namespace regardless of
+  // evaluation order. A mount's config handle loads unbundled (cross-package
+  // import) and so has no shim; there the dev loader sets an ambient scope we
+  // fall back to. Absent both, binding falls back to the handle instance.
+  const resolvedNamespace = namespace ?? ambientConfigScope();
 
   const handle = ((values?: ExtensionConfigInput<S>): MountedExtension => {
     bindExtensionConfig(handle, (values ?? {}) as Record<string, unknown>);
@@ -187,8 +202,8 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
   }) as InternalConfigHandle<S>;
 
   Object.defineProperty(handle, "schema", { value: schema, enumerable: true });
-  if (namespace !== undefined && namespace.length > 0) {
-    handle[CONFIG_NAMESPACE] = namespace;
+  if (resolvedNamespace !== undefined && resolvedNamespace.length > 0) {
+    handle[CONFIG_NAMESPACE] = resolvedNamespace;
   }
   handle.get = (): InferExtensionConfig<S> => {
     const bound = readBoundValues(handle);
