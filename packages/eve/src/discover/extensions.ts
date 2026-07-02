@@ -211,7 +211,7 @@ async function resolvePackageRoot(input: {
 
 /**
  * Returns the package portion of a bare specifier, dropping any deep subpath.
- * `@acme/crm/mount` → `@acme/crm`; `tavily/mount` → `tavily`.
+ * `@acme/crm/mount` → `@acme/crm`; `gizmo/mount` → `gizmo`.
  */
 function bareSpecifierPackagePath(specifier: string): string {
   const segments = specifier.split("/");

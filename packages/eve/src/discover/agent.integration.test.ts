@@ -588,15 +588,15 @@ describe("discoverAgent (memory)", () => {
           eve: { extension: "ext" },
         }),
         "node_modules/@acme/crm/ext/tools/search.ts": "export default {};\n",
-        "node_modules/@acme/tavily/package.json": JSON.stringify({
-          name: "@acme/tavily",
+        "node_modules/@acme/gizmo/package.json": JSON.stringify({
+          name: "@acme/gizmo",
           eve: { extension: "ext" },
         }),
-        "node_modules/@acme/tavily/ext/tools/search.ts": "export default {};\n",
+        "node_modules/@acme/gizmo/ext/tools/search.ts": "export default {};\n",
       },
       agentFiles: {
         "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
-        "extensions/tavily.ts": 'export { default } from "@acme/tavily";\n',
+        "extensions/gizmo.ts": 'export { default } from "@acme/gizmo";\n',
         "instructions.md": "You are a precise assistant.",
       },
     });
@@ -616,13 +616,13 @@ describe("discoverAgent (memory)", () => {
       },
       {
         sourceKind: "module",
-        logicalPath: "extensions/tavily.ts",
-        sourceId: "extensions/tavily.ts",
+        logicalPath: "extensions/gizmo.ts",
+        sourceId: "extensions/gizmo.ts",
       },
     ]);
     expect(result.manifest.resolvedExtensions.map((mount) => mount.namespace)).toEqual([
       "crm",
-      "tavily",
+      "gizmo",
     ]);
   });
 

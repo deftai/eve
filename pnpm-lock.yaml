@@ -577,9 +577,9 @@ importers:
       eve:
         specifier: workspace:*
         version: link:../../../packages/eve
-      tavily-extension:
+      gizmo-extension:
         specifier: workspace:*
-        version: link:../tavily-extension
+        version: link:../gizmo-extension
       toolkit-extension:
         specifier: workspace:*
         version: link:../toolkit-extension
@@ -810,7 +810,7 @@ importers:
         specifier: 'catalog:'
         version: 7.0.1-rc
 
-  e2e/fixtures/tavily-extension:
+  e2e/fixtures/gizmo-extension:
     dependencies:
       eve:
         specifier: workspace:*

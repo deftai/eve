@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "eve": "workspace:*",
-    "tavily-extension": "workspace:*",
+    "gizmo-extension": "workspace:*",
     "toolkit-extension": "workspace:*",
     "zod": "catalog:"
   },
