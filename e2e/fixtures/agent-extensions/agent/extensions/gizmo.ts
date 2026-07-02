@@ -1,3 +1,2 @@
-import gizmo from "gizmo-extension";
-
-export default gizmo();
+// gizmo takes no config, so it mounts with a bare re-export — no factory call.
+export { default } from "gizmo-extension";

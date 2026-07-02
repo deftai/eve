@@ -23,8 +23,8 @@ An extension is an agent-shaped directory without `agent.ts` or `sandbox` — th
 A tool is identical to one authored inside an agent:
 
 ```ts title="ext/tools/search.ts"
+import { getConfig } from "eve/extension";
 import { defineTool } from "eve/tools";
-import config from "../config.js";
 
 export default defineTool({
   description: "Search the CRM.",
@@ -32,7 +32,7 @@ export default defineTool({
     /* ... */
   },
   async execute({ query }) {
-    const { apiKey } = config.get();
+    const { apiKey } = getConfig();
     /* ... */
   },
 });
@@ -42,7 +42,7 @@ Name tools and connections for what they do (`search`, not `crm_search`); the co
 
 ### Configuration
 
-Declare per-consumer settings once with `defineConfig`. The returned handle is both the mount factory the consumer calls and the accessor tools read through.
+Extensions that take consumer settings declare them once with `defineConfig`. The returned handle is the mount factory the consumer calls. **Config is optional** — an extension with no settings omits `ext/config.ts` entirely.
 
 ```ts title="ext/config.ts"
 import { defineConfig } from "eve/extension";
@@ -53,16 +53,16 @@ export default defineConfig({
 });
 ```
 
-Read it from any tool, hook, or connection by importing the handle and calling `config.get()`. The result is typed from the schema — required fields and fields with a default are always present, the rest optional — and declared defaults are already applied.
+Read it from any tool, hook, or connection with `getConfig()` — no config import, no matter the file's depth:
 
 ```ts title="ext/tools/search.ts"
-import config from "../config.js";
+import { getConfig } from "eve/extension";
 
 // inside execute():
-const { apiKey, baseUrl } = config.get(); // baseUrl falls back to its default
+const { apiKey, baseUrl } = getConfig(); // baseUrl falls back to its default
 ```
 
-Config is bound once when the extension mounts and constant for the session; `config.get()` throws if called outside a mounted extension. Values that vary per caller belong in connection auth.
+`getConfig()` returns the mounted config with declared defaults applied, scoped to the calling extension. Pass the schema type (`getConfig<typeof schema>()`) for a precisely-typed result. It throws when called outside a mounted extension, or when the extension declares no config. Config is bound once when the extension mounts and constant for the session; values that vary per caller belong in connection auth.
 
 ### State
 
@@ -92,6 +92,12 @@ Mount an extension with one file under `agent/extensions/`. The filename is the 
 import { crm } from "@acme/crm";
 
 export default crm({ apiKey: process.env.CRM_API_KEY });
+```
+
+An extension that takes no config needs no factory call — mount it with a bare re-export:
+
+```ts title="agent/extensions/gizmo.ts"
+export { default } from "@acme/gizmo";
 ```
 
 The build resolves the package from the import, composes its contributions into the agent, and namespaces them by the mount filename: the `search` tool becomes `crm__search`, the `api` connection becomes `crm__api`. Instruction fragments append after the agent's own instructions.

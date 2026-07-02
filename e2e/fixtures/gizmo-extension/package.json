@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./ext/config.ts"
+    ".": "./index.mjs"
   },
   "dependencies": {
     "eve": "workspace:*",

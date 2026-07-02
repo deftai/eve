@@ -74,6 +74,28 @@ describe("extension build", () => {
     });
   });
 
+  it("emits a mounted-extension marker default when there is no config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eve-ext-noconfig-"));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "@acme/gizmo", type: "module", eve: { extension: "ext" } }),
+      "utf8",
+    );
+    await mkdir(join(root, "ext", "tools"), { recursive: true });
+    await writeFile(
+      join(root, "ext", "tools", "gizmo_ping.mjs"),
+      'export default { description: "Ping.", async execute() { return {}; } };\n',
+      "utf8",
+    );
+    const config = await tryReadExtensionBuildConfig(root);
+    const outDir = await buildExtensionPackage(root, config!);
+
+    const index = await readFile(join(outDir, "index.mjs"), "utf8");
+    expect(index).toContain('const mounted = { [Symbol.for("eve.mounted-extension")]: true }');
+    expect(index).toContain("export default mounted");
+    expect(index).not.toContain("config");
+  });
+
   it("leaves a deliberately customized export entry untouched", async () => {
     const root = await createExtensionPackage();
     await writeFile(

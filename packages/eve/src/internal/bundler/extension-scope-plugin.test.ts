@@ -80,13 +80,13 @@ describe("shim baking (shared)", () => {
     expect(shim?.code).toContain(`__eveScopedDefineState("acme-crm" + "." + name, initial)`);
   });
 
-  it("bakes the namespace into the defineConfig shim", () => {
+  it("bakes the namespace into the defineConfig and getConfig shims", () => {
     const shim = createFixedNamespaceScopePlugin("acme-crm").load(
       "\0eve-ext-scope:extension:acme-crm",
     );
-    expect(shim?.code).toContain(
-      `import { defineConfig as __eveScopedDefineConfig } from "eve/extension"`,
-    );
+    expect(shim?.code).toContain(`from "eve/extension"`);
+    expect(shim?.code).toContain(`export function defineConfig(schema, namespace)`);
+    expect(shim?.code).toContain(`export function getConfig(namespace)`);
     expect(shim?.code).toContain(`namespace === undefined ? "acme-crm" : namespace`);
   });
 

@@ -1,15 +1,8 @@
-/**
- * Marker symbol carrying an extension config handle's bound values when the
- * handle was defined outside an extension scope (no namespace to key by). Kept
- * off the public shape so authored code interacts only through {@link
- * ExtensionConfigHandle.get}.
- */
-const BOUND_VALUES = Symbol.for("eve.extension-config-bound-values");
-
 /** Symbol carrying the extension namespace a handle was defined under. */
 const CONFIG_NAMESPACE = Symbol.for("eve.extension-config-namespace");
 
 const CONFIG_REGISTRY = Symbol.for("eve.extension-config-registry");
+const SCHEMA_REGISTRY = Symbol.for("eve.extension-config-schema-registry");
 
 /**
  * Ambient namespace set by the dev/eval loader around a mount module's
@@ -31,6 +24,21 @@ function configRegistry(): Map<string, Record<string, unknown>> {
   if (registry === undefined) {
     registry = new Map();
     container[CONFIG_REGISTRY] = registry;
+  }
+  return registry;
+}
+
+/**
+ * Namespace-keyed registry of declared schemas. Populated by {@link defineConfig}
+ * so {@link getConfig} can apply declared defaults without importing the config
+ * handle.
+ */
+function schemaRegistry(): Map<string, ExtensionConfigSchema> {
+  const container = globalThis as Record<symbol, unknown>;
+  let registry = container[SCHEMA_REGISTRY] as Map<string, ExtensionConfigSchema> | undefined;
+  if (registry === undefined) {
+    registry = new Map();
+    container[SCHEMA_REGISTRY] = registry;
   }
   return registry;
 }
@@ -124,33 +132,20 @@ export interface MountedExtension {
 
 /**
  * Typed handle returned by {@link defineConfig}. It is the mount factory the
- * consumer calls (`crm({ apiKey })`), which binds config; tools read the bound
- * config through {@link get}; and the build reads {@link schema} to record the
- * config in the compiled artifact.
+ * consumer calls (`crm({ apiKey })`), which binds config; the build reads
+ * {@link schema} to record the config in the compiled artifact. Tools read the
+ * bound config with {@link getConfig}, not through this handle.
  */
 export interface ExtensionConfigHandle<S extends ExtensionConfigSchema = ExtensionConfigSchema> {
   (values?: ExtensionConfigInput<S>): MountedExtension;
   readonly schema: S;
-  /**
-   * Returns the config bound when the extension was mounted, with declared
-   * defaults applied. Throws when read outside a mounted extension.
-   */
-  get(): InferExtensionConfig<S>;
 }
 
 const MOUNTED_EXTENSION = Symbol.for("eve.mounted-extension");
 
 type InternalConfigHandle<S extends ExtensionConfigSchema> = ExtensionConfigHandle<S> & {
-  [BOUND_VALUES]?: Record<string, unknown>;
   [CONFIG_NAMESPACE]?: string;
 };
-
-function readBoundValues<S extends ExtensionConfigSchema>(
-  handle: InternalConfigHandle<S>,
-): Record<string, unknown> | undefined {
-  const namespace = handle[CONFIG_NAMESPACE];
-  return namespace === undefined ? handle[BOUND_VALUES] : configRegistry().get(namespace);
-}
 
 function validateSchema(schema: ExtensionConfigSchema): void {
   for (const [name, field] of Object.entries(schema)) {
@@ -170,9 +165,10 @@ function validateSchema(schema: ExtensionConfigSchema): void {
 /**
  * Declares an extension's typed, consumer-supplied configuration.
  *
- * Author it once at `ext/config.ts` and read it from any tool with
- * `config.get()`. `eve build` turns the schema into the factory a consumer
- * calls at mount (`crm({ apiKey })`) and records it so `eve add` can prompt.
+ * Author it once at `ext/config.ts`; read it from any tool, hook, or connection
+ * with {@link getConfig}. `eve build` turns the schema into the factory a
+ * consumer calls at mount (`crm({ apiKey })`) and records it so `eve add` can
+ * prompt. An extension with no settings omits this file entirely.
  *
  * ```ts
  * import { defineConfig } from "eve/extension";
@@ -190,10 +186,10 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
 
   // The extension-scope bundler plugin rewrites an extension's `eve/extension`
   // import to a shim that passes the extension's package-derived namespace here,
-  // so a bundled config handle keys its binding by that namespace regardless of
-  // evaluation order. A mount's config handle loads unbundled (cross-package
+  // so a bundled handle keys its schema and binding by that namespace regardless
+  // of evaluation order. A mount's config handle loads unbundled (cross-package
   // import) and so has no shim; there the dev loader sets an ambient scope we
-  // fall back to. Absent both, binding falls back to the handle instance.
+  // fall back to.
   const resolvedNamespace = namespace ?? ambientConfigScope();
 
   const handle = ((values?: ExtensionConfigInput<S>): MountedExtension => {
@@ -204,16 +200,10 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
   Object.defineProperty(handle, "schema", { value: schema, enumerable: true });
   if (resolvedNamespace !== undefined && resolvedNamespace.length > 0) {
     handle[CONFIG_NAMESPACE] = resolvedNamespace;
+    // Register the schema so getConfig() can apply defaults from any tool
+    // without importing this module.
+    schemaRegistry().set(resolvedNamespace, schema);
   }
-  handle.get = (): InferExtensionConfig<S> => {
-    const bound = readBoundValues(handle);
-    if (bound === undefined) {
-      throw new Error(
-        "Extension config is not bound. config.get() only works inside a mounted extension; ensure the extension was mounted through agent/extensions/.",
-      );
-    }
-    return applyDefaults(schema, bound) as InferExtensionConfig<S>;
-  };
 
   return handle;
 }
@@ -231,6 +221,42 @@ function applyDefaults(
     }
   }
   return resolved;
+}
+
+/**
+ * Reads the calling extension's mounted configuration, with declared defaults
+ * applied. Call it from any extension tool, hook, or connection — no import of
+ * the config module is needed:
+ *
+ * ```ts
+ * import { getConfig } from "eve/extension";
+ * const { apiKey } = getConfig();
+ * ```
+ *
+ * The extension-scope bundler plugin binds the call to the owning extension, so
+ * `getConfig()` resolves that extension's config regardless of where it is
+ * called. Throws when called outside a mounted extension, or when the extension
+ * declares no config. Pass the schema type (`getConfig<typeof schema>()`) for a
+ * precisely-typed result; otherwise the fields are typed loosely.
+ *
+ * The `namespace` argument is supplied by the bundler shim and is not part of
+ * the authoring surface.
+ */
+export function getConfig<S extends ExtensionConfigSchema = ExtensionConfigSchema>(
+  namespace?: string,
+): InferExtensionConfig<S> {
+  if (namespace === undefined || namespace.length === 0) {
+    throw new Error(
+      "getConfig() only works inside a mounted extension. Call it from an extension's tools, hooks, or connections.",
+    );
+  }
+  const schema = schemaRegistry().get(namespace);
+  if (schema === undefined) {
+    throw new Error(
+      `Extension "${namespace}" declares no config. Add an ext/config.ts with defineConfig(...) to read config.`,
+    );
+  }
+  return applyDefaults(schema, configRegistry().get(namespace) ?? {}) as InferExtensionConfig<S>;
 }
 
 /**
@@ -257,11 +283,8 @@ export function bindExtensionConfig<S extends ExtensionConfigSchema>(
       );
     }
   }
-  const internal = handle as InternalConfigHandle<ExtensionConfigSchema>;
-  const namespace = internal[CONFIG_NAMESPACE];
-  if (namespace === undefined) {
-    internal[BOUND_VALUES] = values;
-  } else {
+  const namespace = (handle as InternalConfigHandle<ExtensionConfigSchema>)[CONFIG_NAMESPACE];
+  if (namespace !== undefined) {
     configRegistry().set(namespace, values);
   }
 }

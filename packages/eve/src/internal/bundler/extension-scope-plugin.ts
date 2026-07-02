@@ -62,11 +62,16 @@ function shimSource(kind: "context" | "extension", namespace: string): string {
       "",
     ].join("\n");
   }
-  // `eve/extension`'s only runtime export is `defineConfig`.
+  // `eve/extension`'s runtime exports are `defineConfig` and `getConfig`; both
+  // bake the extension's namespace so config declared/read from any module in
+  // the extension resolves to the same scope.
   return [
-    `import { defineConfig as __eveScopedDefineConfig } from "eve/extension";`,
+    `import { defineConfig as __eveScopedDefineConfig, getConfig as __eveScopedGetConfig } from "eve/extension";`,
     `export function defineConfig(schema, namespace) {`,
     `  return __eveScopedDefineConfig(schema, namespace === undefined ? ${ns} : namespace);`,
+    `}`,
+    `export function getConfig(namespace) {`,
+    `  return __eveScopedGetConfig(namespace === undefined ? ${ns} : namespace);`,
     `}`,
     "",
   ].join("\n");

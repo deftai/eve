@@ -10,6 +10,7 @@
 
 export {
   defineConfig,
+  getConfig,
   type BooleanConfigField,
   type ExtensionConfigField,
   type ExtensionConfigFieldType,

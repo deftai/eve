@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { bindExtensionConfig, defineConfig } from "#public/definitions/extension.js";
+import { bindExtensionConfig, defineConfig, getConfig } from "#public/definitions/extension.js";
+
+// Each test uses a distinct namespace because the schema/values registries the
+// runtime keys config by are process-global.
 
 describe("defineConfig", () => {
   it("exposes the declared schema", () => {
-    const config = defineConfig({
-      apiKey: { type: "string", secret: true, required: true },
-      baseUrl: { type: "string", default: "https://api.acme.example" },
-    });
+    const config = defineConfig(
+      {
+        apiKey: { type: "string", secret: true, required: true },
+        baseUrl: { type: "string", default: "https://api.acme.example" },
+      },
+      "schema-test",
+    );
 
     expect(config.schema.apiKey).toEqual({ type: "string", secret: true, required: true });
     expect(config.schema.baseUrl).toEqual({
@@ -16,61 +22,13 @@ describe("defineConfig", () => {
     });
   });
 
-  it("throws when get() runs before the extension is mounted", () => {
-    const config = defineConfig({ apiKey: { type: "string", required: true } });
-    expect(() => config.get()).toThrow(/not bound/);
-  });
-
-  it("returns bound values with declared defaults applied", () => {
-    const config = defineConfig({
-      apiKey: { type: "string", required: true },
-      baseUrl: { type: "string", default: "https://api.acme.example" },
-      pageSize: { type: "number", default: 25 },
-    });
-
-    bindExtensionConfig(config, { apiKey: "sk-123" });
-
-    expect(config.get()).toEqual({
-      apiKey: "sk-123",
-      baseUrl: "https://api.acme.example",
-      pageSize: 25,
-    });
-  });
-
-  it("binds config when called as the mount factory", () => {
-    const config = defineConfig({
-      apiKey: { type: "string", required: true },
-      baseUrl: { type: "string", default: "https://api.acme.example" },
-    });
-
-    const mounted = config({ apiKey: "sk-456" });
-
-    expect(mounted).toBeDefined();
-    expect(config.get()).toEqual({
-      apiKey: "sk-456",
-      baseUrl: "https://api.acme.example",
-    });
-  });
-
-  it("supports a zero-config mount call", () => {
-    const config = defineConfig({ verbose: { type: "boolean", default: false } });
-    config();
-    expect(config.get()).toEqual({ verbose: false });
-  });
-
-  it("lets a bound value override a default", () => {
-    const config = defineConfig({ baseUrl: { type: "string", default: "https://default" } });
-    bindExtensionConfig(config, { baseUrl: "https://override" });
-    expect(config.get().baseUrl).toBe("https://override");
-  });
-
   it("rejects a missing required field at bind", () => {
-    const config = defineConfig({ apiKey: { type: "string", required: true } });
+    const config = defineConfig({ apiKey: { type: "string", required: true } }, "bind-required");
     expect(() => bindExtensionConfig(config, {})).toThrow(/required field "apiKey"/);
   });
 
   it("rejects a bound value of the wrong type", () => {
-    const config = defineConfig({ pageSize: { type: "number" } });
+    const config = defineConfig({ pageSize: { type: "number" } }, "bind-type");
     expect(() => bindExtensionConfig(config, { pageSize: "nope" })).toThrow(
       /expected number but received string/,
     );
@@ -87,5 +45,67 @@ describe("defineConfig", () => {
       // @ts-expect-error intentionally invalid type for the runtime guard
       defineConfig({ when: { type: "date" } }),
     ).toThrow(/unsupported type/);
+  });
+});
+
+describe("getConfig", () => {
+  it("throws when called outside a mounted extension", () => {
+    expect(() => getConfig()).toThrow(/only works inside a mounted extension/);
+  });
+
+  it("throws when the extension declares no config", () => {
+    expect(() => getConfig("unmounted-extension")).toThrow(/declares no config/);
+  });
+
+  it("returns bound values with declared defaults applied", () => {
+    const config = defineConfig(
+      {
+        apiKey: { type: "string", required: true },
+        baseUrl: { type: "string", default: "https://api.acme.example" },
+        pageSize: { type: "number", default: 25 },
+      },
+      "read-defaults",
+    );
+
+    bindExtensionConfig(config, { apiKey: "sk-123" });
+
+    expect(getConfig("read-defaults")).toEqual({
+      apiKey: "sk-123",
+      baseUrl: "https://api.acme.example",
+      pageSize: 25,
+    });
+  });
+
+  it("reads config bound by the mount factory call", () => {
+    const config = defineConfig(
+      {
+        apiKey: { type: "string", required: true },
+        baseUrl: { type: "string", default: "https://api.acme.example" },
+      },
+      "read-factory",
+    );
+
+    const mounted = config({ apiKey: "sk-456" });
+
+    expect(mounted).toBeDefined();
+    expect(getConfig("read-factory")).toEqual({
+      apiKey: "sk-456",
+      baseUrl: "https://api.acme.example",
+    });
+  });
+
+  it("applies defaults for a zero-config mount call", () => {
+    const config = defineConfig({ verbose: { type: "boolean", default: false } }, "read-zero");
+    config();
+    expect(getConfig("read-zero")).toEqual({ verbose: false });
+  });
+
+  it("lets a bound value override a default", () => {
+    const config = defineConfig(
+      { baseUrl: { type: "string", default: "https://default" } },
+      "read-override",
+    );
+    bindExtensionConfig(config, { baseUrl: "https://override" });
+    expect(getConfig("read-override")).toEqual({ baseUrl: "https://override" });
   });
 });

@@ -140,9 +140,11 @@ export async function buildExtensionPackage(
     indexLines.push(`export { default } from ${JSON.stringify(specifier)};`);
     indexLines.push(`export { default as ${config.shortName} } from ${JSON.stringify(specifier)};`);
   } else {
-    indexLines.push("const mount = () => ({});");
-    indexLines.push("export default mount;");
-    indexLines.push(`export { mount as ${config.shortName} };`);
+    // No config: nothing to bind, so the default is a plain mounted-extension
+    // marker. Consumers mount it with a bare re-export (`export { default }`).
+    indexLines.push('const mounted = { [Symbol.for("eve.mounted-extension")]: true };');
+    indexLines.push("export default mounted;");
+    indexLines.push(`export { mounted as ${config.shortName} };`);
   }
   await writeFile(join(outDir, "index.mjs"), `${indexLines.join("\n")}\n`, "utf8");
 
