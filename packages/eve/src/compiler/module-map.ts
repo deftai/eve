@@ -83,12 +83,16 @@ export function createCompiledModuleMapSource(input: CreateCompiledModuleMapSour
   const moduleMapDirectory = dirnameFilesystemPath(input.moduleMapPath);
   const importSpecifierStyle = input.importSpecifierStyle ?? "relative";
   let nextBindingIndex = 0;
+  const mountNamespaceBySourceId = new Map(
+    input.manifest.extensionMounts.map((mount) => [mount.mountSourceId, mount.namespace]),
+  );
   const collectedScopes: CollectedModuleNodeScope[] = [
     collectModuleNodeScope({
       agentRoot: input.manifest.agentRoot,
       importSpecifierStyle,
       manifest: input.manifest,
       moduleMapDirectory,
+      mountNamespaceBySourceId,
       nextBindingName() {
         return `module_${nextBindingIndex++}`;
       },
@@ -102,6 +106,7 @@ export function createCompiledModuleMapSource(input: CreateCompiledModuleMapSour
           importSpecifierStyle,
           manifest: subagent.agent,
           moduleMapDirectory,
+          mountNamespaceBySourceId: new Map(),
           nextBindingName() {
             return `module_${nextBindingIndex++}`;
           },
@@ -153,6 +158,7 @@ function collectModuleNodeScope(input: {
   readonly importSpecifierStyle: "absolute" | "relative";
   readonly manifest: CompiledAgentNodeManifest;
   readonly moduleMapDirectory: string;
+  readonly mountNamespaceBySourceId: ReadonlyMap<string, string>;
   readonly nextBindingName: () => string;
   readonly nodeId: string;
 }): CollectedModuleNodeScope {
@@ -167,7 +173,9 @@ function collectModuleNodeScope(input: {
           targetPath: joinFilesystemPath(input.agentRoot, moduleSourceRef.logicalPath),
         }),
         sourceId: moduleSourceRef.sourceId,
-        extScope: extensionScopeForSourceId(moduleSourceRef.sourceId),
+        extScope:
+          input.mountNamespaceBySourceId.get(moduleSourceRef.sourceId) ??
+          extensionScopeForSourceId(moduleSourceRef.sourceId),
       })),
     nodeId: input.nodeId,
   };

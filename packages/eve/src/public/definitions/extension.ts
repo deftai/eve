@@ -1,9 +1,37 @@
 /**
- * Marker symbol carrying an extension config handle's bound values. Kept off
- * the public shape so authored code interacts only through {@link
+ * Marker symbol carrying an extension config handle's bound values when the
+ * handle was defined outside an extension scope (no namespace to key by). Kept
+ * off the public shape so authored code interacts only through {@link
  * ExtensionConfigHandle.get}.
  */
 const BOUND_VALUES = Symbol.for("eve.extension-config-bound-values");
+
+/** Symbol carrying the extension namespace a handle captured at definition. */
+const CONFIG_NAMESPACE = Symbol.for("eve.extension-config-namespace");
+
+/**
+ * Global symbol the loaders set while an extension's modules are evaluated
+ * (shared with `defineState`). Config bound under a namespace resolves across
+ * module-instance duplication introduced by source compilation.
+ */
+const EXT_SCOPE = Symbol.for("eve.ext-state-scope");
+
+const CONFIG_REGISTRY = Symbol.for("eve.extension-config-registry");
+
+function extensionScope(): string | undefined {
+  const scope = (globalThis as Record<symbol, unknown>)[EXT_SCOPE];
+  return typeof scope === "string" && scope.length > 0 ? scope : undefined;
+}
+
+function configRegistry(): Map<string, Record<string, unknown>> {
+  const container = globalThis as Record<symbol, unknown>;
+  let registry = container[CONFIG_REGISTRY] as Map<string, Record<string, unknown>> | undefined;
+  if (registry === undefined) {
+    registry = new Map();
+    container[CONFIG_REGISTRY] = registry;
+  }
+  return registry;
+}
 
 /**
  * Scalar types an extension config field may declare.
@@ -112,7 +140,15 @@ const MOUNTED_EXTENSION = Symbol.for("eve.mounted-extension");
 
 type InternalConfigHandle<S extends ExtensionConfigSchema> = ExtensionConfigHandle<S> & {
   [BOUND_VALUES]?: Record<string, unknown>;
+  [CONFIG_NAMESPACE]?: string;
 };
+
+function readBoundValues<S extends ExtensionConfigSchema>(
+  handle: InternalConfigHandle<S>,
+): Record<string, unknown> | undefined {
+  const namespace = handle[CONFIG_NAMESPACE];
+  return namespace === undefined ? handle[BOUND_VALUES] : configRegistry().get(namespace);
+}
 
 function validateSchema(schema: ExtensionConfigSchema): void {
   for (const [name, field] of Object.entries(schema)) {
@@ -149,14 +185,22 @@ export function defineConfig<const S extends ExtensionConfigSchema>(
 ): ExtensionConfigHandle<S> {
   validateSchema(schema);
 
+  // Captured at module evaluation: the loaders set the extension scope while
+  // this module (transitively imported by the mount and by every extension
+  // tool) evaluates, so both copies key their binding by the same namespace.
+  const namespace = extensionScope();
+
   const handle = ((values?: ExtensionConfigInput<S>): MountedExtension => {
     bindExtensionConfig(handle, (values ?? {}) as Record<string, unknown>);
     return { [MOUNTED_EXTENSION]: true };
   }) as InternalConfigHandle<S>;
 
   Object.defineProperty(handle, "schema", { value: schema, enumerable: true });
+  if (namespace !== undefined) {
+    handle[CONFIG_NAMESPACE] = namespace;
+  }
   handle.get = (): InferExtensionConfig<S> => {
-    const bound = handle[BOUND_VALUES];
+    const bound = readBoundValues(handle);
     if (bound === undefined) {
       throw new Error(
         "Extension config is not bound. config.get() only works inside a mounted extension; ensure the extension was mounted through agent/extensions/.",
@@ -207,5 +251,11 @@ export function bindExtensionConfig<S extends ExtensionConfigSchema>(
       );
     }
   }
-  (handle as InternalConfigHandle<ExtensionConfigSchema>)[BOUND_VALUES] = values;
+  const internal = handle as InternalConfigHandle<ExtensionConfigSchema>;
+  const namespace = internal[CONFIG_NAMESPACE];
+  if (namespace === undefined) {
+    internal[BOUND_VALUES] = values;
+  } else {
+    configRegistry().set(namespace, values);
+  }
 }

@@ -59,6 +59,25 @@ async function hydrateCompiledModuleMapFromManifest(
   };
 }
 
+const EXT_STATE_SCOPE = Symbol.for("eve.ext-state-scope");
+
+/**
+ * Namespace an extension-owned or mount module should evaluate under so
+ * `defineState`/`defineConfig` scope by extension. Mount modules carry the
+ * namespace on the manifest; composed modules encode it in their source id
+ * (`ext:<ns>:…`).
+ */
+function extensionScopeForModule(
+  sourceId: string,
+  mountNamespaceBySourceId: ReadonlyMap<string, string>,
+): string | undefined {
+  const mount = mountNamespaceBySourceId.get(sourceId);
+  if (mount !== undefined) {
+    return mount;
+  }
+  return sourceId.match(/^ext:([^:]+):/)?.[1];
+}
+
 async function hydrateCompiledNodeScope(input: {
   agentRoot: string;
   manifest: CompiledAgentNodeManifest;
@@ -67,14 +86,34 @@ async function hydrateCompiledNodeScope(input: {
     left.sourceId.localeCompare(right.sourceId),
   );
   const externalDependencies = input.manifest.config.build?.externalDependencies ?? [];
+  const mountNamespaceBySourceId = new Map(
+    (
+      (
+        input.manifest as {
+          extensionMounts?: readonly { mountSourceId: string; namespace: string }[];
+        }
+      ).extensionMounts ?? []
+    ).map((mount) => [mount.mountSourceId, mount.namespace]),
+  );
+  const container = globalThis as Record<symbol, unknown>;
   const modules: CompiledModuleMap["nodes"][string]["modules"] = {};
 
   for (const ref of refs) {
     const modulePath = join(input.agentRoot, ref.logicalPath);
+    const scope = extensionScopeForModule(ref.sourceId, mountNamespaceBySourceId);
 
-    modules[ref.sourceId] = await loadAuthoredModuleNamespace(modulePath, {
-      externalDependencies,
-    });
+    if (scope !== undefined) {
+      container[EXT_STATE_SCOPE] = scope;
+    }
+    try {
+      modules[ref.sourceId] = await loadAuthoredModuleNamespace(modulePath, {
+        externalDependencies,
+      });
+    } finally {
+      if (scope !== undefined) {
+        container[EXT_STATE_SCOPE] = undefined;
+      }
+    }
   }
 
   return modules;
