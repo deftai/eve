@@ -126,6 +126,8 @@ agent/extensions/crm/
 
 A file in an override slot composes under the same `crm__` namespace and wins on name collision — `tools/search.ts` becomes `crm__search` and shadows the extension's own `search`. Name the file for the composed contribution's bare name (`search`, not `crm__search`); the mount directory supplies the prefix.
 
+Overrides only work here, inside the mount directory. The `crm__` prefix is reserved: an agent-root contribution named `crm__…` (e.g. `agent/tools/crm__search.ts`) is a build error, so an extension's contributions can't be shadowed from outside its mount.
+
 To reuse the extension's definition and change one field, import the base from the extension and re-define it:
 
 ```ts title="agent/extensions/crm/tools/search.ts"

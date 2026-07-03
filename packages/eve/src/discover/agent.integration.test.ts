@@ -5,6 +5,7 @@ import { discoverAgent } from "#discover/discover-agent.js";
 import {
   DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
   DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+  DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
 } from "#discover/extensions.js";
 import {
   DISCOVER_DEPRECATED_SYSTEM_SLOT,
@@ -871,5 +872,66 @@ describe("discoverAgent (memory)", () => {
       DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
     );
     expect(result.manifest.resolvedExtensions).toEqual([]);
+  });
+
+  it("rejects an agent-root tool that overrides a mounted extension's namespace", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/tools/search.ts": "export default {};\n",
+      },
+      agentFiles: {
+        "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
+        // A root tool using the mounted `crm__` prefix would shadow the
+        // extension from outside its mount directory.
+        "tools/crm__search.ts": "export default {};\n",
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    const collision = result.diagnostics.find(
+      (diagnostic) => diagnostic.code === DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
+    );
+    expect(collision).toBeDefined();
+    expect(collision?.message).toContain("extensions/crm/");
+  });
+
+  it("allows an agent-root tool whose name does not use a mounted namespace prefix", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/tools/search.ts": "export default {};\n",
+      },
+      agentFiles: {
+        "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
+        // Not a `crm__` prefix, so it is a normal consumer tool.
+        "tools/crm_helper.ts": "export default {};\n",
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.code === DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
+      ),
+    ).toBe(false);
   });
 });

@@ -25,6 +25,15 @@ export const DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION =
   "discover/extension-mount-missing-declaration";
 
 /**
+ * Emitted when a consumer's agent-root contribution (e.g. `agent/tools/crm__x.ts`)
+ * uses a mounted extension's `<ns>__` composed-name prefix. That prefix is
+ * reserved for the extension and its co-located overrides; overriding from the
+ * agent root would shadow the extension from outside its mount directory.
+ */
+export const DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT =
+  "discover/extension-override-outside-mount";
+
+/**
  * Emitted when a resolved package is not a valid eve extension.
  */
 export const DISCOVER_EXTENSION_PACKAGE_INVALID = "discover/extension-package-invalid";
