@@ -4,8 +4,8 @@ import {
   assertCodexAuthStateAuthenticated,
   parseCodexAuth,
   readCodexJwtExpirationMs,
-} from "#internal/model-auth/endpoint/codex/auth.js";
-import { createUnsignedJwt } from "#internal/testing/unsigned-jwt.js";
+} from "./auth.js";
+import { createUnsignedJwt } from "./unsigned-jwt.js";
 
 const PATHS = { authPath: "/home/user/.codex/auth.json", codexHome: "/home/user/.codex" };
 

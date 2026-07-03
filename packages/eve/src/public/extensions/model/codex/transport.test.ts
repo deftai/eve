@@ -4,12 +4,9 @@ import type {
   CodexAuthCredentials,
   CodexChatGptCredentials,
   CodexRefreshedTokens,
-} from "#internal/model-auth/endpoint/codex/auth.js";
-import {
-  createCodexFetch,
-  rewriteCodexEndpoint,
-} from "#internal/model-auth/endpoint/codex/transport.js";
-import { createUnsignedJwt } from "#internal/testing/unsigned-jwt.js";
+} from "./auth.js";
+import { createCodexFetch, rewriteCodexEndpoint } from "./transport.js";
+import { createUnsignedJwt } from "./unsigned-jwt.js";
 
 const CODEX_ENDPOINT = "https://chatgpt.test/backend-api/codex/responses";
 const ISSUER = "https://auth.test";

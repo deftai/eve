@@ -7,7 +7,7 @@ import {
   type CodexAuthCredentials,
   type CodexChatGptCredentials,
   type CodexRefreshedTokens,
-} from "#internal/model-auth/endpoint/codex/auth.js";
+} from "./auth.js";
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_AUTH_ISSUER = "https://auth.openai.com";
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";

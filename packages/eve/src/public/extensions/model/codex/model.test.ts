@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createCodexSubscriptionModel } from "#internal/model-auth/endpoint/codex/model.js";
-import { createUnsignedJwt } from "#internal/testing/unsigned-jwt.js";
+import { createCodexSubscriptionModel } from "./model.js";
+import { createUnsignedJwt } from "./unsigned-jwt.js";
 
 const CODEX_ENDPOINT = "https://chatgpt.test/backend-api/codex/responses";
 
