@@ -203,6 +203,49 @@ function readPromptTextFromBlocks(blocks: readonly unknown[]): string | undefine
   return typeof text === "string" && text.length > 0 ? text : undefined;
 }
 
+function buildAnsweredHitlMessageBlocks(input: {
+  readonly actionId: string;
+  readonly answerLabel: string;
+  readonly messageBlocks: readonly unknown[];
+  readonly userId: string;
+}): unknown[] {
+  const actionBlockIndex = findActionBlockIndex(input.messageBlocks, input.actionId);
+  if (actionBlockIndex === -1) {
+    return buildAnsweredBlocks({
+      promptBlocks: findPromptBlocks(input.messageBlocks),
+      answerLabel: input.answerLabel,
+      userId: input.userId,
+    });
+  }
+
+  const answeredBlocks = buildAnsweredBlocks({
+    promptBlocks: [],
+    answerLabel: input.answerLabel,
+    userId: input.userId,
+  });
+  return [
+    ...input.messageBlocks.slice(0, actionBlockIndex),
+    ...answeredBlocks,
+    ...input.messageBlocks.slice(actionBlockIndex + 1),
+  ];
+}
+
+function findActionBlockIndex(blocks: readonly unknown[], actionId: string): number {
+  return blocks.findIndex((block) => blockContainsActionId(block, actionId));
+}
+
+function blockContainsActionId(block: unknown, actionId: string): boolean {
+  if (!isObjectRecord(block)) return false;
+  if (!Array.isArray(block.elements)) return false;
+  return block.elements.some(
+    (element) => isObjectRecord(element) && element.action_id === actionId,
+  );
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /**
  * Channel-supplied dependencies for {@link handleInteractionPost}.
  *
@@ -469,9 +512,10 @@ async function updateAnsweredHitlCard(
   const answerLabel = hitlAction.label ?? hitlAction.selectedOptionValue ?? hitlAction.value;
   if (!answerLabel) return;
 
-  const blocks = buildAnsweredBlocks({
-    promptBlocks: findPromptBlocks(interaction.messageBlocks),
+  const blocks = buildAnsweredHitlMessageBlocks({
+    actionId: hitlAction.actionId,
     answerLabel,
+    messageBlocks: interaction.messageBlocks,
     userId: hitlAction.user.id,
   });
 

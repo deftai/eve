@@ -1501,6 +1501,110 @@ describe("slackChannel() HITL interaction pipeline", () => {
     });
   });
 
+  it("updates one answered HITL card without removing sibling batched buttons", async () => {
+    const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
+
+    const firstApproveActionId = `${HITL_ACTION_PREFIX}approval_451:button:0`;
+    const secondApproveActionId = `${HITL_ACTION_PREFIX}approval_508:button:0`;
+    const secondDenyActionId = `${HITL_ACTION_PREFIX}approval_508:button:1`;
+
+    const { send } = await firePost(
+      channel,
+      buildSignedInteractionRequest({
+        type: "block_actions",
+        team: { id: "T01" },
+        user: {
+          id: "U_APPROVER",
+          username: "ada",
+          name: "ada",
+          team_id: "T01",
+        },
+        channel: { id: "C01" },
+        message: {
+          ts: "1700000000.000010",
+          thread_ts: "1700000000.000001",
+          blocks: [
+            { type: "section", text: { type: "mrkdwn", text: "Approve issue 451?" } },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  action_id: firstApproveActionId,
+                  text: { type: "plain_text", text: "Approve" },
+                  value: "approve",
+                },
+                {
+                  type: "button",
+                  action_id: `${HITL_ACTION_PREFIX}approval_451:button:1`,
+                  text: { type: "plain_text", text: "Deny" },
+                  value: "deny",
+                },
+              ],
+            },
+            { type: "section", text: { type: "mrkdwn", text: "Approve issue 508?" } },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  action_id: secondApproveActionId,
+                  text: { type: "plain_text", text: "Approve" },
+                  value: "approve",
+                },
+                {
+                  type: "button",
+                  action_id: secondDenyActionId,
+                  text: { type: "plain_text", text: "Deny" },
+                  value: "deny",
+                },
+              ],
+            },
+          ],
+        },
+        actions: [
+          {
+            action_id: firstApproveActionId,
+            text: { type: "plain_text", text: "Approve" },
+            value: "approve",
+          },
+        ],
+      }),
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0]).toEqual({
+      inputResponses: [{ optionId: "approve", requestId: "approval_451" }],
+    });
+
+    const updateCall = fetchMock.mock.calls.find(
+      ([url]) => String(url) === "https://slack.com/api/chat.update",
+    );
+    expect(updateCall).toBeDefined();
+    const body = parseSlackRequestBody(updateCall?.[1] as RequestInit) as {
+      blocks: Array<{ elements?: Array<{ action_id?: string }>; text?: { text?: string } }>;
+      channel: string;
+      text: string;
+      ts: string;
+    };
+
+    expect(body).toMatchObject({
+      channel: "C01",
+      text: "Answered: Approve",
+      ts: "1700000000.000010",
+    });
+    expect(JSON.stringify(body.blocks)).toContain("Approve issue 451?");
+    expect(JSON.stringify(body.blocks)).toContain("Approve issue 508?");
+
+    const remainingActionIds = body.blocks.flatMap(
+      (block) =>
+        block.elements
+          ?.map((element) => element.action_id)
+          .filter((actionId): actionId is string => typeof actionId === "string") ?? [],
+    );
+    expect(remainingActionIds).toEqual([secondApproveActionId, secondDenyActionId]);
+  });
+
   it("resumes freeform modal answers with the submitting Slack user auth", async () => {
     const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
 
