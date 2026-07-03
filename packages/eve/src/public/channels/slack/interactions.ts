@@ -219,7 +219,7 @@ function buildAnsweredHitlMessageBlocks(input: {
   }
 
   const answeredBlocks = buildAnsweredBlocks({
-    promptBlocks: [],
+    promptBlocks: promptBlocksFromActionBlock(input.messageBlocks[actionBlockIndex]),
     answerLabel: input.answerLabel,
     userId: input.userId,
   });
@@ -236,14 +236,30 @@ function findActionBlockIndex(blocks: readonly unknown[], actionId: string): num
 
 function blockContainsActionId(block: unknown, actionId: string): boolean {
   if (!isObjectRecord(block)) return false;
-  if (!Array.isArray(block.elements)) return false;
-  return block.elements.some(
-    (element) => isObjectRecord(element) && element.action_id === actionId,
+  return (
+    actionsContainActionId(block.elements, actionId) ||
+    actionsContainActionId(block.actions, actionId)
   );
+}
+
+function actionsContainActionId(actions: unknown, actionId: string): boolean {
+  if (!Array.isArray(actions)) return false;
+  return actions.some((element) => isObjectRecord(element) && element.action_id === actionId);
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function promptBlocksFromActionBlock(block: unknown): unknown[] {
+  if (!isObjectRecord(block) || block.type !== "card") return [];
+
+  const { actions: _actions, ...blockWithoutActions } = block;
+  return hasCardContent(blockWithoutActions) ? [blockWithoutActions] : [];
+}
+
+function hasCardContent(block: Record<string, unknown>): boolean {
+  return block.body !== undefined || block.title !== undefined || block.hero_image !== undefined;
 }
 
 /**

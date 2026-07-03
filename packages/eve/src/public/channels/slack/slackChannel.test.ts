@@ -17,6 +17,7 @@ import {
   HITL_FREEFORM_MODAL_CALLBACK_ID,
 } from "#public/channels/slack/hitl.js";
 import {
+  SLACK_CARD_BODY_TEXT_MAX_LENGTH,
   SLACK_MAX_BLOCKS_PER_MESSAGE,
   SLACK_MESSAGE_TEXT_MAX_LENGTH,
   SLACK_SECTION_TEXT_MAX_LENGTH,
@@ -426,7 +427,16 @@ describe("slackChannel() default event handlers", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe("https://slack.com/api/chat.postMessage");
     const body = parseSlackRequestBody(init as RequestInit) as {
-      blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
+      blocks: Array<{
+        actions?: Array<{
+          action_id: string;
+          style?: string;
+          text: { emoji?: boolean; text: string; type: string };
+          value: string;
+        }>;
+        body?: { text: string; type: string; verbatim?: boolean };
+        type: string;
+      }>;
       channel: string;
       text: string;
       thread_ts: string;
@@ -437,13 +447,35 @@ describe("slackChannel() default event handlers", () => {
       thread_ts: "1700000000.000001",
     });
 
-    const actions = body.blocks.find((block) => Array.isArray(block.elements));
-    const actionIds = actions?.elements?.map((element) => element.action_id) ?? [];
+    const [card] = body.blocks;
+    expect(card).toMatchObject({
+      type: "card",
+      body: {
+        type: "mrkdwn",
+        text: '*Approve tool call: mongodb-mutate*\n\n*Tool input*\n```\n{\n  "operation": "deleteMany"\n}\n```',
+        verbatim: false,
+      },
+    });
+    expect(card?.body?.text.length).toBeLessThanOrEqual(SLACK_CARD_BODY_TEXT_MAX_LENGTH);
+
+    const actions = card?.actions ?? [];
+    const actionIds = actions.map((element) => element.action_id);
     expect(actionIds).toEqual([
       `${HITL_ACTION_PREFIX}approval_abc123:button:0`,
       `${HITL_ACTION_PREFIX}approval_abc123:button:1`,
     ]);
     expect(new Set(actionIds).size).toBe(actionIds.length);
+    expect(actions).toMatchObject([
+      {
+        text: { type: "plain_text", text: "Deny", emoji: false },
+        value: "deny",
+      },
+      {
+        style: "primary",
+        text: { type: "plain_text", text: "Allow", emoji: false },
+        value: "approve",
+      },
+    ]);
   });
 
   it("input.requested caps section and fallback text so Slack does not reject the post", async () => {
@@ -496,9 +528,9 @@ describe("slackChannel() default event handlers", () => {
     );
     const ctx = buildAdapterContext(adapter, stubAccessor());
 
-    // 20 approval requests render 3 blocks each (prompt, tool input,
-    // actions) = 60 blocks, which must split across two posts.
-    const requests = Array.from({ length: 20 }, (_, index) => ({
+    // Approval requests render as one card block each. 60 requests must
+    // split across two posts to stay below Slack's 50-block message cap.
+    const requests = Array.from({ length: 60 }, (_, index) => ({
       action: {
         callId: `call_${index}`,
         input: { operation: "deleteMany" },
@@ -525,17 +557,21 @@ describe("slackChannel() default event handlers", () => {
     for (const [url, init] of fetchMock.mock.calls) {
       expect(String(url)).toBe("https://slack.com/api/chat.postMessage");
       const body = parseSlackRequestBody(init as RequestInit) as {
-        blocks: Array<{ type: string; elements?: Array<{ action_id: string }> }>;
+        blocks: Array<{
+          type: string;
+          actions?: Array<{ action_id: string }>;
+          elements?: Array<{ action_id: string }>;
+        }>;
       };
       expect(body.blocks.length).toBeLessThanOrEqual(SLACK_MAX_BLOCKS_PER_MESSAGE);
       for (const block of body.blocks) {
-        for (const element of block.elements ?? []) {
+        for (const element of block.actions ?? block.elements ?? []) {
           const requestId = element.action_id.replace(/^.*:(approval_\d+):button:\d+$/u, "$1");
           if (!allRequestIds.includes(requestId)) allRequestIds.push(requestId);
         }
       }
     }
-    expect(allRequestIds).toHaveLength(20);
+    expect(allRequestIds).toHaveLength(60);
   });
 
   it("turn.started calls assistant.threads.setStatus", async () => {
@@ -1504,9 +1540,10 @@ describe("slackChannel() HITL interaction pipeline", () => {
   it("updates one answered HITL card without removing sibling batched buttons", async () => {
     const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
 
-    const firstApproveActionId = `${HITL_ACTION_PREFIX}approval_451:button:0`;
-    const secondApproveActionId = `${HITL_ACTION_PREFIX}approval_508:button:0`;
-    const secondDenyActionId = `${HITL_ACTION_PREFIX}approval_508:button:1`;
+    const firstDenyActionId = `${HITL_ACTION_PREFIX}approval_451:button:0`;
+    const firstApproveActionId = `${HITL_ACTION_PREFIX}approval_451:button:1`;
+    const secondDenyActionId = `${HITL_ACTION_PREFIX}approval_508:button:0`;
+    const secondApproveActionId = `${HITL_ACTION_PREFIX}approval_508:button:1`;
 
     const { send } = await firePost(
       channel,
@@ -1524,39 +1561,47 @@ describe("slackChannel() HITL interaction pipeline", () => {
           ts: "1700000000.000010",
           thread_ts: "1700000000.000001",
           blocks: [
-            { type: "section", text: { type: "mrkdwn", text: "Approve issue 451?" } },
             {
-              type: "actions",
-              elements: [
+              type: "card",
+              body: {
+                type: "mrkdwn",
+                text: "*Approve issue 451?*",
+                verbatim: false,
+              },
+              actions: [
                 {
                   type: "button",
-                  action_id: firstApproveActionId,
-                  text: { type: "plain_text", text: "Approve" },
-                  value: "approve",
-                },
-                {
-                  type: "button",
-                  action_id: `${HITL_ACTION_PREFIX}approval_451:button:1`,
+                  action_id: firstDenyActionId,
                   text: { type: "plain_text", text: "Deny" },
                   value: "deny",
                 },
-              ],
-            },
-            { type: "section", text: { type: "mrkdwn", text: "Approve issue 508?" } },
-            {
-              type: "actions",
-              elements: [
                 {
                   type: "button",
-                  action_id: secondApproveActionId,
-                  text: { type: "plain_text", text: "Approve" },
+                  action_id: firstApproveActionId,
+                  text: { type: "plain_text", text: "Allow" },
                   value: "approve",
                 },
+              ],
+            },
+            {
+              type: "card",
+              body: {
+                type: "mrkdwn",
+                text: "*Approve issue 508?*",
+                verbatim: false,
+              },
+              actions: [
                 {
                   type: "button",
                   action_id: secondDenyActionId,
                   text: { type: "plain_text", text: "Deny" },
                   value: "deny",
+                },
+                {
+                  type: "button",
+                  action_id: secondApproveActionId,
+                  text: { type: "plain_text", text: "Allow" },
+                  value: "approve",
                 },
               ],
             },
@@ -1582,7 +1627,11 @@ describe("slackChannel() HITL interaction pipeline", () => {
     );
     expect(updateCall).toBeDefined();
     const body = parseSlackRequestBody(updateCall?.[1] as RequestInit) as {
-      blocks: Array<{ elements?: Array<{ action_id?: string }>; text?: { text?: string } }>;
+      blocks: Array<{
+        actions?: Array<{ action_id?: string }>;
+        elements?: Array<{ action_id?: string }>;
+        text?: { text?: string };
+      }>;
       channel: string;
       text: string;
       ts: string;
@@ -1598,11 +1647,11 @@ describe("slackChannel() HITL interaction pipeline", () => {
 
     const remainingActionIds = body.blocks.flatMap(
       (block) =>
-        block.elements
+        (block.actions ?? block.elements)
           ?.map((element) => element.action_id)
           .filter((actionId): actionId is string => typeof actionId === "string") ?? [],
     );
-    expect(remainingActionIds).toEqual([secondApproveActionId, secondDenyActionId]);
+    expect(remainingActionIds).toEqual([secondDenyActionId, secondApproveActionId]);
   });
 
   it("resumes freeform modal answers with the submitting Slack user auth", async () => {
