@@ -5,10 +5,13 @@ import { createDiscoverErrorDiagnostic, type DiscoverDiagnostic } from "#discove
 import { discoverSubagents } from "#discover/discover-subagent.js";
 import {
   DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED,
+  DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
+  DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
   DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED,
   locateExtensionMount,
+  mountNamespace,
 } from "#discover/extensions.js";
-import { classifyAgentRootEntry } from "#discover/filesystem.js";
+import { classifyAgentRootEntry, normalizeLogicalPath } from "#discover/filesystem.js";
 import {
   createChannelNameDiagnostic,
   createExtensionNameDiagnostic,
@@ -29,9 +32,15 @@ import {
   type AgentSourceManifest,
   type CreateAgentSourceManifestInput,
   createAgentSourceManifest,
+  createModuleSourceRef,
+  type ExtensionSourceRef,
   type ResolvedExtensionMount,
 } from "#discover/manifest.js";
-import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
+import {
+  createDiskProjectSource,
+  type ProjectSource,
+  type ProjectSourceEntry,
+} from "#discover/project-source.js";
 import { discoverSandboxSource } from "#discover/sandbox.js";
 import { discoverScheduleSources } from "#discover/schedules.js";
 import { discoverSkills } from "#discover/skills.js";
@@ -217,10 +226,24 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   });
   diagnostics.push(...subagentsResult.diagnostics);
 
+  const mountCollection = await collectExtensionMounts({
+    agentRoot,
+    fileMounts: extensionsResult.sources,
+    rootEntries,
+    source,
+  });
+  diagnostics.push(...mountCollection.diagnostics);
+
   const resolvedExtensions: ResolvedExtensionMount[] = [];
   if (role === "agent") {
-    for (const mount of extensionsResult.sources) {
-      const located = await locateExtensionMount({ source, agentRoot, appRoot, mount });
+    for (const descriptor of mountCollection.mounts) {
+      const located = await locateExtensionMount({
+        source,
+        agentRoot,
+        appRoot,
+        mount: descriptor.mountRef,
+        namespace: descriptor.namespace,
+      });
       diagnostics.push(...located.diagnostics);
       if (located.location === undefined) {
         continue;
@@ -233,14 +256,37 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
         role: "extension",
       });
       diagnostics.push(...extensionResult.diagnostics);
-      resolvedExtensions.push({
-        namespace: located.location.namespace,
-        specifier: located.location.specifier,
-        packageName: located.location.packageName,
-        packageRoot: located.location.packageRoot,
-        sourceRoot: located.location.sourceRoot,
-        manifest: extensionResult.manifest,
-      });
+
+      // The mount directory is itself an agent-shaped source: its override
+      // slots (`tools/`, `connections/`, …) discover exactly like an
+      // extension's own tree, and its `extension.<ext>` declaration matches
+      // no slot so it is silently ignored.
+      let overrides: AgentSourceManifest | undefined;
+      if (descriptor.overridesRoot !== undefined) {
+        const overridesResult = await discoverAgent({
+          agentRoot: descriptor.overridesRoot,
+          appRoot,
+          source,
+          role: "extension",
+        });
+        diagnostics.push(...overridesResult.diagnostics);
+        overrides = overridesResult.manifest;
+      }
+
+      const resolved: { -readonly [K in keyof ResolvedExtensionMount]: ResolvedExtensionMount[K] } =
+        {
+          namespace: located.location.namespace,
+          specifier: located.location.specifier,
+          packageName: located.location.packageName,
+          packageRoot: located.location.packageRoot,
+          sourceRoot: located.location.sourceRoot,
+          manifest: extensionResult.manifest,
+        };
+      if (overrides !== undefined) {
+        resolved.overrides = overrides;
+      }
+
+      resolvedExtensions.push(resolved);
     }
   }
 
@@ -251,7 +297,7 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
     connections: connectionsResult.connections,
     packageName,
     diagnostics,
-    extensions: extensionsResult.sources,
+    extensions: mountCollection.mounts.map((descriptor) => descriptor.mountRef),
     resolvedExtensions,
     hooks: hooksResult.sources,
     lib: libResult.lib,
@@ -275,6 +321,121 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
     diagnostics,
     manifest,
   };
+}
+
+/**
+ * One extension mount discovered under `agent/extensions/`, in either the flat
+ * file form (`extensions/crm.ts`) or the directory form
+ * (`extensions/crm/extension.ts` with optional override slots).
+ */
+interface ExtensionMountDescriptor {
+  /** Mount namespace prefixed onto every composed contribution. */
+  readonly namespace: string;
+  /** Module ref for the mount declaration the package specifier is read from. */
+  readonly mountRef: ExtensionSourceRef;
+  /**
+   * Absolute path to the mount directory when this is the directory form.
+   * Its override slots are discovered as an agent-shaped source. Absent for
+   * the flat file form.
+   */
+  readonly overridesRoot?: string;
+}
+
+/**
+ * Collects extension mounts in both the flat file form and the directory form,
+ * validating directory names and rejecting a namespace claimed by both forms.
+ *
+ * File mounts arrive pre-validated from {@link discoverNamedSourceDirectory}
+ * (which, run non-recursively, ignores subdirectories); directory mounts are
+ * gathered here by scanning the `extensions/` entries for subdirectories, each
+ * of which must hold an `extension.<ext>` declaration.
+ */
+async function collectExtensionMounts(input: {
+  readonly agentRoot: string;
+  readonly fileMounts: readonly ExtensionSourceRef[];
+  readonly rootEntries: readonly ProjectSourceEntry[];
+  readonly source: ProjectSource;
+}): Promise<{
+  diagnostics: DiscoverDiagnostic[];
+  mounts: ExtensionMountDescriptor[];
+}> {
+  const diagnostics: DiscoverDiagnostic[] = [];
+  const extensionsRoot = join(input.agentRoot, "extensions");
+
+  const fileDescriptors: ExtensionMountDescriptor[] = input.fileMounts.map((mountRef) => ({
+    namespace: mountNamespace(mountRef.logicalPath),
+    mountRef,
+  }));
+  const fileNamespaces = new Set(fileDescriptors.map((descriptor) => descriptor.namespace));
+
+  const extensionsEntry = input.rootEntries.find((entry) => entry.name === "extensions");
+  const directoryDescriptors: ExtensionMountDescriptor[] = [];
+  const ambiguousNamespaces = new Set<string>();
+
+  if (extensionsEntry?.isDirectory() === true) {
+    const entries = await readSortedDirectoryEntries(input.source, extensionsRoot);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const namespace = entry.name;
+      const mountDir = join(extensionsRoot, namespace);
+      const nameDiagnostic = createExtensionNameDiagnostic(namespace, mountDir);
+      if (nameDiagnostic !== null) {
+        diagnostics.push(nameDiagnostic);
+        continue;
+      }
+
+      const declarationResult = discoverFlatModuleSource({
+        rootEntries: await readSortedDirectoryEntries(input.source, mountDir),
+        rootPath: mountDir,
+        slotName: "extension",
+      });
+      diagnostics.push(...declarationResult.diagnostics);
+
+      if (declarationResult.module === undefined) {
+        diagnostics.push(
+          createDiscoverErrorDiagnostic({
+            code: DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+            message: `Extension mount directory "extensions/${namespace}/" must declare its mount in "extension.ts" (or another supported module extension).`,
+            sourcePath: mountDir,
+          }),
+        );
+        continue;
+      }
+
+      if (fileNamespaces.has(namespace)) {
+        ambiguousNamespaces.add(namespace);
+      }
+
+      directoryDescriptors.push({
+        namespace,
+        mountRef: createModuleSourceRef({
+          logicalPath: normalizeLogicalPath(
+            join("extensions", namespace, declarationResult.module.logicalPath),
+          ),
+        }),
+        overridesRoot: mountDir,
+      });
+    }
+  }
+
+  for (const namespace of ambiguousNamespaces) {
+    diagnostics.push(
+      createDiscoverErrorDiagnostic({
+        code: DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
+        message: `Extension namespace "${namespace}" is claimed by both a file mount ("extensions/${namespace}.ts") and a directory mount ("extensions/${namespace}/"). Keep only one.`,
+        sourcePath: extensionsRoot,
+      }),
+    );
+  }
+
+  const mounts = [...fileDescriptors, ...directoryDescriptors].filter(
+    (descriptor) => !ambiguousNamespaces.has(descriptor.namespace),
+  );
+
+  return { diagnostics, mounts };
 }
 
 /**

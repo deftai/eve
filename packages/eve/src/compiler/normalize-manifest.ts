@@ -1,5 +1,5 @@
 import type { AgentSourceManifest } from "#discover/manifest.js";
-import { mountNamespace, packageStateNamespace } from "#discover/extensions.js";
+import { mountRefNamespace, packageStateNamespace } from "#discover/extensions.js";
 import {
   type CompiledAgentManifest,
   type CompiledAgentNodeManifest,
@@ -49,7 +49,7 @@ export async function compileAgentManifest(
 
   const extensionMounts: CompiledExtensionMount[] = manifest.resolvedExtensions.map((mount) => {
     const mountRef = manifest.extensions.find(
-      (entry) => mountNamespace(entry.logicalPath) === mount.namespace,
+      (entry) => mountRefNamespace(entry.logicalPath) === mount.namespace,
     );
     return {
       namespace: mount.namespace,

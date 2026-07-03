@@ -3,7 +3,7 @@ title: "Extensions"
 description: "Package tools, connections, skills, hooks, and schedules as a reusable npm package and mount it into an agent with one file."
 ---
 
-An extension packages eve concepts — tools, connections, skills, instructions, hooks, schedules — as a reusable npm or local package. You author it as an agent-shaped directory, and a consumer mounts it with a single file under `agent/extensions/`. The consumer's build composes the extension's contributions into the agent under a namespace derived from the mount filename. Nothing is copied; upgrades come through the package manager.
+An extension packages eve concepts — tools, connections, skills, instructions, hooks, schedules — as a reusable npm or local package. You author it as an agent-shaped directory, and a consumer mounts it under `agent/extensions/` — a single file for the common case, or a directory when it needs overrides. The consumer's build composes the extension's contributions into the agent under a namespace derived from the mount name. Nothing is copied; upgrades come through the package manager.
 
 ## Authoring
 
@@ -41,7 +41,7 @@ export default defineTool({
 });
 ```
 
-Name tools and connections for what they do (`search`, not `crm_search`); the consumer's mount filename supplies the namespace.
+Name tools and connections for what they do (`search`, not `crm_search`); the consumer's mount name supplies the namespace.
 
 ### Configuration
 
@@ -69,7 +69,7 @@ const { apiKey, baseUrl } = getConfig(); // baseUrl falls back to its default
 
 ### State
 
-`defineState` names are prefixed with the extension's package namespace automatically, so an extension's durable state never collides with the consumer's or another extension's. Author it exactly as in an agent — `defineState("budget", …)` — and eve scopes the key. State is keyed to the package (not the mount filename), so renaming the mount file never orphans persisted state. The scope is baked in at build time, so it holds no matter how the consumer imports the extension's modules — including an override that eagerly imports the extension's tools barrel.
+`defineState` names are prefixed with the extension's package namespace automatically, so an extension's durable state never collides with the consumer's or another extension's. Author it exactly as in an agent — `defineState("budget", …)` — and eve scopes the key. State is keyed to the package (not the mount name), so renaming the mount never orphans persisted state. The scope is baked in at build time, so it holds no matter how the consumer imports the extension's modules — including an override that eagerly imports the extension's tools barrel.
 
 ## Publishing
 
@@ -89,7 +89,9 @@ Point `eve.extension` at the source directory and run `eve build`. Wire `package
 
 ## Mounting
 
-Mount an extension with one file under `agent/extensions/`. The filename is the namespace.
+Mount an extension under `agent/extensions/`. Use a single file for the common case, or a directory when you also want to [override](#overrides) some of its contributions. Either way the namespace is the file basename or the directory name.
+
+A file mount is one file whose default export is the mounted extension:
 
 ```ts title="agent/extensions/crm.ts"
 import { crm } from "@acme/crm";
@@ -103,13 +105,24 @@ An extension that takes no config needs no factory call — mount it with a bare
 export { default } from "@acme/gizmo";
 ```
 
-The build resolves the package from the import, composes its contributions into the agent, and namespaces them by the mount filename: the `search` tool becomes `crm__search`, the `api` connection becomes `crm__api`. Instruction fragments append after the agent's own instructions.
+The build resolves the package from the import, composes its contributions into the agent, and namespaces them by the mount name: the `search` tool becomes `crm__search`, the `api` connection becomes `crm__api`. Instruction fragments append after the agent's own instructions.
 
 ### Overrides
 
-A consumer file shadows a mounted contribution of the same name. To change one field, import the base from the extension and re-define it — its `execute` still reads the extension's scoped config:
+To override some of a mounted extension's contributions, author the mount as a **directory**. The mount declaration moves into `extension.ts` — the same content the flat file would hold — and override slots sit alongside it, exactly as in an agent:
 
-```ts title="agent/tools/crm__search.ts"
+```
+agent/extensions/crm/
+  extension.ts         # export default crm({ apiKey: process.env.CRM_API_KEY })
+  tools/search.ts      # composes as crm__search, shadowing the extension's own
+  connections/api.ts   # composes as crm__api
+```
+
+A file in an override slot composes under the same `crm__` namespace and wins on name collision — `tools/search.ts` becomes `crm__search` and shadows the extension's own `search`. Name the file for the composed contribution's bare name (`search`, not `crm__search`); the mount directory supplies the prefix.
+
+To reuse the extension's definition and change one field, import the base from the extension and re-define it:
+
+```ts title="agent/extensions/crm/tools/search.ts"
 import { search } from "@acme/crm/tools";
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";

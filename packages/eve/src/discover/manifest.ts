@@ -145,6 +145,13 @@ export interface ResolvedExtensionMount {
   readonly sourceRoot: string;
   /** Discovered agent-shaped source manifest for the extension. */
   readonly manifest: AgentSourceManifest;
+  /**
+   * Consumer-authored overrides discovered in the mount directory form
+   * (`extensions/<ns>/{tools,connections,…}/`). Composed under the same
+   * `<ns>__` namespace as the extension's own contributions but winning on
+   * name collision. Absent for the flat file mount form.
+   */
+  readonly overrides?: AgentSourceManifest;
 }
 
 /**

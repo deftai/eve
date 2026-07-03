@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { buildMemoryAgentProject } from "#internal/testing/memory-agent-source.js";
 import { discoverAgent } from "#discover/discover-agent.js";
 import {
+  DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
+  DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+} from "#discover/extensions.js";
+import {
   DISCOVER_DEPRECATED_SYSTEM_SLOT,
   DISCOVER_EXTENSION_NAME_INVALID,
   DISCOVER_HOOK_NAME_INVALID,
@@ -728,6 +732,143 @@ describe("discoverAgent (memory)", () => {
 
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "discover/extension-mount-unresolved",
+    );
+    expect(result.manifest.resolvedExtensions).toEqual([]);
+  });
+
+  it("resolves a directory-form extension mount and composes the extension's tools", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/tools/search.ts":
+          'throw new Error("extension modules should not execute during discovery");\n',
+      },
+      agentFiles: {
+        "extensions/crm/extension.ts": 'export { default } from "@acme/crm";\n',
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest.extensions).toEqual([
+      {
+        sourceKind: "module",
+        logicalPath: "extensions/crm/extension.ts",
+        sourceId: "extensions/crm/extension.ts",
+      },
+    ]);
+    expect(result.manifest.resolvedExtensions).toHaveLength(1);
+    const mount = result.manifest.resolvedExtensions[0]!;
+    expect(mount.namespace).toBe("crm");
+    expect(mount.specifier).toBe("@acme/crm");
+    expect(mount.manifest.tools).toEqual([
+      { sourceKind: "module", logicalPath: "tools/search.ts", sourceId: "tools/search.ts" },
+    ]);
+    // A directory mount always carries an overrides manifest (the mount dir is
+    // itself an agent-shaped source); with no override slots authored it is
+    // empty and composes to nothing.
+    expect(mount.overrides?.agentRoot).toBe(`${project.agentRoot}/extensions/crm`);
+    expect(mount.overrides?.tools).toEqual([]);
+  });
+
+  it("carries a directory-mount override slot that shadows the extension's contribution", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/tools/search.ts":
+          'throw new Error("extension modules should not execute during discovery");\n',
+      },
+      agentFiles: {
+        "extensions/crm/extension.ts": 'export { default } from "@acme/crm";\n',
+        "extensions/crm/tools/search.ts":
+          'throw new Error("override modules should not execute during discovery");\n',
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    const mount = result.manifest.resolvedExtensions[0]!;
+    // The extension's own tree still carries its `search` tool from the package.
+    expect(mount.manifest.tools).toEqual([
+      { sourceKind: "module", logicalPath: "tools/search.ts", sourceId: "tools/search.ts" },
+    ]);
+    // The consumer's override slot is discovered as an agent-shaped source so
+    // the compiler can compose it under `crm__search` with consumer priority.
+    expect(mount.overrides?.tools).toEqual([
+      { sourceKind: "module", logicalPath: "tools/search.ts", sourceId: "tools/search.ts" },
+    ]);
+    // The override manifest is rooted at the mount directory — that root is
+    // what rebases the override's module to the consumer's file, not the
+    // extension package.
+    expect(mount.overrides?.agentRoot).toBe(`${project.agentRoot}/extensions/crm`);
+  });
+
+  it("reports an ambiguous mount when a namespace is both a file and a directory", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/tools/search.ts": "export default {};\n",
+      },
+      agentFiles: {
+        "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
+        "extensions/crm/extension.ts": 'export { default } from "@acme/crm";\n',
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
+    );
+    // The ambiguous namespace is dropped from both forms rather than resolved.
+    expect(result.manifest.resolvedExtensions).toEqual([]);
+    expect(
+      result.manifest.extensions.some((entry) => entry.logicalPath.startsWith("extensions/crm")),
+    ).toBe(false);
+  });
+
+  it("reports a directory mount missing its extension declaration", async () => {
+    const project = buildMemoryAgentProject({
+      agentFiles: {
+        "extensions/crm/tools/search.ts": "export default {};\n",
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
     );
     expect(result.manifest.resolvedExtensions).toEqual([]);
   });

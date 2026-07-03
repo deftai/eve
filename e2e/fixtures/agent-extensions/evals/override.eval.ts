@@ -1,9 +1,10 @@
 import { defineEval } from "eve/evals";
 
-// agent/tools/toolkit__toolkit_ping.ts shadows the mounted toolkit ping, so the
-// consumer's version runs instead of the extension's ("toolkit-extension-ping").
+// agent/extensions/toolkit/tools/toolkit_ping.ts shadows the mounted toolkit
+// ping: a directory-mount's co-located override wins over the extension's own
+// same-named contribution ("toolkit-extension-ping").
 export default defineEval({
-  description: "A consumer file shadows a mounted extension tool of the same name.",
+  description: "A directory-mount override shadows a mounted extension tool of the same name.",
   async test(t) {
     await t.send("Call the `toolkit__toolkit_ping` tool and report exactly what it returned.");
 

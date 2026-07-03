@@ -12,6 +12,19 @@ import type { ProjectSource } from "#discover/project-source.js";
 export const DISCOVER_EXTENSION_MOUNT_UNRESOLVED = "discover/extension-mount-unresolved";
 
 /**
+ * Emitted when one namespace is claimed by both a file mount
+ * (`extensions/<ns>.ts`) and a directory mount (`extensions/<ns>/`).
+ */
+export const DISCOVER_EXTENSION_MOUNT_AMBIGUOUS = "discover/extension-mount-ambiguous";
+
+/**
+ * Emitted when a directory mount (`extensions/<ns>/`) is missing its required
+ * `extension.<ext>` mount declaration.
+ */
+export const DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION =
+  "discover/extension-mount-missing-declaration";
+
+/**
  * Emitted when a resolved package is not a valid eve extension.
  */
 export const DISCOVER_EXTENSION_PACKAGE_INVALID = "discover/extension-package-invalid";
@@ -59,6 +72,20 @@ export function mountNamespace(logicalPath: string): string {
 }
 
 /**
+ * Derives the mount namespace from a mount ref's `extensions/…` logical path
+ * for either mount form: the file form (`extensions/crm.ts` → `crm`) or the
+ * directory form (`extensions/crm/extension.ts` → `crm`).
+ */
+export function mountRefNamespace(logicalPath: string): string {
+  const remainder = logicalPath.replace(/^extensions\//, "");
+  const slashIndex = remainder.indexOf("/");
+  if (slashIndex !== -1) {
+    return remainder.slice(0, slashIndex);
+  }
+  return mountNamespace(logicalPath);
+}
+
+/**
  * Derives the namespace that scopes an extension's durable state keys and config
  * binding from its package name. Unlike the mount namespace, this stays keyed to
  * the package (e.g. `@acme/crm` → `acme-crm`) so renaming the consumer's mount
@@ -84,9 +111,16 @@ export async function locateExtensionMount(input: {
   readonly agentRoot: string;
   readonly appRoot: string;
   readonly mount: ExtensionSourceRef;
+  /**
+   * Mount namespace the caller derived from the mount path. Passed in rather
+   * than re-derived here because the file form (`extensions/crm.ts`) and the
+   * directory form (`extensions/crm/extension.ts`) name the namespace at
+   * different path positions.
+   */
+  readonly namespace: string;
 }): Promise<{ location?: ExtensionMountLocation; diagnostics: DiscoverDiagnostic[] }> {
   const mountPath = join(input.agentRoot, input.mount.logicalPath);
-  const namespace = mountNamespace(input.mount.logicalPath);
+  const { namespace } = input;
 
   let text: string;
   try {
