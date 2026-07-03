@@ -33,21 +33,24 @@ describe("mounted extension via authored-source loader", () => {
           name: "@acme/crm",
           type: "module",
           eve: { extension: "ext" },
-          exports: { ".": "./ext/config.mjs" },
+          exports: { ".": "./ext/extension.mjs" },
         })}\n`,
-        "node_modules/@acme/crm/ext/config.mjs": [
-          'import { defineConfig } from "eve/extension";',
-          "export default defineConfig({ apiKey: { type: 'string', required: true } });",
+        "node_modules/@acme/crm/ext/extension.mjs": [
+          'import { defineExtension } from "eve/extension";',
+          // A minimal Standard Schema (pass-through validate) — the scenario
+          // exercises binding + read, not validation.
+          "const config = { '~standard': { version: 1, vendor: 'scenario', validate: (value) => ({ value }) } };",
+          "export default defineExtension({ config });",
           "",
         ].join("\n"),
         "node_modules/@acme/crm/ext/tools/crm_echo.mjs": [
-          'import { getConfig } from "eve/extension";',
           'import { defineTool } from "eve/tools";',
+          'import extension from "../extension.mjs";',
           "export default defineTool({",
           '  description: "Echo the configured API key.",',
           "  inputSchema: { type: 'object', properties: {}, additionalProperties: false },",
           "  async execute() {",
-          "    return { apiKey: getConfig().apiKey };",
+          "    return { apiKey: extension.config.apiKey };",
           "  },",
           "});",
           "",

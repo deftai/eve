@@ -53,7 +53,7 @@ export interface AuthoredModuleLoadOptions {
   readonly externalDependencies?: readonly string[];
   /**
    * When set, the module being loaded is extension-owned: its
-   * `defineState`/`defineConfig` calls (and those of its same-package
+   * `defineState`/`defineExtension` calls (and those of its same-package
    * dependencies bundled with it) are scoped to this namespace at bundle time.
    */
   readonly extensionScopeNamespace?: string;

@@ -13,7 +13,7 @@ An extension is an agent-shaped directory without `agent.ts` or `sandbox` — th
 @acme/crm/
   package.json
   ext/
-    config.ts
+    extension.ts         # declares the extension (and its config, if any)
     lib/http.ts          # shared code, imported by your tools/hooks
     tools/search.ts
     connections/api.ts
@@ -26,8 +26,9 @@ Shared code lives in `ext/lib/` and is imported by relative path — an extensio
 A tool is identical to one authored inside an agent:
 
 ```ts title="ext/tools/search.ts"
-import { getConfig } from "eve/extension";
 import { defineTool } from "eve/tools";
+
+import extension from "../extension.js";
 
 export default defineTool({
   description: "Search the CRM.",
@@ -35,7 +36,7 @@ export default defineTool({
     /* ... */
   },
   async execute({ query }) {
-    const { apiKey } = getConfig();
+    const { apiKey } = extension.config;
     /* ... */
   },
 });
@@ -45,27 +46,32 @@ Name tools and connections for what they do (`search`, not `crm_search`); the co
 
 ### Configuration
 
-Extensions that take consumer settings declare them once with `defineConfig`. The returned handle is the mount factory the consumer calls. **Config is optional** — an extension with no settings omits `ext/config.ts` entirely.
+Every extension declares itself in `ext/extension.ts` with `defineExtension`. Its default export is the mount factory the consumer calls. To take consumer settings, pass a `config` schema — any [Standard Schema](https://standardschema.dev) (a Zod object here), the same kind of schema a tool's `inputSchema` uses:
 
-```ts title="ext/config.ts"
-import { defineConfig } from "eve/extension";
+```ts title="ext/extension.ts"
+import { defineExtension } from "eve/extension";
+import { z } from "zod";
 
-export default defineConfig({
-  apiKey: { type: "string", secret: true, required: true },
-  baseUrl: { type: "string", default: "https://api.acme.example" },
+export default defineExtension({
+  config: z.object({
+    apiKey: z.string(),
+    baseUrl: z.string().default("https://api.acme.example"),
+  }),
 });
 ```
 
-Read it from any tool, hook, or connection with `getConfig()` — no config import, no matter the file's depth:
+**Config is optional** — an extension with no settings declares `defineExtension()` with no schema.
+
+Read the bound config off the handle from any tool, hook, or connection. Import the declaration with a relative path (`../extension.js`, from a slot one level down) and read `.config` — typed straight from the schema, no type argument:
 
 ```ts title="ext/tools/search.ts"
-import { getConfig } from "eve/extension";
+import extension from "../extension.js";
 
 // inside execute():
-const { apiKey, baseUrl } = getConfig(); // baseUrl falls back to its default
+const { apiKey, baseUrl } = extension.config; // baseUrl falls back to its default
 ```
 
-`getConfig()` returns the mounted config with declared defaults applied, scoped to the calling extension. Pass the schema type (`getConfig<typeof schema>()`) for a precisely-typed result. It throws when called outside a mounted extension, or when the extension declares no config. Config is bound once when the extension mounts and constant for the session; values that vary per caller belong in connection auth.
+`.config` returns the consumer-supplied values validated against the schema with declared defaults applied. It is bound once when the extension mounts and constant for the session; values that vary per caller belong in connection auth. Because config is validated by a Standard Schema, an async-validating schema is rejected at mount.
 
 ### State
 
@@ -85,7 +91,7 @@ Point `eve.extension` at the source directory and run `eve build`. Wire `package
 }
 ```
 
-`eve build` emits the mount factory (`dist/index.mjs`, re-exporting the config handle as `default` and the extension's short name) and named tool exports for consumer overrides (`dist/tools/index.mjs`), then fills those two entries into the package's `exports` map (`.` and `./tools`) — so you never hand-list them. It only adds missing entries, so a deliberately customized export is left alone. Local and workspace packages work without publishing.
+`eve build` emits the mount factory (`dist/index.mjs`, re-exporting the `defineExtension` handle as `default` and the extension's short name) and named tool exports for consumer overrides (`dist/tools/index.mjs`), then fills those two entries into the package's `exports` map (`.` and `./tools`) — so you never hand-list them. It only adds missing entries, so a deliberately customized export is left alone. Local and workspace packages work without publishing.
 
 ## Mounting
 

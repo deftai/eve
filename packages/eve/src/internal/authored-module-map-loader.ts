@@ -8,7 +8,7 @@ import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
 import { loadAuthoredModuleNamespace } from "#internal/authored-module-loader.js";
 
 /**
- * Ambient namespace read by `defineConfig` when it is evaluated from a module
+ * Ambient namespace read by `defineExtension` when it is evaluated from a module
  * the bundler could not scope — specifically a mount's extension package, which
  * resolves cross-package and so loads unbundled in the dev/eval loader. Set only
  * around the synchronous evaluation of one mount module (see below), so it never
@@ -116,7 +116,7 @@ async function hydrateCompiledNodeScope(input: {
     // A mount module (e.g. `agent/extensions/crm.ts`) imports the extension
     // package cross-package, so its config handle loads unbundled and the
     // bundler cannot scope it. Set the ambient config scope around this one
-    // synchronous load so the mount's `defineConfig` binds under the package
+    // synchronous load so the mount's `defineExtension` binds under the package
     // namespace — matching what the extension's own bundled tools read.
     const mountConfigScope = input.scopeIndex.byMountSourceId.get(ref.sourceId);
     if (mountConfigScope !== undefined) {

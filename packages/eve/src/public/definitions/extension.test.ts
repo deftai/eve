@@ -1,111 +1,100 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
-import { bindExtensionConfig, defineConfig, getConfig } from "#public/definitions/extension.js";
+import type { StandardSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
+import { defineExtension } from "#public/definitions/extension.js";
 
-// Each test uses a distinct namespace because the schema/values registries the
-// runtime keys config by are process-global.
+// Each test uses a distinct namespace because the config registry the runtime
+// binds config into is process-global.
 
-describe("defineConfig", () => {
+describe("defineExtension", () => {
   it("exposes the declared schema", () => {
-    const config = defineConfig(
+    const schema = z.object({ apiKey: z.string() });
+    const ext = defineExtension({ config: schema }, "schema-test");
+    expect(ext.schema).toBe(schema);
+  });
+
+  it("binds values from the mount factory call and reads them with defaults applied", () => {
+    const ext = defineExtension(
       {
-        apiKey: { type: "string", secret: true, required: true },
-        baseUrl: { type: "string", default: "https://api.acme.example" },
-      },
-      "schema-test",
-    );
-
-    expect(config.schema.apiKey).toEqual({ type: "string", secret: true, required: true });
-    expect(config.schema.baseUrl).toEqual({
-      type: "string",
-      default: "https://api.acme.example",
-    });
-  });
-
-  it("rejects a missing required field at bind", () => {
-    const config = defineConfig({ apiKey: { type: "string", required: true } }, "bind-required");
-    expect(() => bindExtensionConfig(config, {})).toThrow(/required field "apiKey"/);
-  });
-
-  it("rejects a bound value of the wrong type", () => {
-    const config = defineConfig({ pageSize: { type: "number" } }, "bind-type");
-    expect(() => bindExtensionConfig(config, { pageSize: "nope" })).toThrow(
-      /expected number but received string/,
-    );
-  });
-
-  it("rejects a field that is both required and defaulted", () => {
-    expect(() =>
-      defineConfig({ apiKey: { type: "string", required: true, default: "x" } }),
-    ).toThrow(/both required and has a default/);
-  });
-
-  it("rejects an unsupported field type", () => {
-    expect(() =>
-      // @ts-expect-error intentionally invalid type for the runtime guard
-      defineConfig({ when: { type: "date" } }),
-    ).toThrow(/unsupported type/);
-  });
-});
-
-describe("getConfig", () => {
-  it("throws when called outside a mounted extension", () => {
-    expect(() => getConfig()).toThrow(/only works inside a mounted extension/);
-  });
-
-  it("throws when the extension declares no config", () => {
-    expect(() => getConfig("unmounted-extension")).toThrow(/declares no config/);
-  });
-
-  it("returns bound values with declared defaults applied", () => {
-    const config = defineConfig(
-      {
-        apiKey: { type: "string", required: true },
-        baseUrl: { type: "string", default: "https://api.acme.example" },
-        pageSize: { type: "number", default: 25 },
-      },
-      "read-defaults",
-    );
-
-    bindExtensionConfig(config, { apiKey: "sk-123" });
-
-    expect(getConfig("read-defaults")).toEqual({
-      apiKey: "sk-123",
-      baseUrl: "https://api.acme.example",
-      pageSize: 25,
-    });
-  });
-
-  it("reads config bound by the mount factory call", () => {
-    const config = defineConfig(
-      {
-        apiKey: { type: "string", required: true },
-        baseUrl: { type: "string", default: "https://api.acme.example" },
+        config: z.object({
+          apiKey: z.string(),
+          baseUrl: z.string().default("https://api.acme.example"),
+        }),
       },
       "read-factory",
     );
 
-    const mounted = config({ apiKey: "sk-456" });
+    const mounted = ext({ apiKey: "sk-456" });
 
     expect(mounted).toBeDefined();
-    expect(getConfig("read-factory")).toEqual({
-      apiKey: "sk-456",
-      baseUrl: "https://api.acme.example",
-    });
-  });
-
-  it("applies defaults for a zero-config mount call", () => {
-    const config = defineConfig({ verbose: { type: "boolean", default: false } }, "read-zero");
-    config();
-    expect(getConfig("read-zero")).toEqual({ verbose: false });
+    expect(ext.config).toEqual({ apiKey: "sk-456", baseUrl: "https://api.acme.example" });
   });
 
   it("lets a bound value override a default", () => {
-    const config = defineConfig(
-      { baseUrl: { type: "string", default: "https://default" } },
+    const ext = defineExtension(
+      { config: z.object({ baseUrl: z.string().default("https://default") }) },
       "read-override",
     );
-    bindExtensionConfig(config, { baseUrl: "https://override" });
-    expect(getConfig("read-override")).toEqual({ baseUrl: "https://override" });
+    ext({ baseUrl: "https://override" });
+    expect(ext.config).toEqual({ baseUrl: "https://override" });
+  });
+
+  it("applies schema defaults when read before an all-optional mount binds", () => {
+    const ext = defineExtension(
+      { config: z.object({ verbose: z.boolean().default(false) }) },
+      "read-zero",
+    );
+    expect(ext.config).toEqual({ verbose: false });
+  });
+
+  it("rejects a missing required field at bind", () => {
+    const ext = defineExtension({ config: z.object({ apiKey: z.string() }) }, "bind-required");
+    // @ts-expect-error apiKey is required by the schema
+    expect(() => ext({})).toThrow(/Invalid extension config/);
+  });
+
+  it("rejects a wrong-typed value at bind", () => {
+    const ext = defineExtension({ config: z.object({ pageSize: z.number() }) }, "bind-type");
+    // @ts-expect-error pageSize must be a number
+    expect(() => ext({ pageSize: "nope" })).toThrow(/Invalid extension config/);
+  });
+
+  it("rejects a config schema that validates asynchronously", () => {
+    const asyncSchema: StandardSchemaV1 = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: async (value) => ({ value }),
+      },
+    };
+    const ext = defineExtension({ config: asyncSchema }, "bind-async");
+    expect(() => ext({})).toThrow(/validate synchronously/);
+  });
+
+  it("has an empty config and undefined schema with no config declared", () => {
+    const ext = defineExtension(undefined, "noconfig-test");
+    expect(ext.schema).toBeUndefined();
+    expect(ext()).toBeDefined();
+    expect(ext.config).toEqual({});
+  });
+
+  it("types the config reader from the schema", () => {
+    const ext = defineExtension(
+      { config: z.object({ apiKey: z.string(), tier: z.string().default("free") }) },
+      "types-test",
+    );
+    ext({ apiKey: "k" });
+
+    // Compile-time assertions (checked by `tsc`): required + defaulted fields
+    // are present and typed from the schema.
+    const apiKey: string = ext.config.apiKey;
+    const tier: string = ext.config.tier;
+    // @ts-expect-error apiKey is a string, not a number
+    const wrong: number = ext.config.apiKey;
+    void wrong;
+
+    expect(apiKey).toBe("k");
+    expect(tier).toBe("free");
   });
 });

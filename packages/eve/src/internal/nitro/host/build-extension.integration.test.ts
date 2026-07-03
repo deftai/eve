@@ -18,8 +18,8 @@ async function createExtensionPackage(): Promise<string> {
   );
   await mkdir(join(root, "ext", "tools"), { recursive: true });
   await writeFile(
-    join(root, "ext", "config.mjs"),
-    'import { defineConfig } from "eve/extension";\nexport default defineConfig({ apiKey: { type: "string", required: true } });\n',
+    join(root, "ext", "extension.mjs"),
+    'import { defineExtension } from "eve/extension";\nexport default defineExtension({ config: {} });\n',
     "utf8",
   );
   await writeFile(
@@ -45,14 +45,14 @@ describe("extension build", () => {
     expect(await tryReadExtensionBuildConfig(root)).toBeNull();
   });
 
-  it("generates a package index re-exporting the config handle and tools", async () => {
+  it("generates a package index re-exporting the extension declaration and tools", async () => {
     const root = await createExtensionPackage();
     const config = await tryReadExtensionBuildConfig(root);
     const outDir = await buildExtensionPackage(root, config!);
 
     const index = await readFile(join(outDir, "index.mjs"), "utf8");
-    expect(index).toContain('export { default } from "../ext/config.mjs"');
-    expect(index).toContain('export { default as crm } from "../ext/config.mjs"');
+    expect(index).toContain('export { default } from "../ext/extension.mjs"');
+    expect(index).toContain('export { default as crm } from "../ext/extension.mjs"');
 
     const toolsIndex = await readFile(join(outDir, "tools", "index.mjs"), "utf8");
     expect(toolsIndex).toContain(
@@ -74,7 +74,7 @@ describe("extension build", () => {
     });
   });
 
-  it("emits a mounted-extension marker default when there is no config", async () => {
+  it("re-exports the declaration for a no-config extension", async () => {
     const root = await mkdtemp(join(tmpdir(), "eve-ext-noconfig-"));
     await writeFile(
       join(root, "package.json"),
@@ -82,6 +82,11 @@ describe("extension build", () => {
       "utf8",
     );
     await mkdir(join(root, "ext", "tools"), { recursive: true });
+    await writeFile(
+      join(root, "ext", "extension.mjs"),
+      'import { defineExtension } from "eve/extension";\nexport default defineExtension();\n',
+      "utf8",
+    );
     await writeFile(
       join(root, "ext", "tools", "gizmo_ping.mjs"),
       'export default { description: "Ping.", async execute() { return {}; } };\n',
@@ -91,9 +96,28 @@ describe("extension build", () => {
     const outDir = await buildExtensionPackage(root, config!);
 
     const index = await readFile(join(outDir, "index.mjs"), "utf8");
-    expect(index).toContain('const mounted = { [Symbol.for("eve.mounted-extension")]: true }');
-    expect(index).toContain("export default mounted");
-    expect(index).not.toContain("config");
+    expect(index).toContain('export { default } from "../ext/extension.mjs"');
+    expect(index).toContain('export { default as gizmo } from "../ext/extension.mjs"');
+    expect(index).not.toContain("mounted-extension");
+  });
+
+  it("throws when the extension has no declaration module", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eve-ext-nodecl-"));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "@acme/nodecl", type: "module", eve: { extension: "ext" } }),
+      "utf8",
+    );
+    await mkdir(join(root, "ext", "tools"), { recursive: true });
+    await writeFile(
+      join(root, "ext", "tools", "ping.mjs"),
+      'export default { description: "Ping.", async execute() { return {}; } };\n',
+      "utf8",
+    );
+    const config = await tryReadExtensionBuildConfig(root);
+    await expect(buildExtensionPackage(root, config!)).rejects.toThrow(
+      /missing an "extension\.<ext>" declaration/,
+    );
   });
 
   it("leaves a deliberately customized export entry untouched", async () => {

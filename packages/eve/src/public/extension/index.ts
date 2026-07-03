@@ -4,21 +4,13 @@
  *
  * @example
  * ```ts
- * import { defineConfig } from "eve/extension";
+ * import { defineExtension } from "eve/extension";
  * ```
  */
 
 export {
-  defineConfig,
-  getConfig,
-  type BooleanConfigField,
-  type ExtensionConfigField,
-  type ExtensionConfigFieldType,
-  type ExtensionConfigHandle,
-  type ExtensionConfigInput,
-  type ExtensionConfigSchema,
-  type InferExtensionConfig,
+  defineExtension,
+  type ExtensionHandle,
   type MountedExtension,
-  type NumberConfigField,
-  type StringConfigField,
+  type NoConfigExtensionHandle,
 } from "#public/definitions/extension.js";

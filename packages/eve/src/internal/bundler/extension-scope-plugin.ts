@@ -62,16 +62,14 @@ function shimSource(kind: "context" | "extension", namespace: string): string {
       "",
     ].join("\n");
   }
-  // `eve/extension`'s runtime exports are `defineConfig` and `getConfig`; both
-  // bake the extension's namespace so config declared/read from any module in
-  // the extension resolves to the same scope.
+  // `eve/extension`'s only runtime export is `defineExtension`; the rest are
+  // types. Re-export it wrapped so the handle bakes the extension's namespace —
+  // both the mount binding and the handle's `config` reader resolve to the same
+  // scope, from any module in the extension.
   return [
-    `import { defineConfig as __eveScopedDefineConfig, getConfig as __eveScopedGetConfig } from "eve/extension";`,
-    `export function defineConfig(schema, namespace) {`,
-    `  return __eveScopedDefineConfig(schema, namespace === undefined ? ${ns} : namespace);`,
-    `}`,
-    `export function getConfig(namespace) {`,
-    `  return __eveScopedGetConfig(namespace === undefined ? ${ns} : namespace);`,
+    `import { defineExtension as __eveScopedDefineExtension } from "eve/extension";`,
+    `export function defineExtension(options, namespace) {`,
+    `  return __eveScopedDefineExtension(options, namespace === undefined ? ${ns} : namespace);`,
     `}`,
     "",
   ].join("\n");
@@ -116,7 +114,7 @@ function scopeHooks(
  * Path-containment scope plugin for the whole-application bundle (the production
  * build). Any module physically under an extension's source root has its
  * `eve/context`/`eve/extension` imports redirected to a generated shim that
- * bakes the extension's package namespace into `defineState`/`defineConfig`.
+ * bakes the extension's package namespace into `defineState`/`defineExtension`.
  *
  * Returns `null` when there are no extensions, so consumer-only builds carry no
  * extra plugin and their output is byte-identical to a non-extension build.
