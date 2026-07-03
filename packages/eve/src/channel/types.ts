@@ -1,6 +1,7 @@
 import type { UserContent } from "ai";
 
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { AuthorizationOutcome, HandleMessageStreamEvent } from "#protocol/message.js";
+import type { ConnectionAuthorizationChallenge } from "#public/connections/errors.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
@@ -157,11 +158,78 @@ export interface SubagentInputRequestHookPayload {
 }
 
 /**
+ * Event coordinates attached to a proxied `authorization.required` challenge.
+ *
+ * Mirrors the `data` payload of the child's `authorization.required` stream
+ * event so the parent re-emits the same semantics without inventing new
+ * identifiers. The challenge's OAuth callback already targets the child
+ * session's own hook, so no response routing crosses back through the parent.
+ */
+export interface SubagentAuthorizationRequestEvent {
+  readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly description: string;
+  readonly name: string;
+  readonly sequence: number;
+  readonly stepIndex: number;
+  readonly turnId: string;
+  readonly webhookUrl?: string;
+}
+
+/**
+ * Proxy payload sent from a child subagent to its parent when the child parks
+ * on a pending connection authorization.
+ *
+ * Runtime-internal. Channel adapters and authored code never observe this
+ * kind: it exists only on the durable hook between the subagent adapter's
+ * `authorization.required` handler and the parent's runtime loop.
+ */
+export interface SubagentAuthorizationRequestHookPayload {
+  readonly callId: string;
+  readonly childSessionId: string;
+  readonly event: SubagentAuthorizationRequestEvent;
+  readonly kind: "subagent-authorization-request";
+  readonly subagentName: string;
+}
+
+/**
+ * Event coordinates attached to a proxied `authorization.completed` outcome.
+ *
+ * Mirrors the `data` payload of the child's `authorization.completed` stream
+ * event so the parent channel can resolve the sign-in affordance it rendered
+ * for the matching `authorization.required` challenge.
+ */
+export interface SubagentAuthorizationCompletedEvent {
+  readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly name: string;
+  readonly outcome: AuthorizationOutcome;
+  readonly reason?: string;
+  readonly sequence: number;
+  readonly stepIndex: number;
+  readonly turnId: string;
+}
+
+/**
+ * Proxy payload sent from a child subagent to its parent when the child's
+ * pending connection authorization resolves.
+ *
+ * Runtime-internal, like {@link SubagentAuthorizationRequestHookPayload}.
+ */
+export interface SubagentAuthorizationCompletedHookPayload {
+  readonly callId: string;
+  readonly childSessionId: string;
+  readonly event: SubagentAuthorizationCompletedEvent;
+  readonly kind: "subagent-authorization-completed";
+  readonly subagentName: string;
+}
+
+/**
  * Serializable payload sent through the workflow `resumeHook`.
  */
 export type HookPayload =
   | DeliverHookPayload
   | RuntimeActionResultHookPayload
+  | SubagentAuthorizationCompletedHookPayload
+  | SubagentAuthorizationRequestHookPayload
   | SubagentInputRequestHookPayload;
 
 /**

@@ -14,6 +14,18 @@ if (SUBAGENT_INPUT_REQUESTED === undefined) {
   throw new Error("SUBAGENT_ADAPTER is missing its input.requested handler.");
 }
 
+const SUBAGENT_AUTHORIZATION_REQUIRED = SUBAGENT_ADAPTER["authorization.required"];
+
+if (SUBAGENT_AUTHORIZATION_REQUIRED === undefined) {
+  throw new Error("SUBAGENT_ADAPTER is missing its authorization.required handler.");
+}
+
+const SUBAGENT_AUTHORIZATION_COMPLETED = SUBAGENT_ADAPTER["authorization.completed"];
+
+if (SUBAGENT_AUTHORIZATION_COMPLETED === undefined) {
+  throw new Error("SUBAGENT_ADAPTER is missing its authorization.completed handler.");
+}
+
 const resumeHookMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
@@ -97,6 +109,118 @@ describe("SUBAGENT_ADAPTER input.requested handler", () => {
     await SUBAGENT_INPUT_REQUESTED(
       {
         requests: [sampleRequest()],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-0",
+      },
+      ctx,
+    );
+
+    expect(resumeHookMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("SUBAGENT_ADAPTER authorization handlers", () => {
+  it("forwards the child's authorization challenge via resumeHook", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+
+    await SUBAGENT_AUTHORIZATION_REQUIRED(
+      {
+        authorization: { url: "https://idp.example.com/authorize" },
+        description: "Authorization required for linear",
+        name: "linear",
+        sequence: 3,
+        stepIndex: 2,
+        turnId: "turn-0",
+        webhookUrl: "https://agent.example.com/eve/v1/connections/linear/callback/child:auth",
+      },
+      ctx,
+    );
+
+    expect(resumeHookMock).toHaveBeenCalledTimes(1);
+    expect(resumeHookMock).toHaveBeenCalledWith("parent-token", {
+      callId: "call-123",
+      childSessionId: "child-session",
+      event: {
+        authorization: { url: "https://idp.example.com/authorize" },
+        description: "Authorization required for linear",
+        name: "linear",
+        sequence: 3,
+        stepIndex: 2,
+        turnId: "turn-0",
+        webhookUrl: "https://agent.example.com/eve/v1/connections/linear/callback/child:auth",
+      },
+      kind: "subagent-authorization-request",
+      subagentName: "linear",
+    });
+  });
+
+  it("omits absent optional challenge fields from the forwarded event", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+
+    await SUBAGENT_AUTHORIZATION_REQUIRED(
+      {
+        description: "Authorization required for linear",
+        name: "linear",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-0",
+      },
+      ctx,
+    );
+
+    expect(resumeHookMock).toHaveBeenCalledTimes(1);
+    const [, payload] = resumeHookMock.mock.calls[0]!;
+    expect(payload.event).not.toHaveProperty("authorization");
+    expect(payload.event).not.toHaveProperty("webhookUrl");
+  });
+
+  it("forwards the child's authorization outcome via resumeHook", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+
+    await SUBAGENT_AUTHORIZATION_COMPLETED(
+      {
+        name: "linear",
+        outcome: "authorized",
+        sequence: 5,
+        stepIndex: 4,
+        turnId: "turn-0",
+      },
+      ctx,
+    );
+
+    expect(resumeHookMock).toHaveBeenCalledTimes(1);
+    expect(resumeHookMock).toHaveBeenCalledWith("parent-token", {
+      callId: "call-123",
+      childSessionId: "child-session",
+      event: {
+        name: "linear",
+        outcome: "authorized",
+        sequence: 5,
+        stepIndex: 4,
+        turnId: "turn-0",
+      },
+      kind: "subagent-authorization-completed",
+      subagentName: "linear",
+    });
+  });
+
+  it("skips forwarding when the adapter state is missing a parent continuation token", async () => {
+    resumeHookMock.mockClear();
+    const base = makeContext();
+    const ctx: ChannelAdapterContext = {
+      ctx: base.ctx,
+      state: {},
+      session: base.session,
+    };
+
+    await SUBAGENT_AUTHORIZATION_REQUIRED(
+      {
+        description: "Authorization required for linear",
+        name: "linear",
         sequence: 0,
         stepIndex: 0,
         turnId: "turn-0",

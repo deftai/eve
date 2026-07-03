@@ -1,9 +1,17 @@
 import { resumeHook } from "#internal/workflow/runtime.js";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
-import type { SubagentInputRequestHookPayload } from "#channel/types.js";
+import type {
+  SubagentAuthorizationCompletedHookPayload,
+  SubagentAuthorizationRequestHookPayload,
+  SubagentInputRequestHookPayload,
+} from "#channel/types.js";
 import { ContinuationTokenKey, SessionIdKey } from "#context/keys.js";
 import { createErrorId, createLogger } from "#internal/logging.js";
+import type {
+  AuthorizationCompletedStreamEvent,
+  AuthorizationRequiredStreamEvent,
+} from "#protocol/message.js";
 
 const log = createLogger("execution.subagent-adapter");
 
@@ -65,7 +73,11 @@ export function isSubagentAdapterState(value: unknown): value is SubagentAdapter
  * parent.
  *
  * It proxies child `input.requested` events upward so the parent channel
- * can render HITL prompts and route responses back down to the child.
+ * can render HITL prompts and route responses back down to the child, and
+ * child `authorization.required`/`authorization.completed` events so the
+ * parent channel can render connection sign-in affordances. Authorization
+ * needs no downward routing: the challenge's OAuth callback resumes the
+ * child session's own hook directly.
  */
 export const SUBAGENT_ADAPTER: ChannelAdapter = {
   kind: SUBAGENT_ADAPTER_KIND,
@@ -95,6 +107,74 @@ export const SUBAGENT_ADAPTER: ChannelAdapter = {
       parentContinuationToken: state.parentContinuationToken,
     });
   },
+  async "authorization.required"(data, ctx) {
+    const state = ctx.state;
+
+    if (!isSubagentAdapterState(state)) {
+      return;
+    }
+
+    const event: AuthorizationRequiredStreamEvent["data"] = {
+      description: data.description,
+      name: data.name,
+      sequence: data.sequence,
+      stepIndex: data.stepIndex,
+      turnId: data.turnId,
+    };
+    if (data.authorization !== undefined) {
+      event.authorization = data.authorization;
+    }
+    if (data.webhookUrl !== undefined) {
+      event.webhookUrl = data.webhookUrl;
+    }
+
+    const hookPayload: SubagentAuthorizationRequestHookPayload = {
+      callId: state.callId,
+      childSessionId: ctx.ctx.require(SessionIdKey),
+      event,
+      kind: "subagent-authorization-request",
+      subagentName: state.subagentName,
+    };
+
+    await forwardSubagentAuthorizationEventStep({
+      hookPayload,
+      parentContinuationToken: state.parentContinuationToken,
+    });
+  },
+  async "authorization.completed"(data, ctx) {
+    const state = ctx.state;
+
+    if (!isSubagentAdapterState(state)) {
+      return;
+    }
+
+    const event: AuthorizationCompletedStreamEvent["data"] = {
+      name: data.name,
+      outcome: data.outcome,
+      sequence: data.sequence,
+      stepIndex: data.stepIndex,
+      turnId: data.turnId,
+    };
+    if (data.authorization !== undefined) {
+      event.authorization = data.authorization;
+    }
+    if (data.reason !== undefined) {
+      event.reason = data.reason;
+    }
+
+    const hookPayload: SubagentAuthorizationCompletedHookPayload = {
+      callId: state.callId,
+      childSessionId: ctx.ctx.require(SessionIdKey),
+      event,
+      kind: "subagent-authorization-completed",
+      subagentName: state.subagentName,
+    };
+
+    await forwardSubagentAuthorizationEventStep({
+      hookPayload,
+      parentContinuationToken: state.parentContinuationToken,
+    });
+  },
 };
 
 /**
@@ -116,6 +196,35 @@ async function forwardSubagentInputRequestStep(input: {
       childContinuationToken: input.hookPayload.childContinuationToken,
       childSessionId: input.hookPayload.childSessionId,
       errorId,
+      parentContinuationToken: input.parentContinuationToken,
+      subagentName: input.hookPayload.subagentName,
+      error,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Forwards one child authorization lifecycle event up to its parent via
+ * the durable workflow `resumeHook` path.
+ */
+async function forwardSubagentAuthorizationEventStep(input: {
+  readonly hookPayload:
+    | SubagentAuthorizationCompletedHookPayload
+    | SubagentAuthorizationRequestHookPayload;
+  readonly parentContinuationToken: string;
+}): Promise<void> {
+  "use step";
+
+  try {
+    await resumeHook(input.parentContinuationToken, input.hookPayload);
+  } catch (error) {
+    const errorId = createErrorId();
+    log.warn("failed to forward proxied authorization event to parent", {
+      callId: input.hookPayload.callId,
+      childSessionId: input.hookPayload.childSessionId,
+      errorId,
+      kind: input.hookPayload.kind,
       parentContinuationToken: input.parentContinuationToken,
       subagentName: input.hookPayload.subagentName,
       error,
