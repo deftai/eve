@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { buildMemoryAgentProject } from "#internal/testing/memory-agent-source.js";
@@ -777,7 +779,7 @@ describe("discoverAgent (memory)", () => {
     // A directory mount always carries an overrides manifest (the mount dir is
     // itself an agent-shaped source); with no override slots authored it is
     // empty and composes to nothing.
-    expect(mount.overrides?.agentRoot).toBe(`${project.agentRoot}/extensions/crm`);
+    expect(mount.overrides?.agentRoot).toBe(join(project.agentRoot, "extensions", "crm"));
     expect(mount.overrides?.tools).toEqual([]);
   });
 
@@ -819,7 +821,7 @@ describe("discoverAgent (memory)", () => {
     // The override manifest is rooted at the mount directory — that root is
     // what rebases the override's module to the consumer's file, not the
     // extension package.
-    expect(mount.overrides?.agentRoot).toBe(`${project.agentRoot}/extensions/crm`);
+    expect(mount.overrides?.agentRoot).toBe(join(project.agentRoot, "extensions", "crm"));
   });
 
   it("reports an ambiguous mount when a namespace is both a file and a directory", async () => {
