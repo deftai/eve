@@ -1,11 +1,12 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 
-export const TOOLKIT_FORECAST_TOKEN = "toolkit-forecast-ok-9F4Q";
+import { stamp } from "../lib/brand.js";
 
 // A dynamic capability authored inside an extension: the resolver registers a
 // tool at session start, and it composes and runs like any other extension
-// contribution once mounted.
+// contribution once mounted. The token is built from the shared `ext/lib/brand`
+// helper, so this proves ext/lib modules bundle into an extension's tools.
 export default defineDynamic({
   events: {
     "session.started": async () => ({
@@ -14,7 +15,7 @@ export default defineDynamic({
           "Return the toolkit forecast token. Call when asked to run the toolkit forecast.",
         inputSchema: z.object({}),
         async execute() {
-          return { token: TOOLKIT_FORECAST_TOKEN };
+          return { token: stamp("forecast-ok-9F4Q") };
         },
       }),
     }),

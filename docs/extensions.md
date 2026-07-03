@@ -14,11 +14,14 @@ An extension is an agent-shaped directory without `agent.ts` or `sandbox` — th
   package.json
   ext/
     config.ts
+    lib/http.ts          # shared code, imported by your tools/hooks
     tools/search.ts
     connections/api.ts
     skills/triage/SKILL.md
     hooks/audit.ts
 ```
+
+Shared code lives in `ext/lib/` and is imported by relative path — an extension bundles its own modules, so tools and hooks can share helpers instead of repeating them (`import { fetchJson } from "../lib/http.js"`).
 
 A tool is identical to one authored inside an agent:
 
