@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Add the internal Codex model transport used by local subscription-backed models, and surface direct provider API request errors with their upstream message when one is available.
+Add `experimental_codex` under the new `eve/extensions/model` subpath: it returns an AI SDK language model served through the local Codex login (`codex login`), billed to the ChatGPT subscription. Direct provider API request errors now also surface their upstream message when one is available.
