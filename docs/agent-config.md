@@ -94,7 +94,9 @@ export default defineAgent({
 Input and output budgets are checked independently. The model call that crosses
 either limit is allowed to finish because providers only report exact token
 usage after a call completes. Follow-up model calls in the same session fail
-with `SESSION_TOKEN_LIMIT_REACHED`.
+with `SESSION_TOKEN_LIMIT_REACHED`, and the session emits one final chat
+message explaining the limit before it fails so the conversation does not end
+silently.
 
 When `maxInputTokensPerSession` is omitted, eve applies a default input budget:
 `40_000_000` provider-reported input tokens for root sessions and `5_000_000`

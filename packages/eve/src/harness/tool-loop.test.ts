@@ -950,10 +950,14 @@ describe("createToolLoopHarness", () => {
         "turn.started",
         "message.received",
         "step.started",
+        "message.completed",
         "step.failed",
         "turn.failed",
         "session.failed",
       ]);
+      expect(events.find((event) => event.type === "message.completed")?.data).toMatchObject({
+        message: `${testCase.message} Start a new session to continue.`,
+      });
       expect(events.find((event) => event.type === "step.failed")?.data).toMatchObject({
         code: "SESSION_TOKEN_LIMIT_REACHED",
         details: testCase.details,

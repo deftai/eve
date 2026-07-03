@@ -37,6 +37,7 @@ import {
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
   createInputRequestedEvent,
+  createMessageCompletedEvent,
   createResultCompletedEvent,
 } from "#protocol/message.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
@@ -1156,6 +1157,10 @@ function formatSessionTokenLimitMessage(kind: SessionTokenLimitViolation["kind"]
   return `The session reached its configured ${kind} token limit.`;
 }
 
+function formatSessionTokenLimitChatMessage(kind: SessionTokenLimitViolation["kind"]): string {
+  return `${formatSessionTokenLimitMessage(kind)} Start a new session to continue.`;
+}
+
 async function failSessionTokenLimit(input: {
   readonly config: ToolLoopHarnessConfig;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
@@ -1174,6 +1179,17 @@ async function failSessionTokenLimit(input: {
   };
 
   if (input.emit) {
+    // One final chat-visible message before the failure cascade: surfaces
+    // that render only `message.*` events (session UIs, message-only
+    // channel handlers) would otherwise end the conversation silently.
+    await input.emit(
+      createMessageCompletedEvent({
+        message: formatSessionTokenLimitChatMessage(input.violation.kind),
+        sequence: input.emissionState.sequence,
+        stepIndex: input.emissionState.stepIndex,
+        turnId: input.emissionState.turnId,
+      }),
+    );
     await emitFailedStep(input.emit, input.emissionState, {
       code: SESSION_TOKEN_LIMIT_REACHED_CODE,
       details,
