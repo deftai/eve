@@ -7,6 +7,7 @@ import { discoverAgent } from "#discover/discover-agent.js";
 import {
   DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
   DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+  DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
   DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
 } from "#discover/extensions.js";
 import {
@@ -905,6 +906,39 @@ describe("discoverAgent (memory)", () => {
     );
     expect(collision).toBeDefined();
     expect(collision?.message).toContain("extensions/crm/");
+  });
+
+  it("rejects an extension that mounts another extension", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: "ext" },
+        }),
+        "node_modules/@acme/crm/ext/extension.ts": "export default {};\n",
+        "node_modules/@acme/crm/ext/tools/search.ts": "export default {};\n",
+        // The mounted extension itself tries to mount another extension — not
+        // supported yet, so discovery must reject it rather than drop it.
+        "node_modules/@acme/crm/ext/extensions/inner.ts":
+          'export { default } from "@acme/inner";\n',
+      },
+      agentFiles: {
+        "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    const nested = result.diagnostics.find(
+      (diagnostic) => diagnostic.code === DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
+    );
+    expect(nested).toBeDefined();
+    expect(nested?.message).toContain("extensions/inner");
   });
 
   it("allows an agent-root tool whose name does not use a mounted namespace prefix", async () => {

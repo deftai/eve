@@ -25,6 +25,14 @@ export const DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION =
   "discover/extension-mount-missing-declaration";
 
 /**
+ * Emitted when an extension declares its own `extensions/` mount slot. Extensions
+ * cannot mount other extensions yet; the slot is reserved so enabling nesting
+ * later is additive rather than a surprise.
+ */
+export const DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED =
+  "discover/extension-nested-mount-unsupported";
+
+/**
  * Emitted when a consumer's agent-root contribution (e.g. `agent/tools/crm__x.ts`)
  * uses a mounted extension's `<ns>__` composed-name prefix. That prefix is
  * reserved for the extension and its co-located overrides; overriding from the

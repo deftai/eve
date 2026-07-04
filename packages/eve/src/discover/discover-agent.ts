@@ -7,6 +7,7 @@ import {
   DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED,
   DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
   DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+  DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
   DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
   DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED,
   locateExtensionMount,
@@ -256,7 +257,20 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   );
 
   const resolvedExtensions: ResolvedExtensionMount[] = [];
-  if (role === "agent") {
+  if (role !== "agent") {
+    // Extensions cannot mount other extensions yet. Fail loudly instead of
+    // silently dropping the nested mount, and reserve the behavior so enabling
+    // it later is additive.
+    for (const descriptor of mountCollection.mounts) {
+      diagnostics.push(
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
+          message: `"${descriptor.mountRef.logicalPath}" mounts an extension from inside an extension, which is not supported yet. Extensions cannot mount other extensions; remove the "extensions/" slot.`,
+          sourcePath: join(agentRoot, descriptor.mountRef.logicalPath),
+        }),
+      );
+    }
+  } else {
     for (const descriptor of mountCollection.mounts) {
       const located = await locateExtensionMount({
         source,

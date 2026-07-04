@@ -141,3 +141,5 @@ export default defineTool({ ...search, approval: always() });
 ## Limits
 
 Per-session limits (token budgets, subagent depth) are the consuming agent's to own and are enforced on the session, so an extension's tools and schedules run within them. An extension cannot declare limits, a sandbox, or agent config.
+
+An extension also cannot mount other extensions — an `extensions/` slot inside an extension is a build error. Only a consuming agent mounts extensions; nesting is reserved for a future release.
