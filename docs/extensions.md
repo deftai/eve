@@ -86,12 +86,20 @@ Point `eve.extension` at the source directory and run `eve build`. Wire `package
   "name": "@acme/crm",
   "type": "module",
   "eve": { "extension": "./ext" },
+  "files": ["ext", "dist"],
   "peerDependencies": { "eve": "^x" },
+  "dependencies": { "zod": "^3" },
   "scripts": { "build": "eve build", "prepare": "eve build" },
 }
 ```
 
 `eve build` emits the mount factory (`dist/index.mjs`, re-exporting the `defineExtension` handle as `default` and the extension's short name) and named tool exports for consumer overrides (`dist/tools/index.mjs`), then fills those two entries into the package's `exports` map (`.` and `./tools`) — so you never hand-list them. It only adds missing entries, so a deliberately customized export is left alone. Local and workspace packages work without publishing.
+
+### Dependencies
+
+`eve` is a **peer** dependency — one eve lives in the consuming app, and the extension's `eve/*` imports resolve to it (the peer range is the compatibility contract). Everything else the extension imports at runtime (SDKs, `zod`, …) goes in `dependencies` and is installed into the consumer transitively; each extension resolves its own declared versions. Because the consumer recompiles the extension from source, `files` must include `ext/`, not just `dist/`.
+
+How those deps reach the running app depends on the build. Under `eve dev` and `eve eval` they stay external and resolve from `node_modules` at runtime. In the hosted build (`eve build`) they are bundled into the deployable — except packages eve keeps external (native or heavy modules, plus any the consuming agent lists in `build.externalDependencies`), which are traced in as runtime dependencies instead. A dependency that can't be bundled — a native addon, say — must be listed in the **consuming agent's** `build.externalDependencies`; an extension can't declare build config, so call out any such dependency in your README.
 
 ## Mounting
 
