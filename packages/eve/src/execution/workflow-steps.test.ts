@@ -24,9 +24,9 @@ import { createTurnWorkflowInput } from "#execution/durable-session-migrations/t
 import { projectToDurableSession } from "#execution/session.js";
 import { createExecutionNodeStep } from "#execution/node-step.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
+import { emitTerminalSessionFailureStep } from "#execution/terminal-session-failure-step.js";
 import {
   dispatchTurnStep,
-  emitTerminalSessionFailureStep,
   resolveEffectiveOutputSchema,
   runProxyInputRequestStep,
   turnStep,

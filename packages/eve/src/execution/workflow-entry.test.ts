@@ -46,7 +46,14 @@ vi.mock("./route-child-delivery.js", () => ({
 
 vi.mock("./workflow-steps.js", () => ({
   dispatchTurnStep: vi.fn().mockImplementation(async () => ({ runId: "turn-run" })),
+}));
+
+vi.mock("./terminal-session-failure-step.js", () => ({
   emitTerminalSessionFailureStep: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("./settle-cancelled-turn-step.js", () => ({
+  settleCancelledTurnStep: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createSessionStateForMock(
