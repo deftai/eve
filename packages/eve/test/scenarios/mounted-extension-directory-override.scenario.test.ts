@@ -94,10 +94,14 @@ describe("mounted extension via directory form with override", () => {
 
     const echo = graph.root.agent.tools.find((entry) => entry.name === "crm__crm_echo");
     expect(echo).toBeDefined();
-    await expect(echo?.execute?.({})).resolves.toEqual({ apiKey: "sk-dir" });
+    await expect(echo?.execute?.({}, { messages: [], toolCallId: "call_1" })).resolves.toEqual({
+      apiKey: "sk-dir",
+    });
 
     const status = graph.root.agent.tools.find((entry) => entry.name === "crm__crm_status");
     expect(status).toBeDefined();
-    await expect(status?.execute?.({})).resolves.toEqual({ status: "consumer-status" });
+    await expect(status?.execute?.({}, { messages: [], toolCallId: "call_2" })).resolves.toEqual({
+      status: "consumer-status",
+    });
   });
 });

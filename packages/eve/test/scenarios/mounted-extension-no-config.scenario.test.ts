@@ -62,6 +62,8 @@ describe("mounted extension without config", () => {
 
     const tool = graph.root.agent.tools.find((entry) => entry.name === "widget__widget_ping");
     expect(tool).toBeDefined();
-    await expect(tool?.execute?.({})).resolves.toEqual({ token: "widget-ok" });
+    await expect(tool?.execute?.({}, { messages: [], toolCallId: "call_1" })).resolves.toEqual({
+      token: "widget-ok",
+    });
   });
 });

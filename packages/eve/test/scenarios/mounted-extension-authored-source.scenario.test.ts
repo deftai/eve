@@ -69,6 +69,8 @@ describe("mounted extension via authored-source loader", () => {
 
     const tool = graph.root.agent.tools.find((entry) => entry.name === "crm__crm_echo");
     expect(tool).toBeDefined();
-    await expect(tool?.execute?.({})).resolves.toEqual({ apiKey: "sk-authored" });
+    await expect(tool?.execute?.({}, { messages: [], toolCallId: "call_1" })).resolves.toEqual({
+      apiKey: "sk-authored",
+    });
   });
 });
