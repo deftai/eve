@@ -46,6 +46,8 @@ export type CreateRuntime = (config: {
  * Input for building a harness step for one resolved runtime node.
  */
 export interface CreateExecutionNodeStepInput {
+  /** Cancellation signal forwarded to the tool-loop harness. */
+  readonly abortSignal?: AbortSignal;
   /**
    * Session-level capabilities propagated from the runtime. The
    * harness passes this through to `buildToolSet` so `ask_question`
@@ -72,8 +74,10 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
   const resolveModel = createRuntimeModelResolver(input.modelResolutionScope);
   const tools = createNodeHarnessTools({ node: input.node });
   return createToolLoopHarness({
+    abortSignal: input.abortSignal,
     capabilities: input.capabilities,
     workflow: input.node.agent.workflowEnabled === true,
+    workflowMaxSubagents: input.node.agent.config?.limits?.maxSubagents,
     handleEvent: input.handleEvent,
     mode: input.mode,
     onCompaction: preserveFrameworkStateOnCompaction,

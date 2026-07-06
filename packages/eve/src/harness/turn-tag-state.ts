@@ -14,16 +14,26 @@
  * `turnId` keys the turn totals so a fresh turn starts at zero without relying
  * on a separate "reset" code path. Session totals stay in the same state record
  * and keep accumulating until the durable session ends.
+ *
+ * `TokenUsageTotals` carries `costUsd`/`sawCost` alongside the token counts
+ * for the `$eve.*` dashboard tags and session limits — fields the
+ * cross-cutting {@link TokenUsage} contract (subagent results, callback
+ * bodies, usage spans) does not carry. {@link toUsage} projects a total down
+ * to that shared shape at the one site (the driver's `done` action) where a
+ * session total crosses into it.
  */
 import type { HarnessSession, SessionStateMap } from "#harness/types.js";
+import type { TokenUsage } from "#shared/token-usage.js";
 
 const HARNESS_TURN_USAGE_STATE_KEY = "eve.harness.turnUsage";
 
 export interface TokenUsageTotals {
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  readonly costUsd: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
+  readonly sawCost: boolean;
 }
 
 export type TokenUsageDelta = Partial<TokenUsageTotals>;
@@ -43,8 +53,10 @@ export interface TurnUsageState extends TokenUsageTotals {
 const ZERO_TOKEN_USAGE: TokenUsageTotals = {
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
+  costUsd: 0,
   inputTokens: 0,
   outputTokens: 0,
+  sawCost: false,
 };
 
 /** Reads the stored per-turn token state, or `undefined` when absent. */
@@ -66,6 +78,16 @@ export type SessionTokenLimitViolation =
 
 export function getSessionTokenUsage(session: Pick<HarnessSession, "state">): TokenUsageTotals {
   return getTurnUsageState(session.state)?.session ?? ZERO_TOKEN_USAGE;
+}
+
+/** Projects a {@link TokenUsageTotals} down to the cross-cutting {@link TokenUsage} shape. */
+export function toUsage(totals: TokenUsageTotals): TokenUsage {
+  return {
+    cacheReadTokens: totals.cacheReadTokens,
+    cacheWriteTokens: totals.cacheWriteTokens,
+    inputTokens: totals.inputTokens,
+    outputTokens: totals.outputTokens,
+  };
 }
 
 export function getSessionTokenLimitViolation(
@@ -131,8 +153,10 @@ function addTokenUsage(base: TokenUsageTotals, delta: TokenUsageTotals): TokenUs
   return {
     cacheReadTokens: base.cacheReadTokens + delta.cacheReadTokens,
     cacheWriteTokens: base.cacheWriteTokens + delta.cacheWriteTokens,
+    costUsd: base.costUsd + delta.costUsd,
     inputTokens: base.inputTokens + delta.inputTokens,
     outputTokens: base.outputTokens + delta.outputTokens,
+    sawCost: base.sawCost || delta.sawCost,
   };
 }
 
@@ -146,7 +170,9 @@ function toTokenUsageDelta(usage: TokenUsageDelta | undefined): TokenUsageTotals
   return {
     cacheReadTokens: usage.cacheReadTokens ?? 0,
     cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+    costUsd: usage.costUsd ?? 0,
     inputTokens,
     outputTokens,
+    sawCost: usage.costUsd !== undefined,
   };
 }

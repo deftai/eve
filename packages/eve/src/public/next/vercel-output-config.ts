@@ -99,7 +99,7 @@ async function resolveVercelOutputConfigLocation(nextRoot: string): Promise<{
   }
 
   return {
-    canWriteGeneratedOutput: false,
+    canWriteGeneratedOutput: Boolean(process.env.VERCEL),
     outputConfigPath: join(nextRoot, VERCEL_OUTPUT_CONFIG_FILE_NAME),
     projectRoot,
   };

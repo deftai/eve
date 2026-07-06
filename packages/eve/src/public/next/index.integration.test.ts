@@ -33,7 +33,24 @@ describe("withEve Vercel config", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not create Build Output config when no Vercel project is detected", async () => {
+  it("does not create Build Output config outside Vercel when no Vercel project is detected", async () => {
+    const appRoot = await createTempAppRoot();
+    process.chdir(appRoot);
+    vi.stubEnv("NODE_ENV", "production");
+
+    const config = await resolveConfig(withEve<TestConfig>({}));
+    const rewrites = await config.rewrites?.();
+
+    await expect(
+      readFile(join(appRoot, ".vercel", "output", "config.json"), "utf8"),
+    ).rejects.toThrow();
+    expect(getBeforeFiles(rewrites)).toContainEqual({
+      destination: "http://127.0.0.1:4274/eve/v1/:path+",
+      source: "/eve/v1/:path+",
+    });
+  });
+
+  it("writes Build Output config in Vercel even when no linked project is detected", async () => {
     const appRoot = await createTempAppRoot();
     process.chdir(appRoot);
     vi.stubEnv("NODE_ENV", "production");
@@ -42,10 +59,28 @@ describe("withEve Vercel config", () => {
 
     const config = await resolveConfig(withEve<TestConfig>({}));
     const rewrites = await config.rewrites?.();
+    const outputConfig = await readJsonFile(join(appRoot, ".vercel", "output", "config.json"));
 
-    await expect(
-      readFile(join(appRoot, ".vercel", "output", "config.json"), "utf8"),
-    ).rejects.toThrow();
+    expect(outputConfig).toEqual({
+      routes: [
+        {
+          destination: {
+            service: "eve",
+            type: "service",
+          },
+          src: "^/eve/v1/(.*)$",
+        },
+      ],
+      services: {
+        eve: {
+          buildCommand: "eve build",
+          entrypoint: "package.json",
+          framework: "eve",
+          root: ".",
+        },
+      },
+      version: 3,
+    });
     expect(rewrites).toBeUndefined();
   });
 
