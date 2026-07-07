@@ -58,6 +58,10 @@ export class InMemoryDurabilityInbox<T> implements DurabilityInbox<T> {
   iterate(): AsyncIterator<T> {
     return this[Symbol.asyncIterator]();
   }
+
+  async dispose(): Promise<void> {
+    // Process-local inboxes need no teardown.
+  }
 }
 
 function createHookConflictError(

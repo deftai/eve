@@ -12,6 +12,7 @@ export type DurabilityInboxPayload = unknown;
 export interface DurabilityInbox<T = DurabilityInboxPayload> {
   readonly token: string;
   claim(ownerSessionId: string): Promise<void>;
+  dispose(): Promise<void>;
   getConflict(): Promise<{ readonly runId: string } | null>;
   resume(payload: T): Promise<void>;
   iterate(): AsyncIterator<T>;
