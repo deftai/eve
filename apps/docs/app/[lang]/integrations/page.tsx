@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { galleryIntegrations } from "@/lib/integrations/data";
 import { translations } from "@/geistdocs";
 import { Gallery } from "./components/gallery";
@@ -29,9 +28,7 @@ const IntegrationsPage = () => (
         connections alongside a directory aggregated from public registries.
       </p>
     </section>
-    <Suspense fallback={null}>
-      <Gallery integrations={galleryIntegrations} />
-    </Suspense>
+    <Gallery integrations={galleryIntegrations} />
   </main>
 );
 

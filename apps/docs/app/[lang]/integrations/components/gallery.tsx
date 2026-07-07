@@ -3,7 +3,6 @@
 import { Input } from "@vercel/geistdocs/components/input";
 import { InputGroup, InputGroupAddon } from "@vercel/geistdocs/components/input-group";
 import { SearchIcon } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { GalleryIntegration } from "@/lib/integrations/data";
 import { cn } from "@/lib/utils";
@@ -49,12 +48,21 @@ const syncUrl = (query: string, filter: Filter) => {
 };
 
 export const Gallery = ({ integrations }: GalleryProps) => {
-  const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("filter");
-  const [filter, setFilter] = useState<Filter>(isFilter(initialFilter) ? initialFilter : "all");
-  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+
+  // URL state is applied after hydration (not via useSearchParams) so the
+  // gallery stays in the statically prerendered HTML — a Suspense boundary
+  // here would blank the list on every first paint.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialQuery = params.get("q");
+    if (initialQuery) setQuery(initialQuery);
+    const initialFilter = params.get("filter");
+    if (isFilter(initialFilter)) setFilter(initialFilter);
+  }, []);
 
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase();
