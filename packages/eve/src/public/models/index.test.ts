@@ -4,19 +4,19 @@ import { experimental_codex } from "./index.js";
 
 describe("experimental_codex", () => {
   it("creates a Codex-served model from a bare OpenAI slug", () => {
-    const model = experimental_codex("gpt-5.5-codex");
+    const model = experimental_codex("gpt-5.5");
 
     expect(typeof model).toBe("object");
     if (typeof model === "string") throw new Error("expected a model instance");
-    expect(model.modelId).toBe("gpt-5.5-codex");
+    expect(model.modelId).toBe("gpt-5.5");
     expect(model.provider).toContain("codex");
   });
 
   it("strips an openai/ provider prefix", () => {
-    const model = experimental_codex("openai/gpt-5.5-codex");
+    const model = experimental_codex("openai/gpt-5.5");
 
     if (typeof model === "string") throw new Error("expected a model instance");
-    expect(model.modelId).toBe("gpt-5.5-codex");
+    expect(model.modelId).toBe("gpt-5.5");
   });
 
   it("rejects a non-OpenAI provider-qualified id", () => {

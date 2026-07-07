@@ -7,7 +7,7 @@ const OPENAI_PROVIDER_PREFIX = "openai/";
  * Creates a language model served through the local Codex login
  * (`codex login`), billed to the ChatGPT subscription instead of an API key.
  *
- * Accepts a bare OpenAI model slug (`"gpt-5.5-codex"`) or an
+ * Accepts a bare OpenAI model slug (`"gpt-5.5"`) or an
  * `openai/`-prefixed id; the Codex backend serves OpenAI models only, so any
  * other provider-qualified id is rejected. Model availability is enforced by
  * the Codex backend per account at call time, not at compile time.
@@ -22,7 +22,7 @@ const OPENAI_PROVIDER_PREFIX = "openai/";
  *   model:
  *     process.env.NODE_ENV === "production"
  *       ? "anthropic/claude-sonnet-4.6"
- *       : experimental_codex("gpt-5.5-codex"),
+ *       : experimental_codex("gpt-5.5"),
  *   modelContextWindowTokens: 200_000,
  * });
  * ```
@@ -38,7 +38,7 @@ export function experimental_codex(model: string): LanguageModel {
 
   if (slug.length === 0) {
     throw new Error(
-      'Expected experimental_codex "model" to name an OpenAI model, for example "gpt-5.5-codex".',
+      'Expected experimental_codex "model" to name an OpenAI model, for example "gpt-5.5".',
     );
   }
 
