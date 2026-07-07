@@ -498,7 +498,7 @@ function buildGeneratedOpenApi(record: GeneratedOpenApiRecord): Integration {
     `});`,
   ].join("\n");
 
-  return {
+  const integration: Integration = {
     slug: record.slug,
     name: record.name,
     type: "connection",
@@ -547,8 +547,9 @@ function buildGeneratedOpenApi(record: GeneratedOpenApiRecord): Integration {
       },
     ],
     source: "generated",
-    ...(record.popularity !== undefined ? { popularity: record.popularity } : {}),
   };
+  if (record.popularity !== undefined) integration.popularity = record.popularity;
+  return integration;
 }
 
 const generatedMcpAuthLabel: Record<GeneratedMcpRecord["authHint"], string> = {
@@ -595,8 +596,8 @@ const authSnippetLines = (record: GeneratedMcpRecord): string[] => {
   }
   if (record.authHint === "oauth") {
     return [
-      `  // OAuth server: create a Connect client (vercel connect create) and`,
-      `  // pass auth: connect("<connector-uid>"), or supply a bearer token here.`,
+      `  // Connector UID from: vercel connect create ${escapeTsString(record.domain)}`,
+      `  auth: connect("${escapeTsString(record.domain)}/my-agent"),`,
     ];
   }
   if (record.authHint === "headers" && record.authHeaders.length > 0) {
@@ -626,9 +627,13 @@ const authConfigureNote = (record: GeneratedMcpRecord): string => {
 function buildGeneratedMcp(record: GeneratedMcpRecord): Integration {
   const description = record.tagline || `Remote MCP server for ${record.name}.`;
   const connectionFile = `agent/connections/${record.slug}.ts`;
+  const imports = [`import { defineMcpClientConnection } from "eve/connections";`];
+  if (record.authHint === "oauth") {
+    imports.unshift(`import { connect } from "@vercel/connect/eve";`);
+  }
   const snippet = [
     `// ${connectionFile}`,
-    `import { defineMcpClientConnection } from "eve/connections";`,
+    ...imports,
     ``,
     `export default defineMcpClientConnection({`,
     `  url: "${escapeTsString(record.url)}",`,
@@ -864,19 +869,20 @@ export type GalleryIntegration = Pick<
   "slug" | "name" | "type" | "tagline" | "logo" | "logoDomain" | "keywords" | "source" | "surfaces"
 >;
 
-export const galleryIntegrations: GalleryIntegration[] = integrations.map(
-  ({ slug, name, type, tagline, logo, logoDomain, keywords, source, surfaces }) => ({
-    slug,
-    name,
-    type,
-    tagline,
-    logo,
-    ...(logoDomain !== undefined ? { logoDomain } : {}),
-    ...(keywords !== undefined ? { keywords } : {}),
-    ...(source !== undefined ? { source } : {}),
-    ...(surfaces !== undefined ? { surfaces } : {}),
-  }),
-);
+export const galleryIntegrations: GalleryIntegration[] = integrations.map((integration) => {
+  const item: GalleryIntegration = {
+    slug: integration.slug,
+    name: integration.name,
+    type: integration.type,
+    tagline: integration.tagline,
+    logo: integration.logo,
+  };
+  if (integration.logoDomain !== undefined) item.logoDomain = integration.logoDomain;
+  if (integration.keywords !== undefined) item.keywords = integration.keywords;
+  if (integration.source !== undefined) item.source = integration.source;
+  if (integration.surfaces !== undefined) item.surfaces = integration.surfaces;
+  return item;
+});
 
 export const getIntegration = (slug: string): Integration | undefined =>
   integrations.find((integration) => integration.slug === slug);

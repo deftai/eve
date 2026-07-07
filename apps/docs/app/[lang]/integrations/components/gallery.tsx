@@ -3,15 +3,10 @@
 import { Input } from "@vercel/geistdocs/components/input";
 import { InputGroup, InputGroupAddon } from "@vercel/geistdocs/components/input-group";
 import { SearchIcon } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  type GalleryIntegration,
-  protocolBadgeClassName,
-  protocolLabel,
-} from "@/lib/integrations/data";
+import type { GalleryIntegration } from "@/lib/integrations/data";
 import { cn } from "@/lib/utils";
-import { IntegrationLogo } from "./integration-logo";
+import { IntegrationCard } from "./integration-card";
 
 type Filter = "all" | "channel" | "mcp" | "openapi";
 
@@ -32,69 +27,7 @@ interface GalleryProps {
   integrations: GalleryIntegration[];
 }
 
-const providerLabel = (integration: GalleryIntegration): string | null => {
-  if (integration.logoDomain) {
-    return integration.logoDomain;
-  }
-  const endpoint = integration.surfaces?.[0]?.endpointValue;
-  if (!endpoint) return null;
-  try {
-    return new URL(endpoint).hostname;
-  } catch {
-    return null;
-  }
-};
-
-const IntegrationRow = ({ integration }: { integration: GalleryIntegration }) => {
-  const provider = providerLabel(integration);
-  const surfaces = integration.surfaces ?? [];
-  const protocols = [...new Set(surfaces.map((surface) => surface.protocol))];
-  const authLabel = integration.type === "channel" ? null : surfaces[0]?.authLabels[0];
-
-  return (
-    <Link
-      className="grid min-w-0 gap-3 border-t px-4 py-3 transition-colors [contain-intrinsic-size:72px] [content-visibility:auto] first:border-t-0 hover:bg-gray-100/50 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_auto]"
-      href={`/integrations/${integration.slug}`}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-gray-1000">
-          <IntegrationLogo className="size-4" integration={integration} size={16} />
-        </span>
-        <div className="min-w-0">
-          <p className="truncate font-medium text-gray-1000 text-sm">{integration.name}</p>
-          {provider ? <p className="truncate text-gray-800 text-xs">{provider}</p> : null}
-        </div>
-      </div>
-      <p className="min-w-0 overflow-hidden text-gray-900 text-sm leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-        {integration.tagline}
-      </p>
-      <div className="flex flex-wrap items-start gap-1 sm:justify-end">
-        {integration.source !== "generated" ? (
-          <span className="rounded-full border bg-background px-2 py-0.5 font-medium text-gray-1000 text-xs">
-            Curated
-          </span>
-        ) : null}
-        {integration.type === "channel" ? (
-          <span className="rounded-full border px-2 py-0.5 text-gray-900 text-xs">Channel</span>
-        ) : (
-          protocols.map((protocol) => (
-            <span
-              className={`rounded-full px-2 py-0.5 font-medium text-xs ${protocolBadgeClassName[protocol]}`}
-              key={protocol}
-            >
-              {protocolLabel[protocol]}
-            </span>
-          ))
-        )}
-        {authLabel ? (
-          <span className="rounded-full border px-2 py-0.5 text-gray-900 text-xs">{authLabel}</span>
-        ) : null}
-      </div>
-    </Link>
-  );
-};
-
-/** Rows rendered initially and added per scroll increment. */
+/** Cards rendered initially and added per scroll increment. */
 const PAGE_SIZE = 120;
 
 export const Gallery = ({ integrations }: GalleryProps) => {
@@ -193,12 +126,12 @@ export const Gallery = ({ integrations }: GalleryProps) => {
       ) : null}
 
       {results.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border bg-background-100">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visibleResults.map((integration) => (
-            <IntegrationRow integration={integration} key={integration.slug} />
+            <IntegrationCard integration={integration} key={integration.slug} />
           ))}
           {visibleResults.length < results.length ? (
-            <div aria-hidden className="h-px" ref={setSentinel} />
+            <div aria-hidden className="col-span-full h-px" ref={setSentinel} />
           ) : null}
         </div>
       ) : (
