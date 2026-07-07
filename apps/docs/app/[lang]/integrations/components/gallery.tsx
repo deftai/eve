@@ -11,7 +11,6 @@ import {
   protocolLabel,
 } from "@/lib/integrations/data";
 import { cn } from "@/lib/utils";
-import { IntegrationCard } from "./integration-card";
 import { IntegrationLogo } from "./integration-logo";
 
 type Filter = "all" | "channel" | "mcp" | "openapi";
@@ -37,10 +36,6 @@ const providerLabel = (integration: GalleryIntegration): string | null => {
   if (integration.logoDomain) {
     return integration.logoDomain;
   }
-  if (integration.source === "generated") {
-    return integration.keywords?.[0] ?? null;
-  }
-
   const endpoint = integration.surfaces?.[0]?.endpointValue;
   if (!endpoint) return null;
   try {
@@ -50,11 +45,11 @@ const providerLabel = (integration: GalleryIntegration): string | null => {
   }
 };
 
-const GeneratedIntegrationRow = ({ integration }: { integration: GalleryIntegration }) => {
+const IntegrationRow = ({ integration }: { integration: GalleryIntegration }) => {
   const provider = providerLabel(integration);
-  const surface = integration.surfaces?.[0];
-  const protocol = surface?.protocol ?? "openapi";
-  const authLabel = surface?.authLabels[0] ?? "Review auth";
+  const surfaces = integration.surfaces ?? [];
+  const protocols = [...new Set(surfaces.map((surface) => surface.protocol))];
+  const authLabel = integration.type === "channel" ? null : surfaces[0]?.authLabels[0];
 
   return (
     <Link
@@ -62,7 +57,7 @@ const GeneratedIntegrationRow = ({ integration }: { integration: GalleryIntegrat
       href={`/integrations/${integration.slug}`}
     >
       <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-gray-1000">
           <IntegrationLogo className="size-4" integration={integration} size={16} />
         </span>
         <div className="min-w-0">
@@ -74,12 +69,26 @@ const GeneratedIntegrationRow = ({ integration }: { integration: GalleryIntegrat
         {integration.tagline}
       </p>
       <div className="flex flex-wrap items-start gap-1 sm:justify-end">
-        <span
-          className={`rounded-full px-2 py-0.5 font-medium text-xs ${protocolBadgeClassName[protocol]}`}
-        >
-          {protocolLabel[protocol]}
-        </span>
-        <span className="rounded-full border px-2 py-0.5 text-gray-900 text-xs">{authLabel}</span>
+        {integration.source !== "generated" ? (
+          <span className="rounded-full border bg-background px-2 py-0.5 font-medium text-gray-1000 text-xs">
+            Curated
+          </span>
+        ) : null}
+        {integration.type === "channel" ? (
+          <span className="rounded-full border px-2 py-0.5 text-gray-900 text-xs">Channel</span>
+        ) : (
+          protocols.map((protocol) => (
+            <span
+              className={`rounded-full px-2 py-0.5 font-medium text-xs ${protocolBadgeClassName[protocol]}`}
+              key={protocol}
+            >
+              {protocolLabel[protocol]}
+            </span>
+          ))
+        )}
+        {authLabel ? (
+          <span className="rounded-full border px-2 py-0.5 text-gray-900 text-xs">{authLabel}</span>
+        ) : null}
       </div>
     </Link>
   );
@@ -118,8 +127,7 @@ export const Gallery = ({ integrations }: GalleryProps) => {
       return haystack.includes(normalized);
     });
   }, [integrations, filter, query]);
-  const curatedResults = results.filter((integration) => integration.source !== "generated");
-  const generatedResults = results.filter((integration) => integration.source === "generated");
+  const generatedCount = results.filter((integration) => integration.source === "generated").length;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
@@ -159,59 +167,18 @@ export const Gallery = ({ integrations }: GalleryProps) => {
         {FILTER_DESCRIPTIONS[filter] ? <p>{FILTER_DESCRIPTIONS[filter]}</p> : null}
         <p>
           Showing all {results.length.toLocaleString()} integrations
-          {generatedResults.length > 0
-            ? `, including ${generatedResults.length.toLocaleString()} MCP servers and OpenAPI specs from public registries`
+          {generatedCount > 0
+            ? `, including ${generatedCount.toLocaleString()} MCP servers and OpenAPI specs from public registries`
             : ""}
           .
         </p>
       </div>
 
       {results.length > 0 ? (
-        <div className="flex min-w-0 flex-col gap-10">
-          {curatedResults.length > 0 ? (
-            <section className="flex min-w-0 flex-col gap-4">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <h2 className="font-semibold text-gray-1000 text-lg tracking-tight">
-                    Curated integrations
-                  </h2>
-                  <p className="text-gray-800 text-sm">
-                    Reviewed channels and MCP/OpenAPI connections.
-                  </p>
-                </div>
-                <span className="text-gray-800 text-sm">
-                  {curatedResults.length.toLocaleString()}
-                </span>
-              </div>
-              <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {curatedResults.map((integration) => (
-                  <IntegrationCard integration={integration} key={integration.slug} />
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {generatedResults.length > 0 ? (
-            <section className="flex min-w-0 flex-col gap-4">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <h2 className="font-semibold text-gray-1000 text-lg tracking-tight">Directory</h2>
-                  <p className="text-gray-800 text-sm">
-                    Remote MCP servers and OpenAPI specs from public registries. Review auth before
-                    use.
-                  </p>
-                </div>
-                <span className="text-gray-800 text-sm">
-                  {generatedResults.length.toLocaleString()}
-                </span>
-              </div>
-              <div className="overflow-hidden rounded-lg border bg-background-100">
-                {generatedResults.map((integration) => (
-                  <GeneratedIntegrationRow integration={integration} key={integration.slug} />
-                ))}
-              </div>
-            </section>
-          ) : null}
+        <div className="overflow-hidden rounded-lg border bg-background-100">
+          {results.map((integration) => (
+            <IntegrationRow integration={integration} key={integration.slug} />
+          ))}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed py-16 text-center">

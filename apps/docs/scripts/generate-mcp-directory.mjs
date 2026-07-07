@@ -23,8 +23,14 @@ const OUTPUT_PATH = path.join(process.cwd(), "lib", "integrations", "generated-m
 
 const limit = Number.parseInt(process.env.EVE_GENERATED_MCP_LIMIT ?? "", 10);
 
-/** Ephemeral tunnels and dev hosts; endpoints on these are dead on arrival. */
+/**
+ * Ephemeral tunnels and dev hosts (dead on arrival), plus Anthropic-gated
+ * proxies (mcp.claude.com endpoints only accept Claude clients).
+ */
 const JUNK_DOMAIN_SUFFIXES = [
+  ".claude.com",
+  ".claude.ai",
+  ".anthropic.com",
   ".trycloudflare.com",
   ".ngrok.io",
   ".ngrok.app",
@@ -40,6 +46,77 @@ const JUNK_DOMAIN_SUFFIXES = [
  * entries under one domain. Anthropic-directory records are curated and exempt.
  */
 const MAX_RECORDS_PER_DOMAIN = 10;
+
+/**
+ * Hosting platforms where the registrable domain belongs to the platform, not
+ * the service — using it for favicons would brand every entry with the
+ * platform's logo. Keep the full host for these.
+ */
+const PLATFORM_SUFFIXES = [
+  ".vercel.app",
+  ".workers.dev",
+  ".pages.dev",
+  ".onrender.com",
+  ".herokuapp.com",
+  ".netlify.app",
+  ".railway.app",
+  ".up.railway.app",
+  ".fly.dev",
+  ".azurewebsites.net",
+  ".amazonaws.com",
+  ".cloudfront.net",
+  ".github.io",
+  ".alpic.live",
+  ".fastmcp.app",
+];
+
+/** API-only domains that serve no favicon; remap to the brand domain. */
+const LOGO_DOMAIN_REMAP = new Map([
+  ["googleapis.com", "google.com"],
+  ["adobe.io", "adobe.com"],
+  ["atlassian.net", "atlassian.com"],
+  ["todoist.net", "todoist.com"],
+]);
+
+/** Country-code second-level suffixes where eTLD+1 needs three labels. */
+const SECOND_LEVEL_TLDS = new Set([
+  "co.uk",
+  "org.uk",
+  "ac.uk",
+  "gov.uk",
+  "com.au",
+  "net.au",
+  "org.au",
+  "co.jp",
+  "or.jp",
+  "ne.jp",
+  "co.in",
+  "co.nz",
+  "co.kr",
+  "co.za",
+  "com.br",
+  "com.mx",
+  "com.tr",
+  "com.cn",
+  "com.sg",
+  "com.hk",
+  "com.tw",
+]);
+
+/**
+ * Approximate registrable domain (eTLD+1), used for favicon lookups and the
+ * provider label — subdomains like `mcp.canva.com` rarely serve a favicon,
+ * while `canva.com` does. Not a full Public Suffix List; a wrong guess only
+ * costs a fallback icon.
+ */
+const rootDomain = (host) => {
+  if (PLATFORM_SUFFIXES.some((suffix) => host.endsWith(suffix))) return host;
+  const parts = host.split(".");
+  if (parts.length <= 2) return LOGO_DOMAIN_REMAP.get(host) ?? host;
+  const labels = SECOND_LEVEL_TLDS.has(parts.slice(-2).join(".")) ? 3 : 2;
+  const root = parts.slice(-labels).join(".");
+  return LOGO_DOMAIN_REMAP.get(root) ?? root;
+};
 
 const cleanText = (value) =>
   String(value ?? "")
@@ -119,6 +196,7 @@ const fetchRegistryServers = async () => {
         docsHref: server.websiteUrl ?? server.repository?.url,
         categories: [],
         authHint: "unknown",
+        popularity: 0,
         feed: "mcp-registry",
         registryName: server.name,
       });
@@ -148,6 +226,10 @@ const fetchDirectoryServers = async () => {
         docsHref: server.documentation ?? server.author?.url,
         categories: (server.categories ?? []).map(cleanText).filter(Boolean),
         authHint: server.remote?.is_authless === true ? "none" : "required",
+        popularity:
+          typeof server.popularity_score === "number" && server.popularity_score > 0
+            ? Math.round(server.popularity_score)
+            : 0,
         feed: "anthropic-directory",
       });
     }
@@ -175,6 +257,7 @@ for (const record of [...directoryServers, ...registryServers]) {
   existing.docsHref ||= record.docsHref;
   if (existing.categories.length === 0) existing.categories = record.categories;
   if (existing.authHint === "unknown") existing.authHint = record.authHint;
+  existing.popularity = Math.max(existing.popularity, record.popularity);
 }
 
 const perDomainCount = new Map();
@@ -187,8 +270,9 @@ const capped = [...merged.values()]
   })
   .filter((record) => {
     if (record.feeds.includes("anthropic-directory")) return true;
-    const count = perDomainCount.get(record.endpoint.domain) ?? 0;
-    perDomainCount.set(record.endpoint.domain, count + 1);
+    const root = rootDomain(record.endpoint.domain);
+    const count = perDomainCount.get(root) ?? 0;
+    perDomainCount.set(root, count + 1);
     return count < MAX_RECORDS_PER_DOMAIN;
   });
 
@@ -196,15 +280,18 @@ const records = capped
   .map((record) => {
     const { endpoint } = record;
     const name = truncate(record.name, 72);
+    const root = rootDomain(endpoint.domain);
     return {
       slug: `mcp-directory-${slugify(name) || slugify(endpoint.domain) || "server"}-${hash(endpoint.canonical)}`,
       name,
-      provider: endpoint.domain,
+      provider: root,
       domain: endpoint.domain,
+      rootDomain: root,
       tagline: truncate(record.tagline || `Remote MCP server for ${name}.`, 180),
       url: endpoint.url,
       transport: record.transport,
       authHint: record.authHint,
+      popularity: record.popularity,
       docsHref: record.docsHref ?? `https://${endpoint.domain}`,
       categories: record.categories,
       feeds: record.feeds,

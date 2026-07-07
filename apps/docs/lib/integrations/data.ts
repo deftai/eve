@@ -98,6 +98,8 @@ export interface Integration {
   connection?: ConnectionSpec;
   surfaces?: ConnectionSurface[];
   source?: "curated" | "generated";
+  /** Registry popularity score; orders the generated directory, most-known first. */
+  popularity?: number;
 }
 
 interface GeneratedMcpRecord {
@@ -105,10 +107,12 @@ interface GeneratedMcpRecord {
   name: string;
   provider: string;
   domain: string;
+  rootDomain: string;
   tagline: string;
   url: string;
   transport: "http" | "sse";
   authHint: "none" | "required" | "unknown";
+  popularity: number;
   docsHref: string;
   categories: string[];
   feeds: string[];
@@ -568,7 +572,7 @@ function buildGeneratedMcp(record: GeneratedMcpRecord): Integration {
     tagline: description,
     protocols: ["mcp"],
     logo: "web",
-    logoDomain: record.domain,
+    logoDomain: record.rootDomain,
     docsHref: record.docsHref,
     keywords: [...record.keywords, record.provider, record.source].filter(
       (value): value is string => typeof value === "string" && value.length > 0,
@@ -606,6 +610,7 @@ function buildGeneratedMcp(record: GeneratedMcpRecord): Integration {
       },
     ],
     source: "generated",
+    popularity: record.popularity,
   };
 }
 
@@ -759,11 +764,20 @@ export const authModeLabel: Record<AuthMode, string> = {
   basic: "Basic auth",
 };
 
+/** Generated entries interleave MCP and OpenAPI, most-known services first. */
+const generatedIntegrations: Integration[] = [
+  ...generatedMcpIntegrations,
+  ...generatedOpenApiIntegrations,
+].sort(
+  (a, b) =>
+    (b.popularity ?? 0) - (a.popularity ?? 0) ||
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+);
+
 export const integrations: Integration[] = [
   ...channelIntegrations,
   ...connectionIntegrations,
-  ...generatedMcpIntegrations,
-  ...generatedOpenApiIntegrations,
+  ...generatedIntegrations,
 ];
 
 /**
