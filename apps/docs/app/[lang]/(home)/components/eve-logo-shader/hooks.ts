@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Owns browser theme subscriptions for the Eve hero.
 // INVARIANT: resolution order matches the old index.tsx hooks exactly.
@@ -14,9 +14,11 @@ export function getCurrentTheme(prefersDarkTheme: boolean): "light" | "dark" {
 
 export function useResolvedTheme(prefersDarkTheme: boolean) {
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const prefersDarkThemeRef = useRef(prefersDarkTheme);
+  prefersDarkThemeRef.current = prefersDarkTheme;
 
   useEffect(() => {
-    const syncTheme = () => setTheme(getCurrentTheme(prefersDarkTheme));
+    const syncTheme = () => setTheme(getCurrentTheme(prefersDarkThemeRef.current));
     const observer = new MutationObserver(syncTheme);
 
     syncTheme();
@@ -27,6 +29,10 @@ export function useResolvedTheme(prefersDarkTheme: boolean) {
     return () => {
       observer.disconnect();
     };
+  }, []);
+
+  useEffect(() => {
+    setTheme(getCurrentTheme(prefersDarkTheme));
   }, [prefersDarkTheme]);
 
   return theme;
