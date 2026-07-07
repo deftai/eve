@@ -274,8 +274,16 @@ for (const record of [...directoryServers, ...registryServers]) {
   existing.popularity = Math.max(existing.popularity, record.popularity);
 }
 
+// Hosted-platform subdomains in the open registry are overwhelmingly demo and
+// spam servers; keep them only when the vetted Anthropic directory lists them.
+const trusted = [...merged.values()].filter(
+  (record) =>
+    record.feeds.includes("anthropic-directory") ||
+    !PLATFORM_SUFFIXES.some((suffix) => record.endpoint.domain.endsWith(suffix)),
+);
+
 const perDomainCount = new Map();
-const capped = [...merged.values()]
+const capped = trusted
   .sort((a, b) => {
     const aCurated = a.feeds.includes("anthropic-directory") ? 0 : 1;
     const bCurated = b.feeds.includes("anthropic-directory") ? 0 : 1;

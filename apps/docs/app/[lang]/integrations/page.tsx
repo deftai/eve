@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { galleryIntegrations, integrations } from "@/lib/integrations/data";
+import { Suspense } from "react";
+import { galleryIntegrations } from "@/lib/integrations/data";
 import { translations } from "@/geistdocs";
 import { Gallery } from "./components/gallery";
 
@@ -14,11 +15,6 @@ export const metadata: Metadata = {
 
 export const generateStaticParams = () => Object.keys(translations).map((lang) => ({ lang }));
 
-const integrationCount = integrations.length.toLocaleString();
-const generatedCount = integrations
-  .filter((integration) => integration.source === "generated")
-  .length.toLocaleString();
-
 const IntegrationsPage = () => (
   <main
     className="mx-auto w-screen overflow-hidden px-4 pb-32 sm:px-6"
@@ -29,11 +25,13 @@ const IntegrationsPage = () => (
         Integrations
       </h1>
       <p className="mt-5 w-full min-w-0 max-w-full text-gray-900 text-lg sm:max-w-2xl">
-        Browse {integrationCount} integration options across Channels, MCP, and OpenAPI, including{" "}
-        {generatedCount} remote MCP servers and OpenAPI specs from public registries.
+        Channels your agent talks through, plus MCP servers and OpenAPI specs it can call — curated
+        connections alongside a directory aggregated from public registries.
       </p>
     </section>
-    <Gallery integrations={galleryIntegrations} />
+    <Suspense fallback={null}>
+      <Gallery integrations={galleryIntegrations} />
+    </Suspense>
   </main>
 );
 

@@ -3,6 +3,7 @@
 import { Input } from "@vercel/geistdocs/components/input";
 import { InputGroup, InputGroupAddon } from "@vercel/geistdocs/components/input-group";
 import { SearchIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { GalleryIntegration } from "@/lib/integrations/data";
 import { cn } from "@/lib/utils";
@@ -30,9 +31,28 @@ interface GalleryProps {
 /** Cards rendered initially and added per scroll increment. */
 const PAGE_SIZE = 120;
 
+const isFilter = (value: string | null): value is Filter =>
+  FILTERS.some((candidate) => candidate.value === value);
+
+/**
+ * Mirrors search and filter state into query params (`?q=…&filter=…`) so the
+ * state survives navigating to a detail page and back. `replaceState` keeps
+ * typing from flooding the history stack.
+ */
+const syncUrl = (query: string, filter: Filter) => {
+  const url = new URL(window.location.href);
+  if (query) url.searchParams.set("q", query);
+  else url.searchParams.delete("q");
+  if (filter !== "all") url.searchParams.set("filter", filter);
+  else url.searchParams.delete("filter");
+  window.history.replaceState(null, "", url);
+};
+
 export const Gallery = ({ integrations }: GalleryProps) => {
-  const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const initialFilter = searchParams.get("filter");
+  const [filter, setFilter] = useState<Filter>(isFilter(initialFilter) ? initialFilter : "all");
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
 
@@ -97,6 +117,7 @@ export const Gallery = ({ integrations }: GalleryProps) => {
               onClick={() => {
                 setFilter(value);
                 setVisibleCount(PAGE_SIZE);
+                syncUrl(query, value);
               }}
               type="button"
             >
@@ -114,6 +135,7 @@ export const Gallery = ({ integrations }: GalleryProps) => {
             onChange={(event) => {
               setQuery(event.target.value);
               setVisibleCount(PAGE_SIZE);
+              syncUrl(event.target.value, filter);
             }}
             placeholder="Search integrations"
             value={query}
