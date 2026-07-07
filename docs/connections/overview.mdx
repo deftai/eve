@@ -136,7 +136,7 @@ export default defineMcpClientConnection({
 });
 ```
 
-`"linear/myagent"` is the UID you chose when registering the Connect client. `connect("linear/myagent")` is shorthand for a user-scoped interactive OAuth connection: eve resolves a token for the active user before each tool call, emits `authorization.required` when that user has not authorized yet, and resumes the parked turn after the callback completes.
+`"linear/myagent"` is the UID you chose when registering the Connect client. `connect("linear/myagent")` is shorthand for a user-scoped interactive OAuth connection: eve resolves a token for the active user before each tool call, emits `authorization.required` when that user has not authorized yet, and resumes the parked turn after the callback completes. When the connection is used inside a [subagent](/docs/subagents), the authorization events surface on the root session's channel and the callback resumes the subagent directly.
 
 That means the channel that creates or continues the session must authenticate a real user. For a web app, configure `agent/channels/eve.ts` so your app session maps to `principalType: "user"`; for platform channels, use the built-in channel auth that maps the sender to a user principal. If no authenticated user is attached to the session, the first user-scoped connection call fails with `reason: "principal_required"`.
 

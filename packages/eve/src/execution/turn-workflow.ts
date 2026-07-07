@@ -20,6 +20,7 @@ import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { TurnExecutionCursor } from "#execution/turn-execution-cursor.js";
 import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
+import { runProxyAuthorizationEventStep } from "#execution/subagent-auth-proxy.js";
 import { runProxyInputRequestStep, turnStep } from "#execution/workflow-steps.js";
 import { resolveRuntimeActionResultsForKeys } from "#harness/runtime-actions.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
@@ -205,6 +206,20 @@ async function waitForRuntimeActionResults(input: {
 
     if (value.kind === "subagent-input-request") {
       const proxyResult = await runProxyInputRequestStep({
+        hookPayload: value,
+        parentWritable: input.cursor.parentWritable,
+        serializedContext: input.cursor.serializedContext,
+        sessionState: input.cursor.sessionState,
+      });
+      await input.cursor.adopt(proxyResult);
+      continue;
+    }
+
+    // Authorization events only render on the parent channel: the child's
+    // webhook URL targets its own auth hook, so the callback resumes the
+    // child directly and no delivery request is needed here.
+    if (value.kind === "subagent-authorization-event") {
+      const proxyResult = await runProxyAuthorizationEventStep({
         hookPayload: value,
         parentWritable: input.cursor.parentWritable,
         serializedContext: input.cursor.serializedContext,

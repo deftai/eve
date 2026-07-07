@@ -10,6 +10,7 @@ import {
   type TurnWorkflowInput,
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
+import { runProxyAuthorizationEventStep } from "#execution/subagent-auth-proxy.js";
 import { runProxyInputRequestStep, turnStep } from "#execution/workflow-steps.js";
 
 const resumeHookMock = vi.fn();
@@ -26,6 +27,10 @@ vi.mock("#compiled/@workflow/core/runtime.js", () => ({
 
 vi.mock("./route-child-delivery.js", () => ({
   routeDeliverToChildren: vi.fn(),
+}));
+
+vi.mock("./subagent-auth-proxy.js", () => ({
+  runProxyAuthorizationEventStep: vi.fn(),
 }));
 
 vi.mock("./workflow-steps.js", () => ({
@@ -528,6 +533,95 @@ describe("turnWorkflow", () => {
         sessionState: proxyState,
       }),
     );
+  });
+
+  it("proxies child authorization events without requesting a delivery", async () => {
+    const pendingState = createSessionState();
+    const authProxyState = createSessionState();
+    const completedState = createSessionState();
+    const authorizationEvent = {
+      callId: "call-1",
+      childSessionId: "child-session",
+      event: {
+        type: "authorization.required" as const,
+        data: {
+          description: "Sign in to Linear",
+          name: "linear",
+          sequence: 3,
+          stepIndex: 1,
+          turnId: "turn_0",
+          webhookUrl: "https://eve.example.com/.eve/connections/linear/child-session:auth",
+        },
+      },
+      kind: "subagent-authorization-event" as const,
+      subagentName: "delegate",
+    };
+    installInbox([
+      authorizationEvent,
+      {
+        kind: "runtime-action-result",
+        results: [
+          {
+            callId: "call-1",
+            kind: "subagent-result",
+            output: "child output",
+            subagentName: "delegate",
+          },
+        ],
+      },
+    ]);
+    vi.mocked(dispatchRuntimeActionsStep).mockResolvedValue({
+      results: [],
+      sessionState: pendingState,
+    });
+    vi.mocked(runProxyAuthorizationEventStep).mockResolvedValue({
+      serializedContext: { state: "auth-proxied" },
+      sessionState: authProxyState,
+    });
+    vi.mocked(turnStep)
+      .mockResolvedValueOnce({
+        action: "park",
+        hasPendingAuthorization: false,
+        hasPendingInputBatch: false,
+        pendingRuntimeActionKeys: ["subagent-call:delegate:call-1"],
+        serializedContext: { state: "pending" },
+        sessionState: pendingState,
+      })
+      .mockResolvedValueOnce({
+        action: "done",
+        output: "done",
+        serializedContext: { state: "done" },
+        sessionState: completedState,
+      });
+
+    const { input, parentWritable } = createInput({
+      driverCapabilities: { turnInbox: true },
+      mode: "task",
+      sessionState: pendingState,
+    });
+    await turnWorkflow(input);
+
+    expect(runProxyAuthorizationEventStep).toHaveBeenCalledOnce();
+    expect(runProxyAuthorizationEventStep).toHaveBeenCalledWith({
+      hookPayload: authorizationEvent,
+      parentWritable,
+      serializedContext: { state: "pending" },
+      sessionState: pendingState,
+    });
+
+    // The proxied result is adopted, so the resumed turn continues on the
+    // proxy step's session/context.
+    expect(vi.mocked(turnStep).mock.calls[1]?.[0]).toMatchObject({
+      serializedContext: { state: "auth-proxied" },
+      sessionState: authProxyState,
+    });
+
+    // Auth needs no user delivery through the parent's channel — the
+    // authorization callback resumes the child directly.
+    expect(
+      resumeHookMock.mock.calls.filter((call) => call[1]?.kind === "turn-delivery-request"),
+    ).toHaveLength(0);
+    expect(routeDeliverToChildren).not.toHaveBeenCalled();
   });
 
   it("mints a unique delivery request id per wait so a stale forward is not re-accepted", async () => {

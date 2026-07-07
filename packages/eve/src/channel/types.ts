@@ -1,6 +1,10 @@
 import type { UserContent } from "ai";
 
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type {
+  AuthorizationCompletedStreamEvent,
+  AuthorizationRequiredStreamEvent,
+  HandleMessageStreamEvent,
+} from "#protocol/message.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
@@ -157,11 +161,30 @@ export interface SubagentInputRequestHookPayload {
 }
 
 /**
+ * Proxy payload sent from a child subagent to its parent when the child
+ * parks on (or completes) an authorization challenge.
+ *
+ * Runtime-internal, like {@link SubagentInputRequestHookPayload}. Carries the
+ * child's stream event verbatim: the embedded `webhookUrl` targets the
+ * child's own auth hook, so the parent only re-renders the event — the
+ * authorization callback resumes the child directly and nothing routes back
+ * down through the parent.
+ */
+export interface SubagentAuthorizationEventHookPayload {
+  readonly callId: string;
+  readonly childSessionId: string;
+  readonly event: AuthorizationCompletedStreamEvent | AuthorizationRequiredStreamEvent;
+  readonly kind: "subagent-authorization-event";
+  readonly subagentName: string;
+}
+
+/**
  * Serializable payload sent through the workflow `resumeHook`.
  */
 export type HookPayload =
   | DeliverHookPayload
   | RuntimeActionResultHookPayload
+  | SubagentAuthorizationEventHookPayload
   | SubagentInputRequestHookPayload;
 
 /**

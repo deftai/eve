@@ -14,6 +14,13 @@ if (SUBAGENT_INPUT_REQUESTED === undefined) {
   throw new Error("SUBAGENT_ADAPTER is missing its input.requested handler.");
 }
 
+const SUBAGENT_AUTH_REQUIRED = SUBAGENT_ADAPTER["authorization.required"];
+const SUBAGENT_AUTH_COMPLETED = SUBAGENT_ADAPTER["authorization.completed"];
+
+if (SUBAGENT_AUTH_REQUIRED === undefined || SUBAGENT_AUTH_COMPLETED === undefined) {
+  throw new Error("SUBAGENT_ADAPTER is missing an authorization event handler.");
+}
+
 const resumeHookMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
@@ -108,6 +115,81 @@ describe("SUBAGENT_ADAPTER input.requested handler", () => {
   });
 });
 
+describe("SUBAGENT_ADAPTER authorization event handlers", () => {
+  it("forwards authorization.required verbatim via resumeHook", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+
+    const data = {
+      authorization: { url: "https://idp.example.com/sign-in", displayName: "Linear" },
+      description: "Sign in to Linear",
+      name: "linear",
+      sequence: 2,
+      stepIndex: 1,
+      turnId: "turn-0",
+      webhookUrl: "https://agent.example.com/.eve/connections/linear/child-session:auth",
+    };
+
+    await SUBAGENT_AUTH_REQUIRED(data, ctx);
+
+    expect(resumeHookMock).toHaveBeenCalledTimes(1);
+    expect(resumeHookMock).toHaveBeenCalledWith("parent-token", {
+      callId: "call-123",
+      childSessionId: "child-session",
+      event: { type: "authorization.required", data },
+      kind: "subagent-authorization-event",
+      subagentName: "linear",
+    });
+  });
+
+  it("forwards authorization.completed verbatim via resumeHook", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+
+    const data = {
+      name: "linear",
+      outcome: "authorized" as const,
+      sequence: 5,
+      stepIndex: 2,
+      turnId: "turn-0",
+    };
+
+    await SUBAGENT_AUTH_COMPLETED(data, ctx);
+
+    expect(resumeHookMock).toHaveBeenCalledTimes(1);
+    expect(resumeHookMock).toHaveBeenCalledWith("parent-token", {
+      callId: "call-123",
+      childSessionId: "child-session",
+      event: { type: "authorization.completed", data },
+      kind: "subagent-authorization-event",
+      subagentName: "linear",
+    });
+  });
+
+  it("skips forwarding when the adapter state is missing a parent continuation token", async () => {
+    resumeHookMock.mockClear();
+    const base = makeContext();
+    const ctx: ChannelAdapterContext = {
+      ctx: base.ctx,
+      state: {},
+      session: base.session,
+    };
+
+    await SUBAGENT_AUTH_REQUIRED(
+      {
+        description: "Sign in to Linear",
+        name: "linear",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-0",
+      },
+      ctx,
+    );
+
+    expect(resumeHookMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("SUBAGENT_ADAPTER forward failure logging", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -157,6 +239,46 @@ describe("SUBAGENT_ADAPTER forward failure logging", () => {
       childContinuationToken: "child-token",
       childSessionId: "child-session",
       errorId: expect.any(String),
+      parentContinuationToken: "parent-token",
+      subagentName: "linear",
+      error: expect.objectContaining({
+        message: expect.stringContaining("parent gone"),
+      }),
+    });
+  });
+
+  it("warn-logs a structured breadcrumb and rethrows when forwarding an authorization event fails", async () => {
+    resumeHookMock.mockClear();
+    resumeHookMock.mockImplementationOnce(async () => {
+      throw new Error("parent gone");
+    });
+
+    const ctx = makeContext();
+
+    await expect(
+      SUBAGENT_AUTH_REQUIRED(
+        {
+          description: "Sign in to Linear",
+          name: "linear",
+          sequence: 0,
+          stepIndex: 1,
+          turnId: "turn-0",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("parent gone");
+
+    const warnCall = warnSpy.mock.calls.find((call: unknown[]) =>
+      String(call[0]).startsWith("[eve:execution.subagent-adapter]"),
+    );
+    expect(warnCall).toBeDefined();
+    const [, warnPayload] = warnCall!;
+    expect(warnPayload).toMatchObject({
+      callId: "call-123",
+      childSessionId: "child-session",
+      errorId: expect.any(String),
+      eventType: "authorization.required",
+      name: "linear",
       parentContinuationToken: "parent-token",
       subagentName: "linear",
       error: expect.objectContaining({
