@@ -16,6 +16,10 @@ const ASCII_MOUSE_LERP_SPEED = 6;
 const PAINT_MOVEMENT_GRACE_MS = 72;
 const CANVAS_FADE_FALLBACK_MS = 800;
 const CANVAS_REVEAL_RENDER_COUNT = 3;
+const MAX_FRAME_DELTA_SECONDS = 0.05;
+export const AGENTS_MAX_FRAME_DELTA_SECONDS = MAX_FRAME_DELTA_SECONDS;
+
+const PROBE_DATASET_WRITE_INTERVAL_MS = 250;
 
 type Renderer = {
   render: (
@@ -26,6 +30,33 @@ type Renderer = {
     imprint?: ImprintRenderOptions,
   ) => void;
 };
+
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+type EveHeroFrameLoopProbe = {
+  frames: number;
+  running: boolean;
+  lastFrameAt: number;
+};
+
+declare global {
+  interface Window {
+    __eveHeroFrameLoop?: EveHeroFrameLoopProbe;
+  }
+}
+
+function getHeroFrameLoopProbe(): EveHeroFrameLoopProbe | undefined {
+  if (IS_PRODUCTION) return undefined;
+  if (typeof window === "undefined") return undefined;
+  if (!window.__eveHeroFrameLoop) {
+    window.__eveHeroFrameLoop = {
+      frames: 0,
+      running: false,
+      lastFrameAt: 0,
+    };
+  }
+  return window.__eveHeroFrameLoop;
+}
 
 export function createDrawLoop({
   state,
@@ -58,11 +89,27 @@ export function createDrawLoop({
 }) {
   let successfulRenderCount = 0;
   let finishCanvasFade: (() => void) | undefined;
+  let running = false;
+  const frameLoopProbe = getHeroFrameLoopProbe();
+  let lastProbeDatasetWrite = 0;
+
+  const updateFrameLoopProbeDataset = (force = false) => {
+    if (!frameLoopProbe) return;
+    const now = performance.now();
+    if (!force && now - lastProbeDatasetWrite < PROBE_DATASET_WRITE_INTERVAL_MS) return;
+    lastProbeDatasetWrite = now;
+    canvas.dataset.heroFrames = String(frameLoopProbe.frames);
+    canvas.dataset.heroRunning = String(frameLoopProbe.running);
+    canvas.dataset.heroLastFrameAt = String(Math.round(frameLoopProbe.lastFrameAt));
+  };
 
   const draw = (frameTime = performance.now()) => {
     if (state.cancelled) return;
 
-    const deltaSeconds = Math.max(0, (frameTime - state.previousFrameTime) / 1000);
+    const deltaSeconds = Math.min(
+      MAX_FRAME_DELTA_SECONDS,
+      Math.max(0, (frameTime - state.previousFrameTime) / 1000),
+    );
     state.previousFrameTime = frameTime;
     if (evePointerInteractionMode(state.isCoarsePointer).autoRotateEnvYaw) {
       state.targetMouseEnvYaw = mobileAutoEnvYaw((frameTime - state.autoRotateStartTime) / 1000);
@@ -176,13 +223,45 @@ export function createDrawLoop({
       finishCanvasFade = onCanvasFullyOpaque(canvas, onCanvasRevealed);
     }
 
+    if (frameLoopProbe) {
+      frameLoopProbe.frames += 1;
+      frameLoopProbe.lastFrameAt = frameTime;
+      updateFrameLoopProbeDataset();
+    }
+
+    if (running) state.animationFrame = requestAnimationFrame(draw);
+  };
+
+  const start = () => {
+    if (running) return;
+    running = true;
+    if (frameLoopProbe) {
+      frameLoopProbe.running = true;
+      updateFrameLoopProbeDataset(true);
+    }
+    const frameTime = performance.now();
+    state.previousFrameTime = frameTime;
+    if (evePointerInteractionMode(state.isCoarsePointer).autoRotateEnvYaw) {
+      state.autoRotateStartTime = frameTime;
+    }
     state.animationFrame = requestAnimationFrame(draw);
   };
 
+  const stop = () => {
+    running = false;
+    cancelAnimationFrame(state.animationFrame);
+    state.animationFrame = 0;
+    if (frameLoopProbe) {
+      frameLoopProbe.running = false;
+      updateFrameLoopProbeDataset(true);
+    }
+  };
+
   return {
-    draw,
+    start,
+    stop,
     dispose() {
-      cancelAnimationFrame(state.animationFrame);
+      stop();
       finishCanvasFade?.();
     },
   };

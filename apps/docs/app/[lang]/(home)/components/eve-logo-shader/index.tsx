@@ -1,6 +1,8 @@
 "use client";
 
 import { App, Device, type VGPUAdapter } from "@vgpu/core";
+import { createLifecycle, type Lifecycle } from "phase";
+import { usePrefersReducedMotion } from "phase/react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { meshAspect } from "./mesh";
 import {
@@ -8,7 +10,7 @@ import {
   FALLBACK_CONTAINER_ASPECT_RATIO,
   getFallbackImageProps,
 } from "./fallback-image";
-import { usePrefersReducedMotion, useResolvedTheme } from "./hooks";
+import { useResolvedTheme } from "./hooks";
 import { DEFAULT_LOGO_ASPECT, getLogicalRenderSize, resizeCanvas } from "./runtime/canvas-sizing";
 import { loadMesh } from "./runtime/load-mesh";
 import {
@@ -59,9 +61,12 @@ const DEFAULT_CONTROLS: RenderControls = {
 export const AGENTS_ENV_YAW_LERP_SPEED = 3;
 const LOGO_MODE_TRANSITION_DURATION_SECONDS = 0.45;
 const IMPRINT_GLYPH_SCALE = 1.35;
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudience }) {
   const theme = useResolvedTheme();
   const prefersReducedMotion = usePrefersReducedMotion();
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controlsRef = useRef<RenderControls>({ ...DEFAULT_CONTROLS });
   const [logoAspect, setLogoAspect] = useState(DEFAULT_LOGO_ASPECT);
@@ -109,7 +114,7 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
     resetCanvasVisibility(canvas);
     setRevealed(false);
 
-    if (prefersReducedMotion !== false) {
+    if (prefersReducedMotion) {
       // No WebGPU animation will run (reduced motion or the preference hasn't
       // resolved yet), so the canvas stays hidden. Show the static light
       // fallback to mirror the dark fallback, which is always visible until
@@ -120,12 +125,15 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
     setShowLightFallback(false);
 
     const pointerController = createPointerController({ state, controlsRef, canvasRef });
+    let lifecycle: Lifecycle | undefined;
+    let disposeRuntime: (() => void) | undefined;
 
     async function start() {
       const renderTheme = theme;
       const canvas = canvasRef.current;
+      const container = containerRef.current;
       const context = canvas?.getContext("webgpu");
-      if (!canvas || !context || !navigator.gpu) {
+      if (!canvas || !container || !context || !navigator.gpu) {
         setShowLightFallback(true);
         return;
       }
@@ -179,6 +187,8 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
       const dispose = () => {
         if (disposed) return;
         disposed = true;
+        lifecycle?.stop();
+        lifecycle = undefined;
         drawLoopDispose?.();
         resetCanvasVisibility(canvas);
         if (!state.cancelled) setRevealed(false);
@@ -186,11 +196,13 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
         transitionDebugGui = undefined;
         renderer.dispose();
         app.device.destroy();
+        disposeRuntime = undefined;
       };
+      disposeRuntime = dispose;
 
       app.device.gpu.lost
-        .then(() => {
-          if (state.cancelled) return;
+        .then((info) => {
+          if (state.cancelled || disposed || info?.reason === "destroyed") return;
           setRevealed(false);
           setShowLightFallback(true);
           state.cancelled = true;
@@ -221,7 +233,16 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
         onFatalError: dispose,
       });
       drawLoopDispose = drawLoop.dispose;
-      drawLoop.draw();
+      lifecycle = createLifecycle({
+        element: container,
+        reducedMotion: "pause",
+        intersectionOptions: { threshold: 0 },
+        onPhaseChange: (phase) => {
+          if (!IS_PRODUCTION) canvas.dataset.heroPhase = String(phase);
+          if (phase === "active") drawLoop.start();
+          else drawLoop.stop();
+        },
+      });
 
       return dispose;
     }
@@ -239,7 +260,9 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
       state.cancelled = true;
       cancelAnimationFrame(state.animationFrame);
       pointerController.detach();
-      state.cleanup?.();
+      lifecycle?.stop();
+      disposeRuntime?.();
+      state.cleanup = undefined;
       resetCanvasVisibility(canvasRef.current);
     };
   }, [theme, prefersReducedMotion]);
@@ -251,6 +274,7 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
 
   return (
     <div
+      ref={containerRef}
       aria-hidden="true"
       className="pointer-events-none relative z-0 mb-8 aspect-[var(--eve-logo-mobile-aspect-ratio)] w-full md:absolute md:left-1/2 md:top-1/2 md:mb-0 md:h-[6.5em] md:w-auto md:max-w-none md:-translate-x-1/2 md:translate-y-[calc(-50%-0.42em)] md:aspect-[var(--eve-logo-desktop-aspect-ratio)]"
       style={

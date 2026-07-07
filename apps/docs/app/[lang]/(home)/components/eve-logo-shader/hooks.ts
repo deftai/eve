@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-// Owns browser theme and reduced-motion subscriptions for the Eve hero.
+// Owns browser theme subscriptions for the Eve hero.
 // INVARIANT: resolution order matches the old index.tsx hooks exactly.
 // Imported only by index.tsx.
 
@@ -36,18 +36,3 @@ export function useResolvedTheme() {
   return theme;
 }
 
-export function usePrefersReducedMotion() {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const syncPreference = () => setPrefersReducedMotion(media.matches);
-
-    syncPreference();
-    media.addEventListener("change", syncPreference);
-
-    return () => media.removeEventListener("change", syncPreference);
-  }, []);
-
-  return prefersReducedMotion;
-}
