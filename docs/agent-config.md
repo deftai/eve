@@ -43,6 +43,50 @@ version uses hyphens (`claude-opus-4-8`), while the Gateway id above uses a dot
 
 Model use is subject to the terms, data-processing commitments, retention behavior, and available controls of the selected provider and routing path. Review the [AI Gateway model catalog](https://vercel.com/ai-gateway/models) for gateway-routed models, and review the provider's terms when you configure a direct `LanguageModel`.
 
+### Choose the model dynamically
+
+`model` also accepts `defineDynamic({ fallback, events })`. `fallback` is the
+compiled static model: it anchors build-time metadata (routing, credentials,
+context window) and serves whenever no dynamic selection is set.
+
+```ts title="agent/agent.ts"
+import { defineAgent, defineDynamic } from "eve";
+
+export default defineAgent({
+  model: defineDynamic({
+    fallback: "anthropic/claude-sonnet-5",
+    events: {
+      "session.started": (_event, ctx) =>
+        ctx.session.auth.initiator?.attributes.plan === "enterprise"
+          ? "anthropic/claude-opus-4.8"
+          : null,
+    },
+  }),
+});
+```
+
+Handlers receive the shared [dynamic resolver
+context](./guides/dynamic-capabilities) (`ctx.session`, `ctx.channel`,
+`ctx.messages`) and return a gateway model id, an AI SDK `LanguageModel`, a
+selection object, or `null` to leave the scope unset.
+
+- **Scopes.** `session.started` (once per session), `turn.started` (once per
+  turn), `step.started` (every model step). Precedence: step > turn >
+  session > `fallback`. Prefer `session.started`: prompt caches are per
+  model, so every switch re-ingests the conversation at uncached prices.
+- **Failures degrade, never fail the turn.** A resolver that throws or
+  returns an invalid selection logs an error and leaves its scope unset.
+  Build-time validation covers only `fallback`; a selected model without
+  credentials fails at request time.
+- **Serialization.** Session/turn selections must be model id strings; return
+  live `LanguageModel` objects only from `step.started`.
+- **Selection object.** `{ model, modelContextWindowTokens?, modelOptions? }`.
+  Set `modelContextWindowTokens` when the selected model's window differs
+  from the fallback's — it is never inherited. Omitted `modelOptions` reuses
+  the agent-level `modelOptions`.
+
+Runtime identity reports a dynamic agent's model as `dynamic:<fallback id>`.
+
 ## Reasoning effort
 
 Set `reasoning` to control the model's reasoning effort through AI SDK's

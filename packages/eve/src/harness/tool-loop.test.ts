@@ -14,11 +14,13 @@ import {
   AuthKey,
   ChannelInstrumentationKey,
   InitiatorAuthKey,
+  LiveStepDynamicModelSelectionKey,
   LiveStepToolsKey,
   ParentSessionKey,
   SandboxKey,
   SessionKey,
   SessionDynamicInstructionsKey,
+  SessionDynamicModelReferenceKey,
 } from "#context/keys.js";
 import { SCHEDULE_APP_AUTH } from "#channel/schedule-auth.js";
 import { decodeSandboxRef, isSandboxRefUrl } from "#internal/attachments/sandbox-refs.js";
@@ -287,7 +289,7 @@ async function* createMockFullStream(
             yield { id: "text-1", text: part.text, type: "text-delta" };
             break;
           case "tool-call":
-            yield part as Record<string, unknown>;
+            yield toolCallsById.get(String(part.toolCallId)) ?? (part as Record<string, unknown>);
             break;
           case "tool-approval-request": {
             const toolCall = toolCallsById.get(String(part.toolCallId));
@@ -626,6 +628,159 @@ describe("createToolLoopHarness", () => {
     expect(agentCall).toBeDefined();
     expect(agentCall!.tools).toHaveProperty("add");
     expect(agentCall!.tools).not.toHaveProperty("Workflow");
+  });
+
+  it("uses dynamic model selection for the model call", async () => {
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Hello!", role: "assistant" }] },
+      text: "Hello!",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const resolveModel = vi.fn().mockResolvedValue("fallback-model" as LanguageModel);
+    const dispatchDynamicModelEvent: NonNullable<
+      ToolLoopHarnessConfig["dispatchDynamicModelEvent"]
+    > = vi.fn(async ({ ctx, event, fallback, messages }) => {
+      expect(event.type).toBe("step.started");
+      expect(messages.at(-1)).toEqual({ content: "Hi", role: "user" });
+      expect(fallback).toEqual({ contextWindowTokens: 100_000, id: "fallback-model" });
+
+      ctx.setVirtualContext(LiveStepDynamicModelSelectionKey, {
+        model: "selected-model" as LanguageModel,
+        reference: {
+          contextWindowTokens: 200_000,
+          id: "selected-model",
+          providerOptions: { gateway: { order: ["openai"] } },
+        },
+      });
+    });
+    const config = createTestConfig("conversation", undefined, {
+      dispatchDynamicModelEvent,
+      resolveModel,
+    });
+    const runStep = createToolLoopHarness(config);
+    const ctx = new ContextContainer();
+    const session = createTestSession({
+      agent: {
+        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        system: "You are a test assistant.",
+        tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
+      },
+      compaction: { recentWindowSize: 10, threshold: 90_000 },
+    });
+
+    const result = await contextStorage.run(ctx, () => runStep(session, { message: "Hi" }));
+
+    const agentCall = vi.mocked(ToolLoopAgent).mock.calls[0]?.[0];
+    expect(agentCall).toBeDefined();
+    expect(agentCall!.model).toBe("selected-model");
+    expect(dispatchDynamicModelEvent).toHaveBeenCalledTimes(1);
+    expect(resolveModel).not.toHaveBeenCalled();
+    expect(result.session.agent.modelReference).toEqual({
+      contextWindowTokens: 200_000,
+      id: "selected-model",
+      providerOptions: { gateway: { order: ["openai"] } },
+    });
+    expect(result.session.compaction.threshold).toBe(180_000);
+  });
+
+  it("uses session-scoped dynamic model selection for the model call", async () => {
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Hello!", role: "assistant" }] },
+      text: "Hello!",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const resolveModel = vi.fn(async (reference) => {
+      expect(reference).toEqual({
+        contextWindowTokens: 200_000,
+        id: "selected-model",
+        providerOptions: { gateway: { order: ["openai"] } },
+      });
+      return "selected-model" as LanguageModel;
+    });
+    const config = createTestConfig("conversation", undefined, {
+      resolveModel,
+    });
+    const runStep = createToolLoopHarness(config);
+    const ctx = new ContextContainer();
+    ctx.set(SessionDynamicModelReferenceKey, {
+      contextWindowTokens: 200_000,
+      id: "selected-model",
+      providerOptions: { gateway: { order: ["openai"] } },
+    });
+    const session = createTestSession({
+      agent: {
+        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        system: "You are a test assistant.",
+        tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
+      },
+      compaction: { recentWindowSize: 10, threshold: 90_000 },
+    });
+
+    const result = await contextStorage.run(ctx, () => runStep(session, { message: "Hi" }));
+
+    const agentCall = vi.mocked(ToolLoopAgent).mock.calls[0]?.[0];
+    expect(agentCall).toBeDefined();
+    expect(agentCall!.model).toBe("selected-model");
+    expect(result.session.agent.modelReference).toEqual({
+      contextWindowTokens: 200_000,
+      id: "selected-model",
+      providerOptions: { gateway: { order: ["openai"] } },
+    });
+    expect(result.session.compaction.threshold).toBe(180_000);
+  });
+
+  it("keeps the compaction threshold stable across steps with the same dynamic selection", async () => {
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Hello!", role: "assistant" }] },
+      text: "Hello!",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const config = createTestConfig("conversation", undefined, {
+      resolveModel: vi.fn().mockResolvedValue("selected-model" as LanguageModel),
+    });
+    const runStep = createToolLoopHarness(config);
+    const ctx = new ContextContainer();
+    ctx.set(SessionDynamicModelReferenceKey, {
+      contextWindowTokens: 200_000,
+      id: "selected-model",
+    });
+    const session = createTestSession({
+      agent: {
+        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        system: "You are a test assistant.",
+        tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
+      },
+      compaction: { recentWindowSize: 10, threshold: 90_000 },
+    });
+
+    const first = await contextStorage.run(ctx, () => runStep(session, { message: "Hi" }));
+    expect(first.session.compaction.threshold).toBe(180_000);
+
+    // Regression: the threshold used to compound (360k) on every extra step.
+    const second = await contextStorage.run(ctx, () =>
+      runStep(first.session, { message: "Again" }),
+    );
+    expect(second.session.compaction.threshold).toBe(180_000);
+
+    ctx.set(SessionDynamicModelReferenceKey, null);
+    const third = await contextStorage.run(ctx, () => runStep(second.session, { message: "Back" }));
+    expect(third.session.agent.modelReference).toEqual({
+      contextWindowTokens: 100_000,
+      id: "fallback-model",
+    });
+    expect(third.session.compaction.threshold).toBe(90_000);
   });
 
   it("hides subagent tools from the model after the subagent depth limit", async () => {
@@ -2280,6 +2435,101 @@ describe("createToolLoopHarness", () => {
     expect(events.some((event) => event.type === "turn.failed")).toBe(false);
     expect(events.find((event) => event.type === "step.completed")?.data).toMatchObject({
       finishReason: "tool-calls",
+    });
+  });
+
+  it("feeds non-object tool call input back to the model as a failed tool result", async () => {
+    const invalidInput = "not an object";
+    const errorMessage =
+      'Failed to parse tool-call arguments for "add" (call-bad): Expected a JSON-serializable object.';
+    setupMockAgent({
+      finishReason: "tool-calls",
+      response: {
+        messages: [
+          {
+            content: [
+              {
+                input: invalidInput,
+                toolCallId: "call-bad",
+                toolName: "add",
+                type: "tool-call",
+              },
+            ],
+            role: "assistant",
+          },
+        ],
+      },
+      text: "",
+      toolCalls: [
+        {
+          input: invalidInput,
+          toolCallId: "call-bad",
+          toolName: "add",
+          type: "tool-call",
+        },
+      ],
+      toolResults: [],
+    });
+
+    const { emit } = createEventCollector();
+    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+    const firstStep = await runStep(createTestSession(), { message: "Add these" });
+
+    expect(firstStep.next).toBe(runStep);
+    expect(firstStep.session.history).toEqual([
+      { content: "Add these", role: "user" },
+      {
+        content: [
+          {
+            input: invalidInput,
+            toolCallId: "call-bad",
+            toolName: "add",
+            type: "tool-call",
+          },
+        ],
+        role: "assistant",
+      },
+      {
+        content: [
+          {
+            output: { type: "error-text", value: errorMessage },
+            toolCallId: "call-bad",
+            toolName: "add",
+            type: "tool-result",
+          },
+        ],
+        role: "tool",
+      },
+    ]);
+
+    setupMockAgent({
+      finishReason: "stop",
+      response: {
+        messages: [{ content: "I'll use object arguments next time.", role: "assistant" }],
+      },
+      text: "I'll use object arguments next time.",
+      toolCalls: [],
+      toolResults: [],
+    });
+    await runStep(firstStep.session);
+
+    const secondInstance = vi.mocked(ToolLoopAgent).mock.results[1]?.value as
+      | { stream: ReturnType<typeof vi.fn> }
+      | undefined;
+    const secondCall = secondInstance?.stream.mock.calls[0]?.[0] as
+      | { messages: ModelMessage[] }
+      | undefined;
+    expect(secondCall?.messages).toEqual(firstStep.session.history);
+    expect(secondCall?.messages.at(-1)).toEqual({
+      content: [
+        {
+          output: { type: "error-text", value: errorMessage },
+          toolCallId: "call-bad",
+          toolName: "add",
+          type: "tool-result",
+        },
+      ],
+      role: "tool",
     });
   });
 

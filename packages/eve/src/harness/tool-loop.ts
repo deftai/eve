@@ -14,6 +14,7 @@ import {
   ToolLoopAgent,
   type ToolSet,
   type TypedToolCall,
+  type TypedToolError,
   type TypedToolResult,
 } from "ai";
 import { isScheduleAppAuth } from "#channel/schedule-auth.js";
@@ -29,6 +30,7 @@ import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
 import { contextStorage } from "#context/container.js";
 import { AuthKey, ParentSessionKey } from "#context/keys.js";
 import { buildDynamicInstructionMessages } from "#context/dynamic-instruction-lifecycle.js";
+import { getActiveDynamicModelSelection } from "#context/dynamic-model-lifecycle.js";
 import { buildDynamicTools } from "#context/build-dynamic-tools.js";
 import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js";
 import { toErrorMessage } from "#shared/errors.js";
@@ -38,6 +40,7 @@ import {
   createCompactionRequestedEvent,
   createInputRequestedEvent,
   createResultCompletedEvent,
+  createStepStartedEvent,
 } from "#protocol/message.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
@@ -93,6 +96,7 @@ import {
   extractQuestionInputRequests,
   extractToolApprovalInputRequests,
 } from "#harness/input-extraction.js";
+import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
 import {
   consumeDeferredStepInput,
@@ -144,6 +148,7 @@ import {
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
+import { getInvalidToolCallInputError } from "#harness/tool-call-input-errors.js";
 import {
   buildStepHooks,
   emitStepActions,
@@ -165,6 +170,7 @@ import {
   buildFinalOutputTool,
   FINAL_OUTPUT_TOOL_NAME,
 } from "#runtime/framework-tools/final-output.js";
+import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type {
   CompactionConfig,
@@ -280,6 +286,81 @@ function buildGatewayAttributionHeaders(
   if (title) headers["x-title"] = title;
   if (referer) headers["http-referer"] = referer;
   return headers;
+}
+
+async function resolveActiveRuntimeModel(input: {
+  readonly config: ToolLoopHarnessConfig;
+  readonly ctx: ReturnType<typeof contextStorage.getStore>;
+  readonly session: HarnessSession;
+}): Promise<{
+  readonly model: LanguageModel;
+  readonly session: HarnessSession;
+}> {
+  if (input.ctx === undefined) {
+    return {
+      model: await input.config.resolveModel(input.session.agent.modelReference),
+      session: input.session,
+    };
+  }
+
+  const fallback =
+    input.session.agent.dynamicModelDefaultReference ?? input.session.agent.modelReference;
+  const selected = getActiveDynamicModelSelection(input.ctx);
+
+  if (selected === null) {
+    return {
+      model: await input.config.resolveModel(fallback),
+      session: updateSessionModelReference(input.session, fallback),
+    };
+  }
+
+  return {
+    model:
+      selected.model !== undefined
+        ? selected.model
+        : await input.config.resolveModel(selected.reference),
+    session: updateSessionModelReference(input.session, selected.reference),
+  };
+}
+
+function updateSessionModelReference(
+  session: HarnessSession,
+  modelReference: RuntimeModelReference,
+): HarnessSession {
+  // Rescale from the reference the current threshold was computed against;
+  // rescaling from the static fallback would compound the threshold per step.
+  const priorReference = session.agent.modelReference;
+  return {
+    ...session,
+    agent: {
+      ...session.agent,
+      modelReference,
+    },
+    compaction: updateCompactionThresholdForModelReference({
+      compaction: session.compaction,
+      modelReference,
+      priorReference,
+    }),
+  };
+}
+
+function updateCompactionThresholdForModelReference(input: {
+  readonly compaction: CompactionConfig;
+  readonly modelReference: RuntimeModelReference;
+  readonly priorReference: RuntimeModelReference;
+}): CompactionConfig {
+  if (
+    input.modelReference.contextWindowTokens === undefined ||
+    input.priorReference.contextWindowTokens === undefined
+  ) {
+    return input.compaction;
+  }
+
+  const thresholdPercent = input.compaction.threshold / input.priorReference.contextWindowTokens;
+  return {
+    ...input.compaction,
+    threshold: Math.max(1, Math.floor(input.modelReference.contextWindowTokens * thresholdPercent)),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +606,27 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     // --- Model + tools ------------------------------------------------------
 
-    const model = await config.resolveModel(session.agent.modelReference);
+    // Direct harness unit tests may run without an ambient context.
+    const ctx = contextStorage.getStore();
+    if (ctx !== undefined && config.dispatchDynamicModelEvent !== undefined) {
+      await config.dispatchDynamicModelEvent({
+        ctx,
+        event: createStepStartedEvent({
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
+        fallback: session.agent.dynamicModelDefaultReference ?? session.agent.modelReference,
+        messages,
+      });
+    }
+    const resolvedModel = await resolveActiveRuntimeModel({
+      config,
+      ctx,
+      session,
+    });
+    session = resolvedModel.session;
+    const model = resolvedModel.model;
     const cachePath = detectPromptCachePath(model);
     const marker = cachePath.kind === "anthropic-direct" ? getAnthropicCacheMarker() : undefined;
 
@@ -550,8 +651,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     const approvedTools = getApprovedTools(session);
 
-    // Direct harness unit tests may run without an ambient context.
-    const ctx = contextStorage.getStore();
     const emptyDeliveryEnabled =
       session.outputSchema === undefined &&
       ctx !== undefined &&
@@ -774,6 +873,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           const {
             emittedActionCallIds,
             handledInlineToolResultCallIds,
+            invalidInputToolCallIds,
             inlineAuthorizationResults,
             inlineToolResultParts,
             trailingInlineToolResultParts,
@@ -793,6 +893,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           }
           await emitStepActions(emit, emissionState, stepResult, {
             emittedActionCallIds,
+            excludedActionCallIds: invalidInputToolCallIds,
             excludedActionToolNames,
             handledInlineToolResultCallIds,
             tools: advertisedHarnessTools,
@@ -837,6 +938,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               text: stepResult.text,
               toolCalls: stepResult.toolCalls,
               toolResults: [...toolResultsByCallId.values()],
+              invalidInputToolCallIds,
               usage: stepResult.usage,
             };
           }
@@ -1357,6 +1459,25 @@ function insertInlineToolResultMessages(input: {
   ] satisfies StepResponseMessage[];
 }
 
+function getInvalidToolCallInputErrors(input: {
+  readonly toolCalls: readonly TypedToolCall<ToolSet>[];
+}): readonly TypedToolError<ToolSet>[] {
+  const errors: TypedToolError<ToolSet>[] = [];
+
+  for (const toolCall of input.toolCalls) {
+    if (toolCall.toolName === FINAL_OUTPUT_TOOL_NAME) {
+      continue;
+    }
+
+    const toolError = getInvalidToolCallInputError({ toolCall });
+    if (toolError !== undefined) {
+      errors.push(toolError);
+    }
+  }
+
+  return errors;
+}
+
 function extractToolResultCallIds(messages: readonly StepResponseMessage[]): ReadonlySet<string> {
   const callIds = new Set<string>();
 
@@ -1572,7 +1693,22 @@ async function handleStepResult(input: {
     result.finishReason !== "tool-calls" &&
     result.toolCalls.length === 0 &&
     hasEmptyDeliverySentinel(resolvedStepOutput);
-  const rawResponseMessages = emptyDelivery ? [] : result.response.messages;
+  const invalidInputToolErrors = getInvalidToolCallInputErrors({
+    toolCalls: result.toolCalls as TypedToolCall<ToolSet>[],
+  });
+  const invalidInputToolCallIds = new Set([
+    ...(result.invalidInputToolCallIds ?? []),
+    ...invalidInputToolErrors.map((toolError) => toolError.toolCallId),
+  ]);
+  const rawResponseMessages = emptyDelivery
+    ? []
+    : insertInlineToolResultMessages({
+        append: invalidInputToolErrors.map((toolError) =>
+          createToolResultMessagePartFromToolError(toolError),
+        ),
+        prepend: [],
+        responseMessages: result.response.messages,
+      });
   const stepOutput = emptyDelivery ? null : resolvedStepOutput;
 
   const providerExecutedOutcomeIds = new Set<string>();
@@ -1617,11 +1753,14 @@ async function handleStepResult(input: {
     }
   }
 
-  const approvalRequests = extractToolApprovalInputRequests({ content: result.content ?? [] });
+  const approvalRequests = extractToolApprovalInputRequests({
+    content: result.content ?? [],
+    excludedCallIds: invalidInputToolCallIds,
+  });
   const approvalRequestCallIds = new Set(approvalRequests.map((request) => request.action.callId));
   const questionRequests = extractQuestionInputRequests({
     toolCalls: result.toolCalls,
-    excludedCallIds: approvalRequestCallIds,
+    excludedCallIds: new Set([...invalidInputToolCallIds, ...approvalRequestCallIds]),
   });
   const inputRequests: InputRequest[] = [...approvalRequests, ...questionRequests];
   const advertisedRuntimeActionTools = getAdvertisedTools({
@@ -1630,6 +1769,7 @@ async function handleStepResult(input: {
   });
   const pendingRuntimeActions = ((result.toolCalls ?? []) as TypedToolCall<ToolSet>[])
     .filter((toolCall) => !isInvalidToolCall(toolCall))
+    .filter((toolCall) => !invalidInputToolCallIds.has(toolCall.toolCallId))
     .filter((toolCall) => config.tools.get(toolCall.toolName)?.runtimeAction !== undefined)
     .filter((toolCall) => {
       if (advertisedRuntimeActionTools.get(toolCall.toolName)?.runtimeAction !== undefined) {
