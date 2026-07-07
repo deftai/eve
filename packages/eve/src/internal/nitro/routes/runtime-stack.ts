@@ -37,7 +37,10 @@ export async function resolveNitroChannelRuntimeBundle(
   const bundle = await getCompiledRuntimeAgentBundle({
     compiledArtifactsSource,
   });
-  const runtime = createWorkflowRuntime({ compiledArtifactsSource });
+  const runtime = createWorkflowRuntime({
+    compiledArtifactsSource,
+    durabilityBackendName: bundle.resolvedAgent.config.experimental?.durability?.backendName,
+  });
   return {
     channels: bundle.graph.root.channels,
     runtime,

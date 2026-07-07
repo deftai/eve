@@ -66,6 +66,11 @@ async function compileAgentNodeManifest(
       `Workflow runtime configuration is only supported on the root agent config. Remove "experimental.workflow" from "${manifest.agentId}".`,
     );
   }
+  if (options.allowWorkflowConfig === false && rawConfig.experimental?.durability !== undefined) {
+    throw new Error(
+      `Durability backend configuration is only supported on the root agent config. Remove "experimental.durability" from "${manifest.agentId}".`,
+    );
+  }
   const externalDependencies = mergeExternalDependencies(
     options.externalDependencies,
     rawConfig.build?.externalDependencies,

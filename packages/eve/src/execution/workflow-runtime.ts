@@ -250,7 +250,9 @@ function normalizeWorkflowHook(value: unknown): WorkflowHookRecord {
 }
 
 export {
+  createAgentRuntime,
   createRuntimeFromDurabilityBackend,
   createWorkflowRuntime,
+  type CreateAgentRuntimeConfig,
   type CreateRuntimeFromDurabilityBackendConfig,
 } from "#execution/durability/runtime-factory.js";

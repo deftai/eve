@@ -1,12 +1,11 @@
-import {
-  createVercelDurabilityBackend,
-  VERCEL_DURABILITY_BACKEND_NAME,
-} from "#execution/durability/backends/vercel-workflow.js";
 import { IN_MEMORY_DURABILITY_BACKEND_NAME } from "#execution/durability/backends/in-memory.js";
+import { warnIfInMemoryDurabilityInProduction } from "#execution/durability/durability-boot-warning.js";
+import { resolveDurabilityBackendByName } from "#execution/durability/resolve-durability-backend.js";
 import { createVercelWorkflowRuntime } from "#execution/workflow-runtime.js";
 import type { Runtime } from "#channel/types.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import type { DurabilityBackend } from "#shared/durability-backend.js";
+import { VERCEL_DURABILITY_BACKEND_NAME } from "#execution/durability/backends/vercel-workflow.js";
 
 /**
  * Config for {@link createRuntimeFromDurabilityBackend}.
@@ -14,6 +13,15 @@ import type { DurabilityBackend } from "#shared/durability-backend.js";
 export interface CreateRuntimeFromDurabilityBackendConfig {
   readonly backend: DurabilityBackend;
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
+  readonly nodeId?: string;
+}
+
+/**
+ * Config for {@link createAgentRuntime}.
+ */
+export interface CreateAgentRuntimeConfig {
+  readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
+  readonly durabilityBackendName?: string;
   readonly nodeId?: string;
 }
 
@@ -31,7 +39,7 @@ export function createRuntimeFromDurabilityBackend(
       });
     case IN_MEMORY_DURABILITY_BACKEND_NAME:
       throw new Error(
-        "inMemory() durability runtime is not wired until Phase 3 (experimental.durability.backend).",
+        "experimental.durability.backend is set to inMemory(), but the in-process channel Runtime is not implemented in v1. Use vercelWorkflow() (default) for serving traffic.",
       );
     default:
       throw new Error(`Unknown durability backend "${config.backend.name}".`);
@@ -39,15 +47,21 @@ export function createRuntimeFromDurabilityBackend(
 }
 
 /**
- * Default workflow-backed runtime used by channels, schedules, and child sessions.
+ * Creates a channel {@link Runtime} using the compiled agent's durability backend.
  */
-export function createWorkflowRuntime(config: {
-  readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
-  readonly nodeId?: string;
-}): Runtime {
+export function createAgentRuntime(config: CreateAgentRuntimeConfig): Runtime {
+  const backend = resolveDurabilityBackendByName(config.durabilityBackendName);
+  warnIfInMemoryDurabilityInProduction(backend.name);
   return createRuntimeFromDurabilityBackend({
-    backend: createVercelDurabilityBackend(),
+    backend,
     compiledArtifactsSource: config.compiledArtifactsSource,
     nodeId: config.nodeId,
   });
+}
+
+/**
+ * Default workflow-backed runtime used by channels, schedules, and child sessions.
+ */
+export function createWorkflowRuntime(config: CreateAgentRuntimeConfig): Runtime {
+  return createAgentRuntime(config);
 }

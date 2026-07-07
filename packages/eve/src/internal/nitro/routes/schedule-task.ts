@@ -23,7 +23,10 @@ export async function dispatchScheduleTask(
   });
 
   const bundle = await getCompiledRuntimeAgentBundle({ compiledArtifactsSource });
-  const runtime = createWorkflowRuntime({ compiledArtifactsSource });
+  const runtime = createWorkflowRuntime({
+    compiledArtifactsSource,
+    durabilityBackendName: bundle.resolvedAgent.config.experimental?.durability?.backendName,
+  });
   const dispatcher = new ScheduleDispatcher({
     runtime,
     channels: bundle.graph.root.channels,

@@ -302,8 +302,9 @@ export type ResolvedRuntimeDelegationNode =
  * Runtime-owned additive agent configuration resolved from `agent.ts`.
  */
 export type ResolvedAgentDefinition = Readonly<
-  Omit<InternalAgentDefinition, "build" | "source"> & {
+  Omit<InternalAgentDefinition, "build" | "experimental" | "source"> & {
     dynamicModel?: RuntimeDynamicModelReference;
+    experimental?: import("#shared/agent-definition.js").CompiledAgentExperimentalDefinition;
     source?: Readonly<NonNullable<InternalAgentDefinition["source"]>>;
   }
 >;

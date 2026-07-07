@@ -1,5 +1,6 @@
 import type { CallSettings, LanguageModel } from "ai";
 import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
+import type { DurabilityBackend } from "#shared/durability-backend.js";
 import type { JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import {
@@ -213,11 +214,24 @@ export interface AgentLimitsDefinition {
  */
 export interface AgentExperimentalDefinition {
   /**
+   * Pluggable durability engine for session/turn orchestration. Root agents
+   * only; defaults to `vercelWorkflow()` when omitted.
+   */
+  readonly durability?: AgentExperimentalDurabilityAuthoringDefinition;
+  /**
    * Durable Workflow runtime configuration. Root agents may use this to select
    * the Workflow world backing sessions and runs.
    */
   readonly workflow?: AgentWorkflowDefinition;
 }
+
+/**
+ * Experimental capabilities stored on the compiled agent manifest.
+ */
+export type CompiledAgentExperimentalDefinition = {
+  readonly durability?: AgentExperimentalDurabilityCompiledDefinition;
+  readonly workflow?: AgentWorkflowDefinition;
+};
 
 /**
  * Advanced hosted-build controls authored in `agent.ts`.
@@ -246,6 +260,20 @@ export interface AgentBuildDefinition {
  * options can come from environment variables instead of the compiled manifest.
  */
 export type AgentWorkflowWorldDefinition = string;
+
+/**
+ * Experimental durability backend selection authored in root `agent.ts`.
+ */
+export interface AgentExperimentalDurabilityAuthoringDefinition {
+  readonly backend: DurabilityBackend;
+}
+
+/**
+ * Durability backend name stored in the compiled manifest.
+ */
+export interface AgentExperimentalDurabilityCompiledDefinition {
+  readonly backendName: string;
+}
 
 /**
  * Advanced durable-runtime configuration for eve's Workflow SDK integration.

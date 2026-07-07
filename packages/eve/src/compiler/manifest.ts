@@ -124,7 +124,11 @@ type CompiledAgentCompactionDefinition = Omit<InternalAgentCompactionDefinition,
 /**
  * Normalized additive agent configuration preserved in the compiled manifest.
  */
-export type CompiledAgentDefinition = Omit<InternalAgentDefinition, "model" | "compaction"> & {
+export type CompiledAgentDefinition = Omit<
+  InternalAgentDefinition,
+  "experimental" | "model" | "compaction"
+> & {
+  experimental?: import("#shared/agent-definition.js").CompiledAgentExperimentalDefinition;
   model: CompiledRuntimeModelReference;
   compaction?: CompiledAgentCompactionDefinition;
   dynamicModel?: CompiledDynamicModelDefinition;
@@ -371,6 +375,12 @@ const compiledAgentWorkflowDefinitionSchema = z
   })
   .strict();
 
+const compiledAgentDurabilityDefinitionSchema = z
+  .object({
+    backendName: z.string(),
+  })
+  .strict();
+
 const compiledAgentCompactionDefinitionSchema: z.ZodType<CompiledAgentCompactionDefinition> = z
   .object({
     model: compiledRuntimeModelReferenceSchema.optional(),
@@ -397,6 +407,7 @@ const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
     dynamicModel: compiledDynamicModelDefinitionSchema.optional(),
     experimental: z
       .object({
+        durability: compiledAgentDurabilityDefinitionSchema.optional(),
         workflow: compiledAgentWorkflowDefinitionSchema.optional(),
       })
       .strict()
@@ -746,6 +757,12 @@ export function createCompiledAgentNodeManifest(input: {
         input.config.experimental === undefined
           ? undefined
           : {
+              durability:
+                input.config.experimental.durability === undefined
+                  ? undefined
+                  : {
+                      backendName: input.config.experimental.durability.backendName,
+                    },
               workflow:
                 input.config.experimental.workflow === undefined
                   ? undefined

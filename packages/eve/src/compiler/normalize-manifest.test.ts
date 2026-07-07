@@ -77,6 +77,55 @@ describe("compileAgentManifest", () => {
       'Remove "experimental.workflow" from "research"',
     );
   });
+
+  it("rejects experimental.durability on subagent configs", async () => {
+    const subagentManifest = createAgentSourceManifest({
+      agentId: "research",
+      agentRoot: "/app/agent/subagents/research",
+      appRoot: "/app",
+      configModule: createModuleSourceRef({
+        logicalPath: "agent.ts",
+      }),
+    });
+    const manifest = createAgentSourceManifest({
+      agentId: "root",
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      subagents: [
+        createLocalSubagentSourceRef({
+          entryPath: "subagents/research/agent.ts",
+          logicalPath: "subagents/research",
+          manifest: subagentManifest,
+          rootPath: "/app/agent/subagents/research",
+          subagentId: "research",
+        }),
+      ],
+    });
+
+    mocks.compileAgentConfig.mockImplementation(async (input: AgentSourceManifest) => {
+      if (input.agentId === "research") {
+        return createConfig({
+          description: "Research subagent",
+          name: "research",
+          experimental: {
+            durability: {
+              backendName: "inmemory",
+            },
+          },
+        });
+      }
+
+      return createConfig({ name: "root" });
+    });
+    mocks.loadModuleBackedDefinition.mockResolvedValue({
+      description: "Research subagent",
+      model: "openai/gpt-5.5",
+    });
+
+    await expect(compileAgentManifest(manifest)).rejects.toThrow(
+      'Remove "experimental.durability" from "research"',
+    );
+  });
 });
 
 function createConfig(

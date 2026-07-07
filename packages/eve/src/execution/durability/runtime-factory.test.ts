@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createInMemoryDurabilityBackend } from "#execution/durability/backends/in-memory.js";
+import { resetDurabilityBootWarningForTests } from "#execution/durability/durability-boot-warning.js";
 import {
+  createAgentRuntime,
   createRuntimeFromDurabilityBackend,
   createWorkflowRuntime,
 } from "#execution/durability/runtime-factory.js";
@@ -10,6 +12,11 @@ import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts
 
 describe("createRuntimeFromDurabilityBackend", () => {
   const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+
+  afterEach(() => {
+    resetDurabilityBootWarningForTests();
+    vi.unstubAllEnvs();
+  });
 
   it("returns a Runtime for vercelWorkflow()", () => {
     const runtime = createRuntimeFromDurabilityBackend({
@@ -32,19 +39,33 @@ describe("createRuntimeFromDurabilityBackend", () => {
     expect(Object.keys(fromFactory).sort()).toEqual(Object.keys(fromLegacy).sort());
   });
 
-  it("rejects inMemory until Phase 3 wiring", () => {
+  it("rejects inMemory channel runtime in v1", () => {
     expect(() =>
       createRuntimeFromDurabilityBackend({
         backend: createInMemoryDurabilityBackend(),
         compiledArtifactsSource,
       }),
-    ).toThrow(/Phase 3/);
+    ).toThrow(/inMemory\(\)/);
+  });
+
+  it("warns in production when creating runtime with inmemory manifest backend", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() =>
+      createAgentRuntime({
+        compiledArtifactsSource,
+        durabilityBackendName: "inmemory",
+      }),
+    ).toThrow(/inMemory\(\)/);
+    vi.unstubAllEnvs();
   });
 
   it("rejects unknown backend names", () => {
     expect(() =>
       createRuntimeFromDurabilityBackend({
-        backend: { name: "unknown", createBinding: async () => ({ port: {} as never, shutdown: async () => {} }) },
+        backend: {
+          name: "unknown",
+          createBinding: async () => ({ port: {} as never, shutdown: async () => {} }),
+        },
         compiledArtifactsSource,
       }),
     ).toThrow(/Unknown durability backend/);

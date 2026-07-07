@@ -129,6 +129,8 @@ export async function dispatchRuntimeActionsStep(input: {
               : { type: "runtime" };
           const childRuntime = createWorkflowRuntime({
             compiledArtifactsSource: bundle.compiledArtifactsSource,
+            durabilityBackendName:
+              bundle.resolvedAgent.config.experimental?.durability?.backendName,
             nodeId: action.nodeId,
           });
           const { childContinuationToken, runInput } = buildSubagentRunInput({
