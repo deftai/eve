@@ -1,7 +1,13 @@
+import { clamp, clamp01, easeInOutCubic, lerp } from "phase/ease";
 import type { MutableRefObject } from "react";
 import { evePointerInteractionMode, mobileAutoEnvYaw } from "../mobile-motion";
 import type { ImprintRenderOptions, RenderControls } from "../render";
-import { getCanvasLogicalSize, resizeCanvas } from "./canvas-sizing";
+import {
+  getCanvasLogicalSize,
+  resizeCanvas,
+  type CanvasLayoutRef,
+  type DevicePixelRatioRef,
+} from "./canvas-sizing";
 import type { EveTransitionDebugState } from "./debug-gui";
 import type { ControlsRef, HeroRuntimeState } from "./state";
 
@@ -69,6 +75,8 @@ export function createDrawLoop({
   targetLogoModeProgressRef,
   targetAgentsEnvYawMixRef,
   defaultMaterial,
+  canvasLayoutRef,
+  devicePixelRatioRef,
   onCanvasRevealed,
   onFallback,
   onFatalError,
@@ -83,6 +91,8 @@ export function createDrawLoop({
   targetLogoModeProgressRef: MutableRefObject<number>;
   targetAgentsEnvYawMixRef: MutableRefObject<number>;
   defaultMaterial: RenderControls["material"];
+  canvasLayoutRef: CanvasLayoutRef;
+  devicePixelRatioRef: DevicePixelRatioRef;
   onCanvasRevealed: () => void;
   onFallback: () => void;
   onFatalError: () => void;
@@ -116,53 +126,53 @@ export function createDrawLoop({
       state.targetMouseEnvPitch = 0;
       state.targetBrushActive = false;
     }
-    state.mouseEnvYaw = safeLerp(
+    state.mouseEnvYaw = lerp(
       state.mouseEnvYaw,
       state.targetMouseEnvYaw,
-      deltaSeconds * ENV_YAW_LERP_SPEED,
+      clamp01(deltaSeconds * ENV_YAW_LERP_SPEED),
     );
-    state.mouseEnvPitch = safeLerp(
+    state.mouseEnvPitch = lerp(
       state.mouseEnvPitch,
       state.targetMouseEnvPitch,
-      deltaSeconds * ENV_YAW_LERP_SPEED,
+      clamp01(deltaSeconds * ENV_YAW_LERP_SPEED),
     );
-    state.asciiMouseX = safeLerp(
+    state.asciiMouseX = lerp(
       state.asciiMouseX,
       state.targetAsciiMouseX,
-      deltaSeconds * ASCII_MOUSE_LERP_SPEED,
+      clamp01(deltaSeconds * ASCII_MOUSE_LERP_SPEED),
     );
-    state.asciiMouseY = safeLerp(
+    state.asciiMouseY = lerp(
       state.asciiMouseY,
       state.targetAsciiMouseY,
-      deltaSeconds * ASCII_MOUSE_LERP_SPEED,
+      clamp01(deltaSeconds * ASCII_MOUSE_LERP_SPEED),
     );
     state.brushActive = state.targetBrushActive && state.hasBrushCell;
     const targetAgentsEnvYawMix = targetAgentsEnvYawMixRef.current;
-    state.agentsEnvYawMix = safeLerp(
+    state.agentsEnvYawMix = lerp(
       state.agentsEnvYawMix,
       targetAgentsEnvYawMix,
-      deltaSeconds * AGENTS_ENV_YAW_LERP_SPEED,
+      clamp01(deltaSeconds * AGENTS_ENV_YAW_LERP_SPEED),
     );
     controlsRef.current.envYaw = state.mouseEnvYaw + state.agentsEnvYawMix * AGENTS_ENV_YAW_OFFSET;
     controlsRef.current.envPitch = state.mouseEnvPitch;
 
-    const devicePixelRatio = resizeCanvas(canvas);
+    const devicePixelRatio = resizeCanvas(canvas, canvasLayoutRef, devicePixelRatioRef);
     const { logicalWidth, logicalHeight } = getCanvasLogicalSize(canvas, devicePixelRatio);
 
     try {
-      const transitionDurationSeconds = clampRange(transitionDebug.durationSeconds, 0.05, 2);
+      const transitionDurationSeconds = clamp(transitionDebug.durationSeconds, 0.05, 2);
       modeTransitionProgressRef.current = stepLogoModeProgress(
         modeTransitionProgressRef.current,
         targetLogoModeProgressRef.current,
         deltaSeconds,
         transitionDurationSeconds,
       );
-      const animatedMixProgress = easeLogoModeProgress(modeTransitionProgressRef.current);
+      const animatedMixProgress = easeInOutCubic(clamp01(modeTransitionProgressRef.current));
       const mixProgress = transitionDebug.overrideEnabled
-        ? clampUnit(transitionDebug.progress)
+        ? clamp01(transitionDebug.progress)
         : animatedMixProgress;
       const timeSeconds = frameTime / 1000;
-      const gridScaleMultiplier = clampRange(transitionDebug.gridScaleMultiplier, 0.5, 2);
+      const gridScaleMultiplier = clamp(transitionDebug.gridScaleMultiplier, 0.5, 2);
       state.paintGridScaleMultiplier = gridScaleMultiplier;
       controlsRef.current.material = transitionDebug.visualizePaintBuffer
         ? "paint-debug"
@@ -180,7 +190,7 @@ export function createDrawLoop({
         {
           progress: mixProgress,
           gridScaleMultiplier,
-          glyphScale: clampRange(transitionDebug.glyphScale, 0.5, 2.5),
+          glyphScale: clamp(transitionDebug.glyphScale, 0.5, 2.5),
           time: timeSeconds,
           mouse: [state.asciiMouseX, state.asciiMouseY],
           devicePixelRatio,
@@ -191,12 +201,12 @@ export function createDrawLoop({
             dt: deltaSeconds,
             brushCell: [state.brushCellX, state.brushCellY],
             brushPreviousCell,
-            brushRadius: clampRange(transitionDebug.brushRadius, 1, 8),
-            brushStrength: clampRange(transitionDebug.brushStrength, 4, 32),
+            brushRadius: clamp(transitionDebug.brushRadius, 1, 8),
+            brushStrength: clamp(transitionDebug.brushStrength, 4, 32),
             brushActive: brushCanWrite,
-            decayRate: clampRange(transitionDebug.paintDecayPerFrame120, 0.002, 0.08) * 120,
-            diffusionRate: clampRange(transitionDebug.diffusionAmount, 0, 24),
-            diffusionJitter: clampRange(transitionDebug.diffusionJitter, 0, 4),
+            decayRate: clamp(transitionDebug.paintDecayPerFrame120, 0.002, 0.08) * 120,
+            diffusionRate: clamp(transitionDebug.diffusionAmount, 0, 24),
+            diffusionJitter: clamp(transitionDebug.diffusionJitter, 0, 4),
           },
         },
       );
@@ -267,19 +277,6 @@ export function createDrawLoop({
   };
 }
 
-function safeLerp(from: number, to: number, amount: number) {
-  const safeAmount = Math.max(0, Math.min(1, amount));
-  return from + (to - from) * safeAmount;
-}
-
-function clampUnit(value: number) {
-  return clampRange(value, 0, 1);
-}
-
-function clampRange(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function stepLogoModeProgress(
   current: number,
   target: number,
@@ -287,15 +284,10 @@ function stepLogoModeProgress(
   durationSeconds: number,
 ) {
   const safeTarget = target >= 0.5 ? 1 : 0;
-  const safeDuration = clampRange(durationSeconds, 0.05, 2);
+  const safeDuration = clamp(durationSeconds, 0.05, 2);
   const step = Math.max(0, deltaSeconds) / safeDuration;
   if (Math.abs(safeTarget - current) <= step) return safeTarget;
   return current + Math.sign(safeTarget - current) * step;
-}
-
-function easeLogoModeProgress(progress: number) {
-  const t = Math.max(0, Math.min(1, progress));
-  return t * t * (3 - 2 * t);
 }
 
 function onCanvasFullyOpaque(canvas: HTMLCanvasElement, callback: () => void) {
