@@ -411,10 +411,10 @@ const connectionPresentations: Record<string, ConnectionPresentation> = {
   sentry: {
     logo: "sentry",
     docsHref: "/docs/connections",
-    keywords: ["mcp", "openapi", "errors", "issues", "events", "observability"],
-    authModes: ["apiKey"],
+    keywords: ["mcp", "openapi", "errors", "issues", "events", "observability", "oauth", "connect"],
+    authModes: ["user", "apiKey"],
     configureNote:
-      "The MCP surface uses Sentry's direct-token `Sentry-Bearer` authorization scheme; the OpenAPI surface uses a normal bearer token.",
+      "The MCP surface supports OAuth (via Vercel Connect) or Sentry's direct-token `Sentry-Bearer` scheme; the OpenAPI surface uses a normal bearer token.",
   },
   "github-rest": {
     logo: "github",

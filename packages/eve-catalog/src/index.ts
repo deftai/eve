@@ -760,8 +760,24 @@ const CONNECTION_METADATA: Readonly<
   },
   sentry: {
     categories: ["observability"],
-    keywords: ["errors", "issues", "events", "projects", "releases", "mcp", "openapi"],
+    keywords: [
+      "errors",
+      "issues",
+      "events",
+      "projects",
+      "releases",
+      "mcp",
+      "openapi",
+      "oauth",
+      "connect",
+    ],
     credentials: {
+      connect_user: {
+        type: "connect_user",
+        label: "Sentry user OAuth",
+        connector: "mcp.sentry.dev/my-agent",
+        service: "https://mcp.sentry.dev/mcp",
+      },
       api_key: bearerCredential(
         "Sentry auth token",
         "SENTRY_ACCESS_TOKEN",
@@ -769,7 +785,41 @@ const CONNECTION_METADATA: Readonly<
       ),
     },
     authByProtocol: {
-      mcp: httpHeaderAuth("apiKey", "API key", "api_key", "Sentry-Bearer"),
+      // mcp.sentry.dev is a full OAuth authorization server (authorize, token,
+      // and dynamic client registration endpoints); direct auth tokens remain
+      // supported through Sentry's non-standard `Sentry-Bearer` scheme.
+      mcp: {
+        status: "required",
+        entries: [
+          {
+            id: "user",
+            label: "User OAuth",
+            use: [
+              {
+                id: "connect_user",
+                mechanics: { source: "connect", connector: "mcp.sentry.dev/my-agent" },
+              },
+            ],
+            basis: CURATED_BASIS,
+          },
+          {
+            id: "apiKey",
+            label: "API key",
+            use: [
+              {
+                id: "api_key",
+                mechanics: {
+                  source: "http",
+                  in: "header",
+                  headerName: "Authorization",
+                  scheme: "Sentry-Bearer",
+                },
+              },
+            ],
+            basis: CURATED_BASIS,
+          },
+        ],
+      },
       openapi: httpHeaderAuth("apiKey", "API key", "api_key", "Bearer"),
     },
     mcpTransport: "streamable-http",
