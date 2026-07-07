@@ -87,6 +87,11 @@ export function createEveVercelRewriteRoute(servicePrefix: string): EveVercelRew
   };
 }
 
+export interface EveProductionConfiguration {
+  readonly proxyTarget: string;
+  readonly localServerOrigin?: string;
+}
+
 /**
  * Resolve the proxy destination for eve routes in production.
  *
@@ -94,15 +99,30 @@ export function createEveVercelRewriteRoute(servicePrefix: string): EveVercelRew
  * explicit origin override (`EVE_NUXT_PRODUCTION_ORIGIN`) or a local port.
  */
 export function resolveProductionTarget(servicePrefix: string): string {
+  return resolveProductionConfiguration(servicePrefix).proxyTarget;
+}
+
+/**
+ * Resolve production routing for eve transport, including whether a local eve
+ * production server should be auto-started for preview builds.
+ */
+export function resolveProductionConfiguration(servicePrefix: string): EveProductionConfiguration {
   if (process.env.VERCEL) {
-    return joinRoutePrefix(servicePrefix, EVE_ROUTE_PREFIX);
+    return {
+      proxyTarget: joinRoutePrefix(servicePrefix, EVE_ROUTE_PREFIX),
+    };
   }
 
   const configuredOrigin = process.env[EVE_NUXT_PRODUCTION_ORIGIN_ENV];
   if (configuredOrigin !== undefined && configuredOrigin.trim().length > 0) {
-    return joinRoutePrefix(normalizeOrigin(configuredOrigin), EVE_ROUTE_PREFIX);
+    return {
+      proxyTarget: joinRoutePrefix(normalizeOrigin(configuredOrigin), EVE_ROUTE_PREFIX),
+    };
   }
 
-  const localOrigin = `http://127.0.0.1:${String(readLocalProductionPort())}`;
-  return joinRoutePrefix(localOrigin, EVE_ROUTE_PREFIX);
+  const localServerOrigin = `http://127.0.0.1:${String(readLocalProductionPort())}`;
+  return {
+    proxyTarget: joinRoutePrefix(localServerOrigin, EVE_ROUTE_PREFIX),
+    localServerOrigin,
+  };
 }

@@ -7,6 +7,7 @@ import {
   normalizeOrigin,
   normalizeRoutePrefix,
   readLocalProductionPort,
+  resolveProductionConfiguration,
   resolveProductionTarget,
 } from "./routing.js";
 
@@ -139,5 +140,21 @@ describe("resolveProductionTarget", () => {
     expect(resolveProductionTarget(EVE_NUXT_SERVICE_PREFIX)).toBe(
       `http://127.0.0.1:5000${EVE_PROTOCOL_PREFIX}`,
     );
+  });
+});
+
+describe("resolveProductionConfiguration", () => {
+  it("includes a local server origin for preview builds off Vercel", () => {
+    expect(resolveProductionConfiguration(EVE_NUXT_SERVICE_PREFIX)).toEqual({
+      proxyTarget: `http://127.0.0.1:4274${EVE_PROTOCOL_PREFIX}`,
+      localServerOrigin: "http://127.0.0.1:4274",
+    });
+  });
+
+  it("omits local server auto-start when a remote origin is configured", () => {
+    vi.stubEnv("EVE_NUXT_PRODUCTION_ORIGIN", "https://agent.example.com");
+    expect(resolveProductionConfiguration(EVE_NUXT_SERVICE_PREFIX)).toEqual({
+      proxyTarget: `https://agent.example.com${EVE_PROTOCOL_PREFIX}`,
+    });
   });
 });

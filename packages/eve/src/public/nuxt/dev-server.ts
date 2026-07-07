@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,15 +9,14 @@ import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 import { joinRoutePrefix, normalizeOrigin } from "./routing.js";
 
 export const EVE_BASE_URL_ENV = "EVE_BASE_URL";
+export const DEFAULT_DEV_SERVER_TIMEOUT_MS = 180_000;
 
-const DEFAULT_SERVER_READY_TIMEOUT_MS = 30_000;
-const DEV_SERVER_REGISTRY_TIMEOUT_MS = 30_000;
 const DEV_SERVER_REGISTRY_POLL_MS = 100;
 const DEV_SERVER_STALE_LOCK_MS = 30_000;
 const EVE_CACHE_DIRECTORY_NAME = ".eve";
 const EVE_NUXT_DEV_SERVER_FILE_NAME = "nuxt-dev-server.json";
 const EVE_NUXT_DEV_SERVER_LOCK_FILE_NAME = "nuxt-dev-server.lock";
-const LOCAL_SERVER_URL_PATTERN = /https?:\/\/(?:\[[^\]\s]+\]|[^\s/:[\]]+)(?::\d+)?/;
+const SERVER_URL_CANDIDATE_PATTERN = /https?:\/\/[^\s"'<>]+/g;
 
 export interface EveProcessHandle {
   readonly origin: string;
@@ -30,12 +30,32 @@ export interface EveDevServerRegistry {
   readonly updatedAt: string;
 }
 
+interface EveNuxtGlobalState {
+  readonly servers: Map<string, Promise<EveProcessHandle>>;
+}
+
+const globalStateSymbol = Symbol.for("eve.nuxt.state");
+
+function getGlobalState(): EveNuxtGlobalState {
+  const globalWithState = globalThis as typeof globalThis & {
+    [globalStateSymbol]?: EveNuxtGlobalState;
+  };
+
+  globalWithState[globalStateSymbol] ??= {
+    servers: new Map(),
+  };
+
+  return globalWithState[globalStateSymbol];
+}
+
 function isNodeErrorWithCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,6 +100,44 @@ export function normalizeDevServerRegistry(value: unknown): EveDevServerRegistry
   }
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname)
+  );
+}
+
+function parseLocalServerOrigin(urlText: string): string | undefined {
+  const url = URL.parse(urlText);
+  // Dev-server discovery reads mixed subprocess output. Build metadata and
+  // dependency warnings can print unrelated URLs before eve reports its listener,
+  // but the Nuxt module only owns the app-local loopback server it started.
+  if (
+    url === null ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    !isLoopbackHostname(url.hostname) ||
+    url.port.length === 0
+  ) {
+    return undefined;
+  }
+
+  return url.origin;
+}
+
+export function findLocalServerOrigin(output: string): string | undefined {
+  for (const match of output.matchAll(SERVER_URL_CANDIDATE_PATTERN)) {
+    const candidate = match[0];
+    const origin = parseLocalServerOrigin(candidate);
+    if (origin !== undefined) {
+      return origin;
+    }
+  }
+
+  return undefined;
+}
+
 async function isEveServerHealthy(origin: string): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_000);
@@ -102,6 +160,7 @@ async function readUsableEveDevServerRegistry(appRoot: string): Promise<string |
     );
     if (registry === undefined || registry.appRoot !== appRoot) return undefined;
     if (!(await isEveServerHealthy(registry.origin))) return undefined;
+    process.env[EVE_BASE_URL_ENV] = registry.origin;
     return registry.origin;
   } catch (error) {
     if (isNodeErrorWithCode(error, "ENOENT")) return undefined;
@@ -137,10 +196,13 @@ async function removeStaleEveDevServerLock(lockPath: string): Promise<void> {
   }
 }
 
-async function acquireEveDevServerLock(appRoot: string): Promise<() => Promise<void>> {
+async function acquireEveDevServerLock(
+  appRoot: string,
+  timeoutMs: number,
+): Promise<() => Promise<void>> {
   const cacheDirectory = resolveEveCacheDirectory(appRoot);
   const lockPath = resolveEveDevServerLockPath(appRoot);
-  const deadline = Date.now() + DEV_SERVER_REGISTRY_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   await mkdir(cacheDirectory, { recursive: true });
 
   while (true) {
@@ -158,7 +220,7 @@ async function acquireEveDevServerLock(appRoot: string): Promise<() => Promise<v
       await removeStaleEveDevServerLock(lockPath);
       if (Date.now() > deadline) {
         throw new Error(
-          `Timed out after ${DEV_SERVER_REGISTRY_TIMEOUT_MS}ms waiting for another Nuxt process to start eve.`,
+          `Timed out after ${timeoutMs}ms waiting for another Nuxt process to start eve.`,
         );
       }
       await delay(DEV_SERVER_REGISTRY_POLL_MS);
@@ -175,8 +237,10 @@ function startServerProcess(input: {
   readonly command: string;
   readonly cwd: string;
   readonly env?: Record<string, string>;
+  readonly timeoutMs?: number;
 }): Promise<EveProcessHandle> {
   return new Promise((resolvePromise, reject) => {
+    const timeoutMs = input.timeoutMs ?? DEFAULT_DEV_SERVER_TIMEOUT_MS;
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       env: { ...process.env, ...input.env },
@@ -184,12 +248,8 @@ function startServerProcess(input: {
     });
     const timeout = setTimeout(() => {
       child.kill();
-      reject(
-        new Error(
-          `Timed out after ${DEFAULT_SERVER_READY_TIMEOUT_MS}ms waiting for eve to print its server URL.`,
-        ),
-      );
-    }, DEFAULT_SERVER_READY_TIMEOUT_MS);
+      reject(new Error(`Timed out after ${timeoutMs}ms waiting for eve to print its server URL.`));
+    }, timeoutMs);
 
     const cleanup = () => {
       clearTimeout(timeout);
@@ -208,14 +268,13 @@ function startServerProcess(input: {
         ),
       );
     };
-    let resolved = false;
     const handleOutput = (chunk: Buffer) => {
-      if (resolved) return;
-      const match = LOCAL_SERVER_URL_PATTERN.exec(chunk.toString("utf8"));
-      if (match === null) return;
-      resolved = true;
+      const origin = findLocalServerOrigin(chunk.toString("utf8"));
+      if (origin === undefined) {
+        return;
+      }
       cleanup();
-      resolvePromise({ origin: normalizeOrigin(match[0]), process: child });
+      resolvePromise({ origin, process: child });
     };
 
     child.once("error", handleError);
@@ -244,15 +303,41 @@ function installProcessShutdown(handle: EveProcessHandle): EveProcessHandle {
   return handle;
 }
 
-function startEveDevServer(appRoot: string): Promise<EveProcessHandle> {
+function startEveDevServer(appRoot: string, timeoutMs: number): Promise<EveProcessHandle> {
   return startServerProcess({
     args: [createEveBinaryPath(), "dev", "--no-ui", "--port", "0"],
     command: process.execPath,
     cwd: appRoot,
+    timeoutMs,
   }).then((handle) => {
     process.env[EVE_BASE_URL_ENV] = handle.origin;
     return installProcessShutdown(handle);
   });
+}
+
+function startEveProductionServer(input: {
+  readonly appRoot: string;
+  readonly origin: string;
+}): Promise<EveProcessHandle> | undefined {
+  const parsedOrigin = new URL(input.origin);
+  const port = parsedOrigin.port;
+  const serverEntry = join(input.appRoot, ".output", "server", "index.mjs");
+
+  if (!existsSync(serverEntry)) {
+    return undefined;
+  }
+
+  return startServerProcess({
+    args: [serverEntry],
+    command: process.execPath,
+    cwd: input.appRoot,
+    env: {
+      HOST: parsedOrigin.hostname,
+      NITRO_HOST: parsedOrigin.hostname,
+      NITRO_PORT: port,
+      PORT: port,
+    },
+  }).then(installProcessShutdown);
 }
 
 /**
@@ -260,24 +345,60 @@ function startEveDevServer(appRoot: string): Promise<EveProcessHandle> {
  * registered server when one exists and otherwise spawning a new one behind a
  * cross-process lock so concurrent Nuxt processes don't each boot eve.
  */
-export async function resolveSharedEveDevServer(appRoot: string): Promise<EveProcessHandle> {
+export async function resolveSharedEveDevServer(
+  appRoot: string,
+  timeoutMs: number = DEFAULT_DEV_SERVER_TIMEOUT_MS,
+): Promise<EveProcessHandle> {
   const registeredOrigin = await readUsableEveDevServerRegistry(appRoot);
   if (registeredOrigin !== undefined) {
-    process.env[EVE_BASE_URL_ENV] = registeredOrigin;
     return { origin: registeredOrigin };
   }
 
-  const releaseLock = await acquireEveDevServerLock(appRoot);
+  const releaseLock = await acquireEveDevServerLock(appRoot, timeoutMs);
   try {
     const lockedRegisteredOrigin = await readUsableEveDevServerRegistry(appRoot);
     if (lockedRegisteredOrigin !== undefined) {
-      process.env[EVE_BASE_URL_ENV] = lockedRegisteredOrigin;
       return { origin: lockedRegisteredOrigin };
     }
-    const handle = await startEveDevServer(appRoot);
+    const handle = await startEveDevServer(appRoot, timeoutMs);
     await writeEveDevServerRegistry(appRoot, handle);
     return handle;
   } finally {
     await releaseLock();
   }
+}
+
+/**
+ * Start or reuse a local eve production server for non-Vercel preview builds.
+ * Returns the loopback origin the Nuxt proxy should target.
+ */
+export async function resolveProductionEveServer(input: {
+  readonly appRoot: string;
+  readonly localServerOrigin: string;
+  readonly onProductionServerSpawned?: (child: ChildProcess) => void;
+}): Promise<string> {
+  const state = getGlobalState();
+  const key = `production:${input.appRoot}`;
+  let productionServer = state.servers.get(key);
+
+  if (productionServer === undefined) {
+    const spawnPromise = startEveProductionServer({
+      appRoot: input.appRoot,
+      origin: input.localServerOrigin,
+    });
+    if (spawnPromise === undefined) {
+      return input.localServerOrigin;
+    }
+    productionServer = spawnPromise.catch((error) => {
+      state.servers.delete(key);
+      throw error;
+    });
+    state.servers.set(key, productionServer);
+  }
+
+  const handle = await productionServer;
+  if (handle.process !== undefined) {
+    input.onProductionServerSpawned?.(handle.process);
+  }
+  return handle.origin;
 }

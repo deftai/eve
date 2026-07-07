@@ -5,14 +5,19 @@ import { addImports, defineNuxtModule, extendRouteRules } from "@nuxt/kit";
 
 import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 
-import { EVE_BASE_URL_ENV, resolveSharedEveDevServer } from "./dev-server.js";
+import {
+  DEFAULT_DEV_SERVER_TIMEOUT_MS,
+  EVE_BASE_URL_ENV,
+  resolveProductionEveServer,
+  resolveSharedEveDevServer,
+} from "./dev-server.js";
 import {
   EVE_NUXT_SERVICE_PREFIX,
   createEveVercelRewriteRoute,
   joinRoutePrefix,
   normalizeOrigin,
   normalizeRoutePrefix,
-  resolveProductionTarget,
+  resolveProductionConfiguration,
 } from "./routing.js";
 import { ensureEveVercelJson } from "./vercel-json.js";
 
@@ -24,6 +29,12 @@ const DEFAULT_EVE_BUILD_COMMAND = "eve build";
  * Options for the eve Nuxt module.
  */
 export interface EveNuxtModuleOptions {
+  /**
+   * Maximum time in milliseconds to wait for the eve development server to
+   * start, including waiting for another Nuxt process to start it. Defaults
+   * to 180000 (three minutes).
+   */
+  devServerTimeoutMs?: number;
   /**
    * Path to the eve application root, resolved relative to the Nuxt project
    * root unless absolute. Defaults to the Nuxt project root. The dev server is
@@ -58,6 +69,18 @@ function resolveApplicationRoot(nuxtRoot: string, appPath: string | undefined): 
   return isAbsolute(appPath) ? appPath : resolve(nuxtRoot, appPath);
 }
 
+function resolveDevServerTimeout(timeoutMs: number | undefined): number {
+  if (timeoutMs === undefined) {
+    return DEFAULT_DEV_SERVER_TIMEOUT_MS;
+  }
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("eve Nuxt development server timeout must be a positive number.");
+  }
+
+  return timeoutMs;
+}
+
 /**
  * Minimal view of the Nitro Vercel build-output config the module appends to.
  * The full `nitro` typing lives behind the nitropack/Nuxt augmentation, which
@@ -77,19 +100,32 @@ interface NitroVercelConfigHost {
 /**
  * Resolve the destination eve routes proxy to. In dev this is an explicit
  * `EVE_BASE_URL` or a shared dev server spawned on demand; in production it is
- * the Vercel private service or a configured origin/port.
+ * the Vercel private service, a configured origin/port, or a local eve server
+ * auto-started from `.output/server/index.mjs`.
  *
- * When a dev server is spawned by this process, `onDevServerSpawned` is invoked
- * with the child handle so the caller can wire lifecycle-scoped cleanup.
+ * When a dev or production server is spawned by this process,
+ * `onServerSpawned` is invoked with the child handle so the caller can wire
+ * lifecycle-scoped cleanup.
  */
 async function resolveEveProxyTarget(input: {
   readonly appRoot: string;
   readonly dev: boolean;
+  readonly devServerTimeoutMs: number;
   readonly servicePrefix: string;
-  readonly onDevServerSpawned?: (child: ChildProcess) => void;
+  readonly onServerSpawned?: (child: ChildProcess) => void;
 }): Promise<string> {
   if (!input.dev) {
-    return resolveProductionTarget(input.servicePrefix);
+    const productionConfiguration = resolveProductionConfiguration(input.servicePrefix);
+    if (productionConfiguration.localServerOrigin !== undefined) {
+      const origin = await resolveProductionEveServer({
+        appRoot: input.appRoot,
+        localServerOrigin: productionConfiguration.localServerOrigin,
+        onProductionServerSpawned: input.onServerSpawned,
+      });
+      return joinRoutePrefix(origin, EVE_ROUTE_PREFIX);
+    }
+
+    return productionConfiguration.proxyTarget;
   }
 
   const configuredEveBaseUrl = process.env[EVE_BASE_URL_ENV]?.trim();
@@ -97,9 +133,9 @@ async function resolveEveProxyTarget(input: {
     return joinRoutePrefix(normalizeOrigin(configuredEveBaseUrl), EVE_ROUTE_PREFIX);
   }
 
-  const handle = await resolveSharedEveDevServer(input.appRoot);
+  const handle = await resolveSharedEveDevServer(input.appRoot, input.devServerTimeoutMs);
   if (handle.process !== undefined) {
-    input.onDevServerSpawned?.(handle.process);
+    input.onServerSpawned?.(handle.process);
   }
 
   return joinRoutePrefix(handle.origin, EVE_ROUTE_PREFIX);
@@ -127,11 +163,18 @@ export default defineNuxtModule<EveNuxtModuleOptions>({
     const nuxtRoot = nuxt.options.rootDir;
     const appRoot = resolveApplicationRoot(nuxtRoot, options.eveRoot);
     const servicePrefix = normalizeRoutePrefix(options.servicePrefix ?? EVE_NUXT_SERVICE_PREFIX);
+    const devServerTimeoutMs = resolveDevServerTimeout(options.devServerTimeoutMs);
     const shouldConfigureVercelJson = options.configureVercelJson !== false;
 
     // Auto-import the Vue composable so app code can call `useEveAgent()`
     // without an explicit import, matching Nuxt's composable conventions.
     addImports({ name: "useEveAgent", from: "eve/vue" });
+
+    extendRouteRules(`${servicePrefix}/**`, {
+      headers: {
+        "cache-control": "no-store",
+      },
+    });
 
     // On Vercel the eve app deploys as a sibling experimental service. A Nitro
     // runtime `proxy` rule can't reach it — the proxied request loops back into
@@ -159,8 +202,9 @@ export default defineNuxtModule<EveNuxtModuleOptions>({
         const proxyTarget = await resolveEveProxyTarget({
           appRoot,
           dev: nuxt.options.dev,
+          devServerTimeoutMs,
           servicePrefix,
-          onDevServerSpawned: (child) => {
+          onServerSpawned: (child) => {
             // Prefer Nuxt's lifecycle for cleanup so the dev server is torn
             // down on graceful shutdown and dev restarts. The process-exit
             // guard in dev-server.ts remains as a fallback for non-graceful

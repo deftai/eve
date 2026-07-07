@@ -30,11 +30,32 @@ export default defineNuxtConfig({
 });
 ```
 
-The `eve` key accepts only two options, `eveRoot` and `eveBuildCommand`.
+### `eve/nuxt` options
+
+All fields are optional.
+
+| Option                | Type      | Default                | Purpose                                                                                                                                          |
+| --------------------- | --------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `eveRoot`             | `string`  | Nuxt project root      | Path to the eve app root, relative to the Nuxt project root unless absolute. Set it when the agent lives outside the Nuxt project or in a layer. |
+| `eveBuildCommand`     | `string`  | `"eve build"`          | Build command for the generated eve Vercel service. Use it when the eve service needs project-specific prework, without changing the Nuxt build. |
+| `servicePrefix`       | `string`  | `"/_eve_internal/eve"` | Private Vercel route namespace for the eve service. Must match the eve service's `routePrefix` in `vercel.json` when you set it manually.        |
+| `configureVercelJson` | `boolean` | `true`                 | When `false`, skip creating or updating `vercel.json`. Use this when you manage dual-service deploy config yourself (for example in a monorepo). |
+| `devServerTimeoutMs`  | `number`  | `180000`               | Maximum time to wait for the eve development server to become available.                                                                         |
+
+For slow cold starts, increase the development timeout:
+
+```ts
+export default defineNuxtConfig({
+  modules: ["eve/nuxt"],
+  eve: {
+    devServerTimeoutMs: 300_000,
+  },
+});
+```
 
 ## Call the composable
 
-`useEveAgent` (`eve/vue`) is auto-imported, so a component calls it without an explicit import and without naming a host:
+`useEveAgent` (`eve/vue`) is auto-imported, so a component calls it without an explicit import and without naming a host. Cookie-based auth (Better Auth or any session cookie) needs no extra wiring, since the browser already sends those cookies on every eve request. For non-cookie schemes, attach the credentials yourself:
 
 ```vue
 <script setup lang="ts">
@@ -73,7 +94,7 @@ For a public demo, use `none()` (also from `eve/channels/auth`) to skip authenti
 
 ## Dev vs deploy topology
 
-- **Local dev.** `npm run dev` starts the eve dev server next to `nuxt dev` and proxies the eve routes through it. As far as the browser knows, everything is the Nuxt origin.
+- **Local dev.** `npm run dev` starts the eve dev server next to `nuxt dev` and proxies the eve routes through it. As far as the browser knows, everything is the Nuxt origin. Set `EVE_BASE_URL` to reuse an already-running eve dev server instead of spawning one.
 - **Vercel.** A single Vercel project carries both the Nuxt app and the eve runtime. The web app stays public; the runtime sits behind it on the same origin. Set `eveBuildCommand` when the agent needs its own build step:
 
   ```ts
@@ -85,12 +106,19 @@ For a public demo, use `none()` (also from `eve/channels/auth`) to skip authenti
   });
   ```
 
-- **Non-Vercel hosts.** Point Nuxt at a separate eve origin with `EVE_NUXT_PRODUCTION_ORIGIN`. To override the local port (default `4274`), use `EVE_NUXT_PRODUCTION_PORT`:
+- **Local production build.** `eve build && nuxt build && nuxt preview` serves the eve runtime from its built `.output/server/index.mjs` on a stable local port (`4274`) and proxies the eve routes to it. Change the port with `EVE_NUXT_PRODUCTION_PORT`:
 
   ```bash
-  EVE_NUXT_PRODUCTION_ORIGIN=https://agent.example.com npm run build
-  EVE_NUXT_PRODUCTION_PORT=5000 npm run build && npm run preview
+  EVE_NUXT_PRODUCTION_PORT=5000 eve build && nuxt build && nuxt preview
   ```
+
+- **Non-Vercel hosts.** When the eve service lives on a separate origin, point Nuxt at it with `EVE_NUXT_PRODUCTION_ORIGIN`:
+
+  ```bash
+  EVE_NUXT_PRODUCTION_ORIGIN=https://agent.example.com nuxt build && nuxt preview
+  ```
+
+The module also injects a `cache-control: no-store` route rule for the private eve service prefix (default `/_eve_internal/**`).
 
 ## What to read next
 

@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeDevServerRegistry } from "./dev-server.js";
+import { findLocalServerOrigin, normalizeDevServerRegistry } from "./dev-server.js";
+
+describe("findLocalServerOrigin", () => {
+  it("ignores unrelated URLs and accepts a loopback listener with a port", () => {
+    const output = [
+      'dependency metadata: "homepage": "https://rolldown.rs/"',
+      "docs: open http://localhost for details",
+      "dev server listening at http://127.0.0.1:33449",
+    ].join("\n");
+
+    expect(findLocalServerOrigin(output)).toBe("http://127.0.0.1:33449");
+  });
+
+  it("ignores loopback URLs without an explicit port", () => {
+    expect(findLocalServerOrigin("docs: open http://localhost for details\n")).toBeUndefined();
+  });
+});
 
 describe("normalizeDevServerRegistry", () => {
   it("normalizes a well-formed record and canonicalizes the origin", () => {
