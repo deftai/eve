@@ -4,7 +4,7 @@ import { Input } from "@vercel/geistdocs/components/input";
 import { InputGroup, InputGroupAddon } from "@vercel/geistdocs/components/input-group";
 import { SearchIcon } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type GalleryIntegration,
   protocolBadgeClassName,
@@ -94,9 +94,14 @@ const IntegrationRow = ({ integration }: { integration: GalleryIntegration }) =>
   );
 };
 
+/** Rows rendered initially and added per scroll increment. */
+const PAGE_SIZE = 120;
+
 export const Gallery = ({ integrations }: GalleryProps) => {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
 
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -127,7 +132,21 @@ export const Gallery = ({ integrations }: GalleryProps) => {
       return haystack.includes(normalized);
     });
   }, [integrations, filter, query]);
-  const generatedCount = results.filter((integration) => integration.source === "generated").length;
+  const visibleResults = results.slice(0, visibleCount);
+
+  useEffect(() => {
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((count) => count + PAGE_SIZE);
+        }
+      },
+      { rootMargin: "1600px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [sentinel]);
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
@@ -142,7 +161,10 @@ export const Gallery = ({ integrations }: GalleryProps) => {
                   : "text-gray-900 hover:bg-gray-100/40 hover:text-gray-1000",
               )}
               key={value}
-              onClick={() => setFilter(value)}
+              onClick={() => {
+                setFilter(value);
+                setVisibleCount(PAGE_SIZE);
+              }}
               type="button"
             >
               {label}
@@ -156,29 +178,28 @@ export const Gallery = ({ integrations }: GalleryProps) => {
           <Input
             aria-label="Search integrations"
             className="h-full border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setVisibleCount(PAGE_SIZE);
+            }}
             placeholder="Search integrations"
             value={query}
           />
         </InputGroup>
       </div>
 
-      <div className="flex flex-col gap-1 text-gray-800 text-sm">
-        {FILTER_DESCRIPTIONS[filter] ? <p>{FILTER_DESCRIPTIONS[filter]}</p> : null}
-        <p>
-          Showing all {results.length.toLocaleString()} integrations
-          {generatedCount > 0
-            ? `, including ${generatedCount.toLocaleString()} MCP servers and OpenAPI specs from public registries`
-            : ""}
-          .
-        </p>
-      </div>
+      {FILTER_DESCRIPTIONS[filter] ? (
+        <p className="text-gray-800 text-sm">{FILTER_DESCRIPTIONS[filter]}</p>
+      ) : null}
 
       {results.length > 0 ? (
         <div className="overflow-hidden rounded-lg border bg-background-100">
-          {results.map((integration) => (
+          {visibleResults.map((integration) => (
             <IntegrationRow integration={integration} key={integration.slug} />
           ))}
+          {visibleResults.length < results.length ? (
+            <div aria-hidden className="h-px" ref={setSentinel} />
+          ) : null}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed py-16 text-center">
