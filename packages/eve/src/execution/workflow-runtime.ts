@@ -86,10 +86,9 @@ export const turnWorkflowReference = {
 };
 
 /**
- * Creates a workflow-backed runtime whose long-lived driver owns the
- * event stream and dispatches each turn as a child workflow run.
+ * Creates the Vercel Workflow-backed {@link Runtime} implementation.
  */
-export function createWorkflowRuntime(config: {
+export function createVercelWorkflowRuntime(config: {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly nodeId?: string;
 }): Runtime {
@@ -249,3 +248,9 @@ function normalizeWorkflowHook(value: unknown): WorkflowHookRecord {
     runId,
   };
 }
+
+export {
+  createRuntimeFromDurabilityBackend,
+  createWorkflowRuntime,
+  type CreateRuntimeFromDurabilityBackendConfig,
+} from "#execution/durability/runtime-factory.js";

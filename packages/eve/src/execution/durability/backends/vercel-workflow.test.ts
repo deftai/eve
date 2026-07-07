@@ -65,6 +65,16 @@ describe("createVercelDurabilityBackend", () => {
       await import("#execution/durability/backends/vercel-workflow.js");
     expect(createVercelDurabilityBackend().name).toBe(VERCEL_DURABILITY_BACKEND_NAME);
   });
+
+  it("returns a live binding with port and shutdown", async () => {
+    const { createVercelDurabilityBackend } =
+      await import("#execution/durability/backends/vercel-workflow.js");
+    const binding = await createVercelDurabilityBackend().createBinding({
+      runtimeContext: { appRoot: "/tmp" },
+    });
+    expect(binding.port.capabilities.inboxes).toBe(true);
+    await expect(binding.shutdown()).resolves.toBeUndefined();
+  });
 });
 
 describe("in-memory vs vercel port parity (inbox claim)", () => {

@@ -102,16 +102,15 @@ export function createVercelDurabilityPort(context: VercelDurabilityPortContext)
 
 /**
  * Constructs the production durability backend wrapping `@workflow/core`.
- *
- * Phase 1 exposes the port factory; runtime binding wire-up lands in Phase 2.
  */
 export function createVercelDurabilityBackend(): DurabilityBackend {
   return {
     name: VERCEL_DURABILITY_BACKEND_NAME,
     async createBinding() {
-      throw new Error(
-        "Vercel durability backend binding is not wired until Phase 2; use createVercelDurabilityPort() from workflow entrypoints.",
-      );
+      return {
+        port: createVercelDurabilityPort({ sessionId: "binding" }),
+        async shutdown() {},
+      };
     },
   };
 }
