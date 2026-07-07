@@ -1,0 +1,22 @@
+{
+  "vBRIEFInfo": {
+    "version": "0.6",
+    "description": "Deft strategy chaining state for DurabilityBackend work",
+    "updated": "2026-07-07T00:00:00Z"
+  },
+  "plan": {
+    "title": "DurabilityBackend planning session",
+    "status": "running",
+    "completedStrategies": {
+      "research": {
+        "runCount": 1,
+        "artifactPaths": [
+          "vbrief/proposed/2026-07-07-durability-backend-research.vbrief.json"
+        ]
+      }
+    },
+    "artifacts": [
+      "vbrief/proposed/2026-07-07-durability-backend-research.vbrief.json"
+    ]
+  }
+}
