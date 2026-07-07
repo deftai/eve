@@ -161,13 +161,16 @@ export function createPointerController({
   syncPointerInteractionMode(state, coarsePointerRef.current);
   window.addEventListener("pointermove", onPointerMove, { passive: true });
   window.addEventListener("scroll", invalidateCanvasRect, { passive: true });
+  window.addEventListener("resize", invalidateCanvasRect, { passive: true });
   window.addEventListener("pointerout", deactivateBrush, { passive: true });
   window.addEventListener("blur", deactivateBrush);
 
   return {
+    invalidateCanvasRect,
     detach() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("scroll", invalidateCanvasRect);
+      window.removeEventListener("resize", invalidateCanvasRect);
       window.removeEventListener("pointerout", deactivateBrush);
       window.removeEventListener("blur", deactivateBrush);
     },

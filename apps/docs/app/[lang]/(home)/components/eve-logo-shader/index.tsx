@@ -162,21 +162,25 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
     resetCanvasVisibility(canvas);
     setRevealed(false);
 
+    let invalidatePointerCanvasRect = () => {};
     const updateCanvasLayout = () => {
       const element = containerRef.current;
       if (!element) return;
       const rect = element.getBoundingClientRect();
       canvasLayoutRef.current = { width: rect.width, height: rect.height };
+      invalidatePointerCanvasRect();
     };
     updateCanvasLayout();
     const resizeObserver = new ResizeObserver((entries) => {
       const size = entries[0]?.contentRect;
       if (size) canvasLayoutRef.current = { width: size.width, height: size.height };
+      invalidatePointerCanvasRect();
     });
     if (containerRef.current) resizeObserver.observe(containerRef.current);
     const dprWatcher = createDevicePixelRatio({
       onChange: (dpr) => {
         devicePixelRatioRef.current = dpr;
+        invalidatePointerCanvasRect();
       },
     });
     devicePixelRatioRef.current = dprWatcher.dpr;
@@ -189,6 +193,7 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
       canvasLayoutRef,
       devicePixelRatioRef,
     });
+    invalidatePointerCanvasRect = pointerController.invalidateCanvasRect;
 
     const cleanupSetup = () => {
       state.cancelled = true;
