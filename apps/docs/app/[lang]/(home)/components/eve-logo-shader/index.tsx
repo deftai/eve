@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Device, type VGPUAdapter } from "@vgpu/core";
-import { createLifecycle, type Lifecycle } from "phase";
+import { createLifecycle, prefersReducedMotion as prefersReducedMotionSync, type Lifecycle } from "phase";
 import { usePrefersReducedMotion } from "phase/react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { meshAspect } from "./mesh";
@@ -114,7 +114,8 @@ export function EveLogoShader({ audience = "humans" }: { audience?: InstallAudie
     resetCanvasVisibility(canvas);
     setRevealed(false);
 
-    if (prefersReducedMotion) {
+    const resolvedPrefersReducedMotion = prefersReducedMotion || prefersReducedMotionSync();
+    if (resolvedPrefersReducedMotion) {
       // No WebGPU animation will run (reduced motion or the preference hasn't
       // resolved yet), so the canvas stays hidden. Show the static light
       // fallback to mirror the dark fallback, which is always visible until
