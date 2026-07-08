@@ -59,12 +59,7 @@
   "$defs": {
     "ScanResult": {
       "type": "object",
-      "required": [
-        "passed",
-        "scanned_at",
-        "scanner_version",
-        "flags"
-      ],
+      "required": ["passed", "scanned_at", "scanner_version", "flags"],
       "description": "Quarantine scan outcome (#583 / scanner v2). passed=false means the credentials category fired (hard-fail severity); fence-and-pass / strip-and-pass severities still record flags but passed remains true and content.md is written.",
       "properties": {
         "passed": {
@@ -92,28 +87,16 @@
     },
     "ScanFlag": {
       "type": "object",
-      "required": [
-        "category",
-        "severity",
-        "detail"
-      ],
+      "required": ["category", "severity", "detail"],
       "properties": {
         "category": {
           "type": "string",
-          "enum": [
-            "injection-heading",
-            "credentials",
-            "invisible-unicode"
-          ],
+          "enum": ["injection-heading", "credentials", "invisible-unicode"],
           "description": "Scanner v2 category. v1 baseline ships these three; shell-cmd-injection and exfiltration-patterns are deferred to v2."
         },
         "severity": {
           "type": "string",
-          "enum": [
-            "fence-and-pass",
-            "hard-fail",
-            "strip-and-pass"
-          ],
+          "enum": ["fence-and-pass", "hard-fail", "strip-and-pass"],
           "description": "Per-category severity. injection-heading=fence-and-pass; credentials=hard-fail; invisible-unicode=strip-and-pass. Per-category severity is a documented epic departure from the design doc's uniform hard-fail (rationale: hard-fail-on-injection-headings would break legitimate '## STEP' template headings)."
         },
         "detail": {

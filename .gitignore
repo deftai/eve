@@ -59,3 +59,21 @@ Thumbs.db
 .vercel
 .env*.local
 .env*
+
+# Deft framework: ignore local-only caches and scratch directories
+# Hybrid deposit (#1942): reconstituted by `directive init` like node_modules.
+# The vendored→hybrid un-commit for existing tracked deposits is #1941.
+.deft-cache/
+.deft/ritual-state.json
+.deft/last-session.json
+.deft/routing.local.json
+vbrief/.eval/candidates.jsonl
+vbrief/.eval/summary-history.jsonl
+vbrief/.eval/scope-lifecycle.jsonl
+vbrief/.eval/decompositions/
+vbrief/.eval/doctor-state.json
+vbrief/*.lock
+.deft/core.bak-*/
+.deft/*.bak-*
+*.premigrate.*
+.deft/core/

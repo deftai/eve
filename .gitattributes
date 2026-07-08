@@ -1,0 +1,5 @@
+# Deft framework: the vendored payload is packaged framework code, not
+# consumer source. Mark it generated + vendored so language stats and
+# diffs treat .deft/core/** as machine-managed (#1430).
+.deft/core/** linguist-generated=true
+.deft/core/** linguist-vendored=true

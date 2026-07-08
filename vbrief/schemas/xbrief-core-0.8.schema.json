@@ -4,10 +4,7 @@
   "title": "xBRIEF Core Schema v0.8",
   "description": "JSON Schema for xBRIEF core document structure (v0.8). Adds PlanItem type (task/group/milestone/epic), summary, planRefs, extension property namespace (x-<consumer>/), Source/Confidence narrative keys, and reference type registry.",
   "type": "object",
-  "required": [
-    "xBRIEFInfo",
-    "plan"
-  ],
+  "required": ["xBRIEFInfo", "plan"],
   "properties": {
     "xBRIEFInfo": {
       "$ref": "#/$defs/xBRIEFInfo"
@@ -25,23 +22,17 @@
   "not": {
     "anyOf": [
       {
-        "required": [
-          "todoList"
-        ]
+        "required": ["todoList"]
       },
       {
-        "required": [
-          "playbook"
-        ]
+        "required": ["playbook"]
       }
     ]
   },
   "$defs": {
     "xBRIEFInfo": {
       "type": "object",
-      "required": [
-        "version"
-      ],
+      "required": ["version"],
       "properties": {
         "version": {
           "type": "string",
@@ -73,11 +64,7 @@
     },
     "Plan": {
       "type": "object",
-      "required": [
-        "title",
-        "status",
-        "items"
-      ],
+      "required": ["title", "status", "items"],
       "properties": {
         "id": {
           "type": "string",
@@ -238,10 +225,7 @@
     },
     "PlanItem": {
       "type": "object",
-      "required": [
-        "title",
-        "status"
-      ],
+      "required": ["title", "status"],
       "properties": {
         "id": {
           "type": "string",
@@ -311,12 +295,7 @@
           "$ref": "#/$defs/dateTime"
         },
         "priority": {
-          "enum": [
-            "low",
-            "medium",
-            "high",
-            "critical"
-          ]
+          "enum": ["low", "medium", "high", "critical"]
         },
         "dueDate": {
           "$ref": "#/$defs/dateTime"
@@ -357,11 +336,7 @@
           }
         },
         "classification": {
-          "enum": [
-            "public",
-            "private",
-            "confidential"
-          ]
+          "enum": ["public", "private", "confidential"]
         },
         "relatedComments": {
           "type": "array",
@@ -426,11 +401,7 @@
     },
     "Edge": {
       "type": "object",
-      "required": [
-        "from",
-        "to",
-        "type"
-      ],
+      "required": ["from", "to", "type"],
       "properties": {
         "from": {
           "type": "string",
@@ -449,10 +420,7 @@
     },
     "Participant": {
       "type": "object",
-      "required": [
-        "id",
-        "role"
-      ],
+      "required": ["id", "role"],
       "properties": {
         "id": {
           "type": "string"
@@ -464,30 +432,17 @@
           "type": "string"
         },
         "role": {
-          "enum": [
-            "owner",
-            "assignee",
-            "reviewer",
-            "observer",
-            "contributor"
-          ]
+          "enum": ["owner", "assignee", "reviewer", "observer", "contributor"]
         },
         "status": {
-          "enum": [
-            "accepted",
-            "declined",
-            "tentative",
-            "needsAction"
-          ]
+          "enum": ["accepted", "declined", "tentative", "needsAction"]
         }
       },
       "additionalProperties": true
     },
     "URI": {
       "type": "object",
-      "required": [
-        "uri"
-      ],
+      "required": ["uri"],
       "properties": {
         "uri": {
           "type": "string"
@@ -517,10 +472,7 @@
         },
         {
           "type": "object",
-          "required": [
-            "uri",
-            "type"
-          ],
+          "required": ["uri", "type"],
           "properties": {
             "type": {
               "type": "string",
@@ -556,17 +508,10 @@
     },
     "RecurrenceRule": {
       "type": "object",
-      "required": [
-        "frequency"
-      ],
+      "required": ["frequency"],
       "properties": {
         "frequency": {
-          "enum": [
-            "daily",
-            "weekly",
-            "monthly",
-            "yearly"
-          ]
+          "enum": ["daily", "weekly", "monthly", "yearly"]
         },
         "interval": {
           "type": "integer",
@@ -582,15 +527,7 @@
         "byDay": {
           "type": "array",
           "items": {
-            "enum": [
-              "MO",
-              "TU",
-              "WE",
-              "TH",
-              "FR",
-              "SA",
-              "SU"
-            ]
+            "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
           }
         },
         "byMonth": {
@@ -614,21 +551,13 @@
     },
     "Reminder": {
       "type": "object",
-      "required": [
-        "trigger",
-        "action"
-      ],
+      "required": ["trigger", "action"],
       "properties": {
         "trigger": {
           "type": "string"
         },
         "action": {
-          "enum": [
-            "display",
-            "email",
-            "webhook",
-            "audio"
-          ]
+          "enum": ["display", "email", "webhook", "audio"]
         },
         "description": {
           "type": "string"
@@ -638,20 +567,13 @@
     },
     "Agent": {
       "type": "object",
-      "required": [
-        "id",
-        "type"
-      ],
+      "required": ["id", "type"],
       "properties": {
         "id": {
           "type": "string"
         },
         "type": {
-          "enum": [
-            "human",
-            "aiAgent",
-            "system"
-          ]
+          "enum": ["human", "aiAgent", "system"]
         },
         "name": {
           "type": "string"
@@ -670,12 +592,7 @@
     },
     "Change": {
       "type": "object",
-      "required": [
-        "sequence",
-        "timestamp",
-        "agent",
-        "operation"
-      ],
+      "required": ["sequence", "timestamp", "agent", "operation"],
       "properties": {
         "sequence": {
           "type": "integer",
@@ -688,13 +605,7 @@
           "$ref": "#/$defs/Agent"
         },
         "operation": {
-          "enum": [
-            "create",
-            "update",
-            "delete",
-            "fork",
-            "merge"
-          ]
+          "enum": ["create", "update", "delete", "fork", "merge"]
         },
         "reason": {
           "type": "string"
@@ -721,11 +632,7 @@
     },
     "Fork": {
       "type": "object",
-      "required": [
-        "parentUid",
-        "parentSequence",
-        "forkedAt"
-      ],
+      "required": ["parentUid", "parentSequence", "forkedAt"],
       "properties": {
         "parentUid": {
           "type": "string"
@@ -741,23 +648,14 @@
           "type": "string"
         },
         "mergeStatus": {
-          "enum": [
-            "unmerged",
-            "mergePending",
-            "merged",
-            "conflict"
-          ]
+          "enum": ["unmerged", "mergePending", "merged", "conflict"]
         }
       },
       "additionalProperties": true
     },
     "Lock": {
       "type": "object",
-      "required": [
-        "agent",
-        "acquiredAt",
-        "type"
-      ],
+      "required": ["agent", "acquiredAt", "type"],
       "properties": {
         "agent": {
           "$ref": "#/$defs/Agent"
@@ -769,10 +667,7 @@
           "$ref": "#/$defs/dateTime"
         },
         "type": {
-          "enum": [
-            "soft",
-            "hard"
-          ]
+          "enum": ["soft", "hard"]
         }
       },
       "additionalProperties": true

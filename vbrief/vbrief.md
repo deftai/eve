@@ -50,26 +50,26 @@ vbrief/
 
 ### Root-Level Files
 
-| File | Purpose | Lifecycle |
-|------|---------|----------|
-| `PROJECT-DEFINITION.vbrief.json` | Project identity gestalt — `narratives` for identity (overview, tech stack, architecture, risks/unknowns, config), `items` as scope registry; uses the canonical v0.6 schema | Durable (regenerated on demand) |
-| `specification.vbrief.json` | Project spec source of truth | Durable (never deleted) |
-| `specification-{name}.vbrief.json` | Add-on spec with `planRef` back to main spec | Durable |
-| `plan.vbrief.json` | Session-level tactical plan; the *how right now*; carries `planRef` to scope vBRIEFs | Session-durable |
-| `continue.vbrief.json` | Interruption recovery checkpoint; carries `planRef` to scope vBRIEFs | Ephemeral (consumed on resume) |
-| `playbook-{name}.vbrief.json` | Reusable operational knowledge | Permanent |
+| File                               | Purpose                                                                                                                                                                      | Lifecycle                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `PROJECT-DEFINITION.vbrief.json`   | Project identity gestalt — `narratives` for identity (overview, tech stack, architecture, risks/unknowns, config), `items` as scope registry; uses the canonical v0.6 schema | Durable (regenerated on demand) |
+| `specification.vbrief.json`        | Project spec source of truth                                                                                                                                                 | Durable (never deleted)         |
+| `specification-{name}.vbrief.json` | Add-on spec with `planRef` back to main spec                                                                                                                                 | Durable                         |
+| `plan.vbrief.json`                 | Session-level tactical plan; the _how right now_; carries `planRef` to scope vBRIEFs                                                                                         | Session-durable                 |
+| `continue.vbrief.json`             | Interruption recovery checkpoint; carries `planRef` to scope vBRIEFs                                                                                                         | Ephemeral (consumed on resume)  |
+| `playbook-{name}.vbrief.json`      | Reusable operational knowledge                                                                                                                                               | Permanent                       |
 
 ### Scope vBRIEFs and Lifecycle Folders
 
 Individual units of work (features, bugs, initiatives) live as scope vBRIEFs in five lifecycle folders:
 
-| Folder | Status Values | Description |
-|--------|---------------|-------------|
-| `proposed/` | `draft`, `proposed` | Ideas and proposals, not yet committed |
-| `pending/` | `approved`, `pending` | Accepted backlog, ready for work |
-| `active/` | `running`, `blocked` | In progress; `blocked` is temporary — stays in `active/` |
+| Folder       | Status Values         | Description                                                        |
+| ------------ | --------------------- | ------------------------------------------------------------------ |
+| `proposed/`  | `draft`, `proposed`   | Ideas and proposals, not yet committed                             |
+| `pending/`   | `approved`, `pending` | Accepted backlog, ready for work                                   |
+| `active/`    | `running`, `blocked`  | In progress; `blocked` is temporary — stays in `active/`           |
 | `completed/` | `completed`, `failed` | Done — terminal state (`failed` is v0.6+ for terminal non-success) |
-| `cancelled/` | `cancelled` | Rejected/abandoned — restorable to `proposed/` |
+| `cancelled/` | `cancelled`           | Rejected/abandoned — restorable to `proposed/`                     |
 
 ### Status-Driven Moves
 
@@ -234,6 +234,7 @@ For `kind = "story"` and `swarm.readiness = "ready"`:
 Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement work MAY use `swarm.readiness = "needs_refinement"`, but `task swarm:readiness` fails non-zero for both because neither state is eligible for concurrent worker allocation.
 
 **Epic → Stories** (via `references`):
+
 ```json
 {
   "vBRIEFInfo": { "version": "0.6" },
@@ -241,14 +242,23 @@ Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement wor
     "title": "Auth system overhaul",
     "status": "running",
     "references": [
-      { "type": "x-vbrief/plan", "uri": "active/2026-04-12-oauth-flow.vbrief.json", "TrustLevel": "internal" },
-      { "type": "x-vbrief/plan", "uri": "active/2026-04-12-session-mgmt.vbrief.json", "TrustLevel": "internal" }
+      {
+        "type": "x-vbrief/plan",
+        "uri": "active/2026-04-12-oauth-flow.vbrief.json",
+        "TrustLevel": "internal"
+      },
+      {
+        "type": "x-vbrief/plan",
+        "uri": "active/2026-04-12-session-mgmt.vbrief.json",
+        "TrustLevel": "internal"
+      }
     ]
   }
 }
 ```
 
 **Story → Epic** (via `planRef`):
+
 ```json
 {
   "vBRIEFInfo": { "version": "0.6" },
@@ -262,7 +272,7 @@ Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement wor
 
 ### Coexistence: Scope vBRIEFs, plan.vbrief.json, and continue.vbrief.json
 
-Scope vBRIEFs are durable scope records (the *what*); `plan.vbrief.json` remains the ephemeral session-level tactical plan (the *how right now*); `continue.vbrief.json` remains the interruption checkpoint. Both gain a parent reference to scope vBRIEFs via `planRef`.
+Scope vBRIEFs are durable scope records (the _what_); `plan.vbrief.json` remains the ephemeral session-level tactical plan (the _how right now_); `continue.vbrief.json` remains the interruption checkpoint. Both gain a parent reference to scope vBRIEFs via `planRef`.
 
 - **Scope vBRIEF** — acceptance criteria, scope definition, origin provenance. Durable across sessions. Shared between agents.
 - **plan.vbrief.json** — granular implementation steps for this session. Session-durable. Agent-private.
@@ -530,7 +540,7 @@ The synthesized project identity — what this project IS right now. Uses the ca
 
 ## plan.vbrief.json
 
-The single active work plan. Unifies what were previously separate todo, plan, and progress files. When scope vBRIEFs are in use, plan.vbrief.json is the session-level tactical plan (the *how right now*) and carries a `planRef` to the scope vBRIEF(s) being implemented.
+The single active work plan. Unifies what were previously separate todo, plan, and progress files. When scope vBRIEFs are in use, plan.vbrief.json is the session-level tactical plan (the _how right now_) and carries a `planRef` to the scope vBRIEF(s) being implemented.
 
 **Status lifecycle per task:** `pending` → `running` → `completed` / `blocked` / `failed` / `cancelled`
 
@@ -574,10 +584,7 @@ tracks which strategies have been run and what artifacts they produced.
         "artifacts": ["auth-context.md"]
       }
     ],
-    "artifacts": [
-      "docs/research/auth-research.md",
-      "auth-context.md"
-    ],
+    "artifacts": ["docs/research/auth-research.md", "auth-context.md"],
     "items": []
   }
 }
@@ -612,6 +619,7 @@ Reusable operational patterns. Examples: `playbook-deploy.vbrief.json`, `playboo
 ## Specification Flow
 
 **Light path** (interview.md → SPECIFICATION with embedded Requirements):
+
 ```
 Interview (strategies/interview.md, Light path)
         │
@@ -630,6 +638,7 @@ SPECIFICATION.md                     ← generated, with embedded Requirements
 ```
 
 **Full path** (interview.md → PRD → SPECIFICATION with traceability):
+
 ```
 Interview (strategies/interview.md, Full path)
         │
@@ -651,6 +660,7 @@ SPECIFICATION.md                     ← generated, traces to PRD requirement ID
 ```
 
 Add-on specs follow the same flow:
+
 ```
 ./vbrief/specification-{name}.vbrief.json  →  SPECIFICATION-{name}.md
 ```
@@ -659,14 +669,14 @@ Add-on specs follow the same flow:
 
 ## Tool Mappings
 
-| Warp / agent tool       | vBRIEF equivalent                          |
-|-------------------------|--------------------------------------------|
-| `create_todo_list`      | write `./vbrief/plan.vbrief.json`          |
-| `mark_todo_as_done`     | update task `status` → `completed`         |
-| `add_todos`             | append task to `./vbrief/plan.vbrief.json` |
+| Warp / agent tool       | vBRIEF equivalent                              |
+| ----------------------- | ---------------------------------------------- |
+| `create_todo_list`      | write `./vbrief/plan.vbrief.json`              |
+| `mark_todo_as_done`     | update task `status` → `completed`             |
+| `add_todos`             | append task to `./vbrief/plan.vbrief.json`     |
 | `remove_todos`          | set task `status` → `cancelled` (never delete) |
-| session end / interrupt | write `./vbrief/continue.vbrief.json`      |
-| spec interview output   | write `./vbrief/specification.vbrief.json` |
+| session end / interrupt | write `./vbrief/continue.vbrief.json`          |
+| spec interview output   | write `./vbrief/specification.vbrief.json`     |
 
 ---
 

@@ -5,14 +5,7 @@
   "description": "Frozen interface contract for one line in vbrief/.eval/candidates.jsonl. Each line is a single JSON object capturing one triage decision. The log is append-only -- existing lines are never edited or deleted. Consumed by Story 3 (triage actions), Story 4 (triage:bulk + triage:refresh), and Story 6 (bootstrap). Field set, types, and enums are FROZEN -- new fields may only be added in additive, optional positions in a follow-up schema version.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "decision_id",
-    "timestamp",
-    "repo",
-    "issue_number",
-    "decision",
-    "actor"
-  ],
+  "required": ["decision_id", "timestamp", "repo", "issue_number", "decision", "actor"],
   "properties": {
     "decision_id": {
       "type": "string",
@@ -82,20 +75,14 @@
             "const": "mark-duplicate"
           }
         },
-        "required": [
-          "decision"
-        ]
+        "required": ["decision"]
       },
       "then": {
-        "required": [
-          "linked_to"
-        ]
+        "required": ["linked_to"]
       },
       "else": {
         "not": {
-          "required": [
-            "linked_to"
-          ]
+          "required": ["linked_to"]
         }
       }
     },
@@ -103,26 +90,17 @@
       "if": {
         "properties": {
           "decision": {
-            "enum": [
-              "reset",
-              "resume-eligible"
-            ]
+            "enum": ["reset", "resume-eligible"]
           }
         },
-        "required": [
-          "decision"
-        ]
+        "required": ["decision"]
       },
       "then": {
-        "required": [
-          "prior_decision_id"
-        ]
+        "required": ["prior_decision_id"]
       },
       "else": {
         "not": {
-          "required": [
-            "prior_decision_id"
-          ]
+          "required": ["prior_decision_id"]
         }
       }
     }

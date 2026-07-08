@@ -25,7 +25,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "description", "triggers", "path", "version", "body", "frontmatter_extra"],
+        "required": [
+          "id",
+          "description",
+          "triggers",
+          "path",
+          "version",
+          "body",
+          "frontmatter_extra"
+        ],
         "properties": {
           "id": {
             "type": "string",

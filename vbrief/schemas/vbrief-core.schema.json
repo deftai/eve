@@ -4,10 +4,7 @@
   "title": "vBRIEF Core Schema v0.6",
   "description": "JSON Schema for vBRIEF core document structure (v0.6). Uses `items` as the preferred nested PlanItem field, retains `subItems` as a deprecated compatibility alias, and adds `failed` to the shared status enum.",
   "type": "object",
-  "required": [
-    "vBRIEFInfo",
-    "plan"
-  ],
+  "required": ["vBRIEFInfo", "plan"],
   "properties": {
     "vBRIEFInfo": {
       "$ref": "#/$defs/vBRIEFInfo"
@@ -20,23 +17,17 @@
   "not": {
     "anyOf": [
       {
-        "required": [
-          "todoList"
-        ]
+        "required": ["todoList"]
       },
       {
-        "required": [
-          "playbook"
-        ]
+        "required": ["playbook"]
       }
     ]
   },
   "$defs": {
     "vBRIEFInfo": {
       "type": "object",
-      "required": [
-        "version"
-      ],
+      "required": ["version"],
       "properties": {
         "version": {
           "type": "string",
@@ -74,13 +65,7 @@
     },
     "CodeStructure": {
       "type": "object",
-      "required": [
-        "version",
-        "modules",
-        "pathOwnership",
-        "allowedPatterns",
-        "projectionManifest"
-      ],
+      "required": ["version", "modules", "pathOwnership", "allowedPatterns", "projectionManifest"],
       "properties": {
         "version": {
           "type": "string",
@@ -136,12 +121,7 @@
     },
     "CodeStructureModule": {
       "type": "object",
-      "required": [
-        "id",
-        "name",
-        "purpose",
-        "pathGlobs"
-      ],
+      "required": ["id", "name", "purpose", "pathGlobs"],
       "properties": {
         "id": {
           "$ref": "#/$defs/CodeStructureStableId"
@@ -169,10 +149,7 @@
     },
     "CodeStructurePathOwnership": {
       "type": "object",
-      "required": [
-        "pathGlob",
-        "module"
-      ],
+      "required": ["pathGlob", "module"],
       "properties": {
         "pathGlob": {
           "$ref": "#/$defs/CodeStructureRelativePath"
@@ -191,12 +168,7 @@
     },
     "CodeStructureAllowedPattern": {
       "type": "object",
-      "required": [
-        "id",
-        "module",
-        "name",
-        "description"
-      ],
+      "required": ["id", "module", "name", "description"],
       "properties": {
         "id": {
           "$ref": "#/$defs/CodeStructureStableId"
@@ -226,12 +198,7 @@
     },
     "CodeStructureProjection": {
       "type": "object",
-      "required": [
-        "path",
-        "kind",
-        "source",
-        "generated"
-      ],
+      "required": ["path", "kind", "source", "generated"],
       "properties": {
         "path": {
           "$ref": "#/$defs/CodeStructureRelativePath"
@@ -251,10 +218,7 @@
     },
     "CodeStructureFilePurposeOverride": {
       "type": "object",
-      "required": [
-        "path",
-        "purpose"
-      ],
+      "required": ["path", "purpose"],
       "properties": {
         "path": {
           "$ref": "#/$defs/CodeStructureRelativePath"
@@ -271,9 +235,7 @@
     },
     "CodeStructureGlossaryRef": {
       "type": "object",
-      "required": [
-        "term"
-      ],
+      "required": ["term"],
       "properties": {
         "term": {
           "type": "string",
@@ -287,11 +249,7 @@
     },
     "Plan": {
       "type": "object",
-      "required": [
-        "title",
-        "status",
-        "items"
-      ],
+      "required": ["title", "status", "items"],
       "properties": {
         "id": {
           "type": "string",
@@ -447,10 +405,7 @@
     },
     "PlanItem": {
       "type": "object",
-      "required": [
-        "title",
-        "status"
-      ],
+      "required": ["title", "status"],
       "properties": {
         "id": {
           "type": "string",
@@ -502,12 +457,7 @@
           "$ref": "#/$defs/dateTime"
         },
         "priority": {
-          "enum": [
-            "low",
-            "medium",
-            "high",
-            "critical"
-          ]
+          "enum": ["low", "medium", "high", "critical"]
         },
         "dueDate": {
           "$ref": "#/$defs/dateTime"
@@ -548,11 +498,7 @@
           }
         },
         "classification": {
-          "enum": [
-            "public",
-            "private",
-            "confidential"
-          ]
+          "enum": ["public", "private", "confidential"]
         },
         "relatedComments": {
           "type": "array",
@@ -624,9 +570,7 @@
     },
     "ProjectionProviderPolicy": {
       "type": "object",
-      "required": [
-        "artifactPath"
-      ],
+      "required": ["artifactPath"],
       "properties": {
         "artifactPath": {
           "$ref": "#/$defs/CodeStructureRelativePath",
@@ -643,10 +587,7 @@
       "description": "Optional validation assertion for provider identity and version.",
       "properties": {
         "provider": {
-          "type": [
-            "string",
-            "object"
-          ]
+          "type": ["string", "object"]
         },
         "name": {
           "type": "string"
@@ -662,11 +603,7 @@
     },
     "Edge": {
       "type": "object",
-      "required": [
-        "from",
-        "to",
-        "type"
-      ],
+      "required": ["from", "to", "type"],
       "properties": {
         "from": {
           "type": "string",
@@ -685,10 +622,7 @@
     },
     "Participant": {
       "type": "object",
-      "required": [
-        "id",
-        "role"
-      ],
+      "required": ["id", "role"],
       "properties": {
         "id": {
           "type": "string"
@@ -700,30 +634,17 @@
           "type": "string"
         },
         "role": {
-          "enum": [
-            "owner",
-            "assignee",
-            "reviewer",
-            "observer",
-            "contributor"
-          ]
+          "enum": ["owner", "assignee", "reviewer", "observer", "contributor"]
         },
         "status": {
-          "enum": [
-            "accepted",
-            "declined",
-            "tentative",
-            "needsAction"
-          ]
+          "enum": ["accepted", "declined", "tentative", "needsAction"]
         }
       },
       "additionalProperties": true
     },
     "URI": {
       "type": "object",
-      "required": [
-        "uri"
-      ],
+      "required": ["uri"],
       "properties": {
         "uri": {
           "type": "string"
@@ -753,10 +674,7 @@
         },
         {
           "type": "object",
-          "required": [
-            "uri",
-            "type"
-          ],
+          "required": ["uri", "type"],
           "properties": {
             "type": {
               "type": "string",
@@ -792,17 +710,10 @@
     },
     "RecurrenceRule": {
       "type": "object",
-      "required": [
-        "frequency"
-      ],
+      "required": ["frequency"],
       "properties": {
         "frequency": {
-          "enum": [
-            "daily",
-            "weekly",
-            "monthly",
-            "yearly"
-          ]
+          "enum": ["daily", "weekly", "monthly", "yearly"]
         },
         "interval": {
           "type": "integer",
@@ -818,15 +729,7 @@
         "byDay": {
           "type": "array",
           "items": {
-            "enum": [
-              "MO",
-              "TU",
-              "WE",
-              "TH",
-              "FR",
-              "SA",
-              "SU"
-            ]
+            "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
           }
         },
         "byMonth": {
@@ -850,21 +753,13 @@
     },
     "Reminder": {
       "type": "object",
-      "required": [
-        "trigger",
-        "action"
-      ],
+      "required": ["trigger", "action"],
       "properties": {
         "trigger": {
           "type": "string"
         },
         "action": {
-          "enum": [
-            "display",
-            "email",
-            "webhook",
-            "audio"
-          ]
+          "enum": ["display", "email", "webhook", "audio"]
         },
         "description": {
           "type": "string"
@@ -874,20 +769,13 @@
     },
     "Agent": {
       "type": "object",
-      "required": [
-        "id",
-        "type"
-      ],
+      "required": ["id", "type"],
       "properties": {
         "id": {
           "type": "string"
         },
         "type": {
-          "enum": [
-            "human",
-            "aiAgent",
-            "system"
-          ]
+          "enum": ["human", "aiAgent", "system"]
         },
         "name": {
           "type": "string"
@@ -906,12 +794,7 @@
     },
     "Change": {
       "type": "object",
-      "required": [
-        "sequence",
-        "timestamp",
-        "agent",
-        "operation"
-      ],
+      "required": ["sequence", "timestamp", "agent", "operation"],
       "properties": {
         "sequence": {
           "type": "integer",
@@ -924,13 +807,7 @@
           "$ref": "#/$defs/Agent"
         },
         "operation": {
-          "enum": [
-            "create",
-            "update",
-            "delete",
-            "fork",
-            "merge"
-          ]
+          "enum": ["create", "update", "delete", "fork", "merge"]
         },
         "reason": {
           "type": "string"
@@ -957,11 +834,7 @@
     },
     "Fork": {
       "type": "object",
-      "required": [
-        "parentUid",
-        "parentSequence",
-        "forkedAt"
-      ],
+      "required": ["parentUid", "parentSequence", "forkedAt"],
       "properties": {
         "parentUid": {
           "type": "string"
@@ -977,23 +850,14 @@
           "type": "string"
         },
         "mergeStatus": {
-          "enum": [
-            "unmerged",
-            "mergePending",
-            "merged",
-            "conflict"
-          ]
+          "enum": ["unmerged", "mergePending", "merged", "conflict"]
         }
       },
       "additionalProperties": true
     },
     "Lock": {
       "type": "object",
-      "required": [
-        "agent",
-        "acquiredAt",
-        "type"
-      ],
+      "required": ["agent", "acquiredAt", "type"],
       "properties": {
         "agent": {
           "$ref": "#/$defs/Agent"
@@ -1005,10 +869,7 @@
           "$ref": "#/$defs/dateTime"
         },
         "type": {
-          "enum": [
-            "soft",
-            "hard"
-          ]
+          "enum": ["soft", "hard"]
         }
       },
       "additionalProperties": true

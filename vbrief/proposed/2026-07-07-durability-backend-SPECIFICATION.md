@@ -30,14 +30,14 @@ TurnDriver     ──► DurabilityPort
 
 ## DurabilityPort (eve-owned)
 
-| Primitive | Maps from today |
-|-----------|-----------------|
-| `startSession` | `workflowEntry` + `start()` |
-| `checkpoint` | `"use step"` boundaries / `turnStep` |
-| `createInbox` / `resumeInbox` | `createHook` / `resumeHook` |
-| `appendEvent` / `readEventStream` | `getWritable` / stream APIs |
-| `startChildTurn` / `awaitChildTurn` | `turnWorkflow` child runs |
-| `registerScheduleHandler` | v1: thin delegate — Nitro cron still hits vercel path |
+| Primitive                           | Maps from today                                       |
+| ----------------------------------- | ----------------------------------------------------- |
+| `startSession`                      | `workflowEntry` + `start()`                           |
+| `checkpoint`                        | `"use step"` boundaries / `turnStep`                  |
+| `createInbox` / `resumeInbox`       | `createHook` / `resumeHook`                           |
+| `appendEvent` / `readEventStream`   | `getWritable` / stream APIs                           |
+| `startChildTurn` / `awaitChildTurn` | `turnWorkflow` child runs                             |
+| `registerScheduleHandler`           | v1: thin delegate — Nitro cron still hits vercel path |
 
 ## DurabilityBackend interface
 
@@ -71,40 +71,45 @@ export default defineAgent({
 
 ## Module layout
 
-| Path | Responsibility |
-|------|----------------|
-| `shared/durability-backend.ts` | Backend interface |
-| `shared/durability-port.ts` | Port types |
-| `execution/durability/session-driver.ts` | `workflow-entry` logic |
-| `execution/durability/turn-driver.ts` | `turn-workflow` logic |
-| `execution/durability/backends/vercel-workflow.ts` | Production adapter |
-| `execution/durability/backends/in-memory.ts` | Test/dev adapter |
-| `execution/durability/runtime-factory.ts` | `createRuntimeFromDurabilityBackend` |
-| `public/durability/` | `inMemory()` export |
+| Path                                               | Responsibility                       |
+| -------------------------------------------------- | ------------------------------------ |
+| `shared/durability-backend.ts`                     | Backend interface                    |
+| `shared/durability-port.ts`                        | Port types                           |
+| `execution/durability/session-driver.ts`           | `workflow-entry` logic               |
+| `execution/durability/turn-driver.ts`              | `turn-workflow` logic                |
+| `execution/durability/backends/vercel-workflow.ts` | Production adapter                   |
+| `execution/durability/backends/in-memory.ts`       | Test/dev adapter                     |
+| `execution/durability/runtime-factory.ts`          | `createRuntimeFromDurabilityBackend` |
+| `public/durability/`                               | `inMemory()` export                  |
 
 `internal/workflow-bundle/` stays; **only** `vercel-workflow.ts` imports it.
 
 ## Implementation phases
 
 ### Phase 0 — Types + inMemory + tests
+
 - Port/backend types
 - `inMemory()` with checkpoint, inbox, event log tests
 - No production wiring
 
 ### Phase 1 — Extract drivers
+
 - `SessionDriver` / `TurnDriver` as plain TypeScript
 - `workflow-entry.ts` / `turn-workflow.ts` remain `"use workflow"` shells delegating to drivers with `VercelDurabilityPort`
 
 ### Phase 2 — Runtime wire-up
+
 - `createWorkflowRuntime` → `createRuntimeFromDurabilityBackend(vercelWorkflow())`
 - `pnpm test:scenario` green
 
 ### Phase 3 — Experimental author hook
+
 - Compile `experimental.durability.backend` into manifest
 - Boot warning for inMemory in production
 - Export `inMemory` from `eve/durability`
 
 ### Phase 4 — Docs
+
 - `research/durability-backend.md`
 - Update `docs/concepts/execution-model-and-durability.md`
 - `pnpm docs:check`

@@ -26,17 +26,17 @@ eve's durable execution (sessions, turns, HITL, subagent child runs, schedules) 
 
 ## Locked decisions (interview)
 
-| Topic | Decision |
-|-------|----------|
-| Process | Full path → this PRD → SPECIFICATION |
-| v1 scope | Seam only |
-| Production default | `vercelWorkflow()` |
-| Dev/test opt-in | `experimental.durability.backend: inMemory()` in `agent.ts` |
-| inMemory in prod | Warn; allow with env override |
-| Port breadth | Full session driver primitives |
-| Parity | Unit + integration + scenario green; new port tests |
-| `workflow.world` | Coexists; vercel adapter uses active world |
-| Upstream | Fork-first on deftai/eve |
+| Topic              | Decision                                                    |
+| ------------------ | ----------------------------------------------------------- |
+| Process            | Full path → this PRD → SPECIFICATION                        |
+| v1 scope           | Seam only                                                   |
+| Production default | `vercelWorkflow()`                                          |
+| Dev/test opt-in    | `experimental.durability.backend: inMemory()` in `agent.ts` |
+| inMemory in prod   | Warn; allow with env override                               |
+| Port breadth       | Full session driver primitives                              |
+| Parity             | Unit + integration + scenario green; new port tests         |
+| `workflow.world`   | Coexists; vercel adapter uses active world                  |
+| Upstream           | Fork-first on deftai/eve                                    |
 
 ## Functional requirements
 

@@ -10,9 +10,7 @@
     "completedStrategies": {
       "research": {
         "runCount": 1,
-        "artifactPaths": [
-          "vbrief/proposed/2026-07-07-durability-backend-research.vbrief.json"
-        ]
+        "artifactPaths": ["vbrief/proposed/2026-07-07-durability-backend-research.vbrief.json"]
       },
       "interview": {
         "runCount": 1,
