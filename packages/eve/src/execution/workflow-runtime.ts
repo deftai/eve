@@ -26,6 +26,7 @@ import {
   type WorkflowMetadata,
 } from "#internal/workflow/runtime.js";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { CreateAgentRuntimeConfig } from "#execution/durability/runtime-factory.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
@@ -86,10 +87,9 @@ export const turnWorkflowReference = {
 };
 
 /**
- * Creates a workflow-backed runtime whose long-lived driver owns the
- * event stream and dispatches each turn as a child workflow run.
+ * Creates the Vercel Workflow-backed {@link Runtime} implementation.
  */
-export function createWorkflowRuntime(config: {
+export function createVercelWorkflowRuntime(config: {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly nodeId?: string;
 }): Runtime {
@@ -248,4 +248,23 @@ function normalizeWorkflowHook(value: unknown): WorkflowHookRecord {
   return {
     runId,
   };
+}
+
+export type {
+  CreateAgentRuntimeConfig,
+  CreateRuntimeFromDurabilityBackendConfig,
+} from "#execution/durability/runtime-factory.js";
+
+/**
+ * Workflow-step runtime factory. Always uses the Vercel workflow engine so
+ * workflow bundles do not pull optional backends into the driver graph.
+ *
+ * HTTP boot paths use {@link createAgentRuntime} to honor
+ * `experimental.durability.backend`.
+ */
+export function createWorkflowRuntime(config: CreateAgentRuntimeConfig): Runtime {
+  return createVercelWorkflowRuntime({
+    compiledArtifactsSource: config.compiledArtifactsSource,
+    nodeId: config.nodeId,
+  });
 }

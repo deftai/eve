@@ -346,7 +346,12 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       const step = createExecutionNodeStep({
         abortSignal: input.abortSignal,
         capabilities,
-        createRuntime: createWorkflowRuntime,
+        createRuntime: (runtimeConfig) =>
+          createWorkflowRuntime({
+            ...runtimeConfig,
+            durabilityBackendName:
+              bundle.resolvedAgent.config.experimental?.durability?.backendName,
+          }),
         handleEvent,
         mode,
         modelResolutionScope: {

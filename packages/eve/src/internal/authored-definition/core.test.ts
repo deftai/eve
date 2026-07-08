@@ -197,6 +197,28 @@ describe("normalizeAgentDefinition", () => {
     ).toThrow(FAILURE_MESSAGE);
   });
 
+  it("accepts an experimental durability backend", () => {
+    const definition = normalizeAgentDefinition(
+      {
+        model: "openai/gpt-5.5",
+        experimental: {
+          durability: {
+            backend: {
+              name: "inmemory",
+              createBinding: async () => ({
+                port: {} as never,
+                shutdown: async () => {},
+              }),
+            },
+          },
+        },
+      },
+      FAILURE_MESSAGE,
+    );
+
+    expect(definition.experimental?.durability?.backend.name).toBe("inmemory");
+  });
+
   it("accepts a workflow world package name", () => {
     const definition = normalizeAgentDefinition(
       {

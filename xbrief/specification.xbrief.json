@@ -1,0 +1,64 @@
+{
+  "plan": {
+    "title": "DurabilityBackend v1 SPECIFICATION",
+    "status": "approved",
+    "narratives": {
+      "Overview": "Introduce DurabilityBackend—a pluggable durability engine parallel to SandboxBackend. v1 extracts a DurabilityPort, implements vercelWorkflow() (wraps existing @workflow/core + workflow-bundle) and inMemory() (vitest/dev), and refactors execution/ orchestration into SessionDriver and TurnDriver that call the port. Public Runtime API unchanged. Authors opt into inMemory via experimental.durability.backend in root agent.ts only.",
+      "Architecture": "Layers: (1) Routes/channels call Runtime. (2) createRuntime({ durability }) selects backend from compiled manifest. (3) SessionDriver runs workflow-entry loop via port. (4) TurnDriver runs turn-workflow loop via port. (5) DurabilityBackend implements DurabilityPort. vercelWorkflow delegates to WorkflowBundleBuilder + @workflow/core. inMemory uses in-process state. experimental.workflow.world still configures World inside vercelWorkflow via installConfiguredWorkflowWorld—orthogonal axis.",
+      "DurabilityPort": "Interface primitives (eve-owned, not Workflow SDK): startSession(spec) -> SessionHandle; checkpoint(name, fn) -> T; createInbox(token) / resumeInbox(token, payload); appendEvent(sessionId, event) / readEventStream(sessionId, opts); startChildTurn(spec) / awaitChildTurn(id); registerScheduleHandler(spec) or delegateScheduleDispatch unchanged in v1. SessionHandle carries sessionId, continuationToken, metadata for reconnect. Capabilities matrix on backend documents supported features.",
+      "DurabilityBackend": "interface { readonly name: string; createRuntimeBinding(input: DurabilityBackendCreateInput): DurabilityBackendBinding }. Binding exposes port + shutdown. Factories: vercelWorkflow() default; inMemory(opts?). Name participates in diagnostics tags. No prewarm phase (unlike sandbox)—durability is per-session not template-keyed.",
+      "AuthoringAPI": "Root agent.ts only: experimental: { durability: { backend: inMemory() } }. Default when omitted: vercelWorkflow(). Compile manifest stores backend name + serialized options (mirror sandbox backend name in manifest). Reject unknown backends at compile. inMemory in production: log warning at boot if NODE_ENV=production or VERCEL=1 unless EVE_ALLOW_INMEMORY_DURABILITY=1.",
+      "ModuleLayout": "packages/eve/src/shared/durability-backend.ts — public types + DurabilityBackend interface. packages/eve/src/shared/durability-port.ts — port types. packages/eve/src/execution/durability/session-driver.ts — extracted workflow-entry logic. packages/eve/src/execution/durability/turn-driver.ts — extracted turn-workflow logic. packages/eve/src/execution/durability/backends/vercel-workflow.ts — adapter. packages/eve/src/execution/durability/backends/in-memory.ts — adapter. packages/eve/src/execution/durability/runtime-factory.ts — createRuntimeFromDurabilityBackend. packages/eve/src/public/durability/ — inMemory(), types export. internal/workflow-bundle/ unchanged location but only imported from vercel adapter.",
+      "MigrationPhases": "Phase 0: Add types + inMemory backend + tests (no wiring). Phase 1: Extract SessionDriver/TurnDriver as plain functions calling port; vercel adapter implements port by delegating to existing workflow-entry/turn-workflow bodies. Phase 2: Wire createWorkflowRuntime -> createRuntimeFromDurabilityBackend(default vercelWorkflow). Phase 3: experimental.durability.backend compile + boot wiring. Phase 4: research/durability-backend.md + docs/concepts update. Each phase: pnpm test:unit + test:integration; scenario after Phase 2.",
+      "VercelAdapter": "vercelWorkflow() implements full port by thin wrapper: checkpoint invokes existing step functions via Workflow use step bridge initially—acceptable v1 shortcut OR direct runStep inside checkpoint callback with workflow shim injected. Prefer incremental: keep workflow-entry.ts and turn-workflow.ts as workflow-marked entrypoints that call SessionDriver/TurnDriver with VercelDurabilityPort adapter passed at module boundary. Minimizes behavior drift. WorkflowBundleBuilder continues registering workflowEntry and turnWorkflow names unchanged.",
+      "InMemoryAdapter": "Process-local Map keyed by sessionId. Checkpoints serialize DurableSessionState + serializedContext return values. Inboxes: AsyncQueue per token with claim semantics mimicking hook-ownership tests. Event log: array with startIndex slice for getEventStream. Child turns: nested driver invocation in same process (no deployment routing). Schedule hook: no-op register; ScheduleDispatcher still uses createWorkflowRuntime path until v2—document as partial port coverage with delegate to vercel for schedule routes only.",
+      "Testing": "New: durability-port.in-memory.test.ts (checkpoint replay, inbox conflict, event stream). durability-vercel-parity.integration.test.ts (compare NextDriverAction sequence against fixture). Existing workflow-entry.test.ts, turn-workflow.test.ts, workflow-runtime.test.ts must pass unmodified assertions. Run via vitest.unit.config.ts and vitest.integration.config.ts. Scenario: builder.scenario.test.ts after Phase 2.",
+      "Invariants": "Runtime.run/deliver/getEventStream signatures unchanged. STABLE_WORKFLOW_NAMES unchanged for vercel path. NextDriverAction wire shape unchanged. DurableSessionState version migrations unchanged. No new packages/eve runtime dependencies. guard:invariants must pass.",
+      "Traceability": "FR-1 -> DurabilityPort + DurabilityBackend modules. FR-2 -> vercel adapter + parity integration tests. FR-3 -> normalize-agent-config experimental.durability. FR-4 -> inMemory adapter + unit tests. FR-5 -> Runtime facade unchanged. FR-6 -> workflow-bundle import only from vercel-workflow.ts. NFR-2 -> CI tier commands in PR checklist."
+    },
+    "items": [
+      {
+        "title": "Phase 0 — Port types + inMemory",
+        "status": "proposed",
+        "narratives": {
+          "Deliverables": "shared/durability-*.ts, in-memory backend, unit tests"
+        }
+      },
+      {
+        "title": "Phase 1 — SessionDriver / TurnDriver extract",
+        "status": "proposed",
+        "narratives": {
+          "Deliverables": "Plain TS drivers; workflow entrypoints delegate with Vercel port"
+        }
+      },
+      {
+        "title": "Phase 2 — Runtime factory wire-up",
+        "status": "proposed",
+        "narratives": {
+          "Deliverables": "createRuntimeFromDurabilityBackend; scenario tests green"
+        }
+      },
+      {
+        "title": "Phase 3 — experimental.durability.backend",
+        "status": "proposed",
+        "narratives": {
+          "Deliverables": "Compile manifest, boot warning, public inMemory() export"
+        }
+      },
+      {
+        "title": "Phase 4 — Docs + research/",
+        "status": "proposed",
+        "narratives": {
+          "Deliverables": "research/durability-backend.md, docs update, docs:check"
+        }
+      }
+    ]
+  },
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz",
+    "description": "DurabilityBackend v1 — how to build the execution seam",
+    "created": "2026-07-07T00:00:00Z",
+    "updated": "2026-07-07T00:00:00Z"
+  }
+}

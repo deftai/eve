@@ -1,0 +1,57 @@
+{
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz",
+    "description": "Project definition — eve monorepo identity and scope registry",
+    "created": "2026-07-08T00:00:00Z",
+    "updated": "2026-07-08T18:57:51Z"
+  },
+  "plan": {
+    "title": "PROJECT-DEFINITION",
+    "status": "running",
+    "narratives": {
+      "Overview": "eve is a filesystem-first framework for durable backend AI agents. Agents are authored as directories on disk (instructions, skills, tools, connections, channels, subagents, schedules) and compiled/run by the eve package. This monorepo (deftai/eve fork of vercel/eve) develops the framework and fixtures.",
+      "tech stack": "TypeScript, pnpm workspaces, turbo, vitest (unit/integration/scenario), Nitro host, Workflow SDK (@workflow/core) for durable execution, oxlint/oxfmt, changesets for releases.",
+      "Architecture": "packages/eve is the framework + CLI; packages/eve-catalog is internal; apps/fixtures hold shared agents; docs under docs/ and apps/docs. Runtime functionality lives in the eve package. Public APIs wrap third-party surfaces. DurabilityBackend (parallel to SandboxBackend) is the execution seam for session/turn durability.",
+      "RisksAndUnknowns": "Fork drift vs upstream vercel/eve. DurabilityBackend v1 defers in-process channel Runtime for inMemory(). Node/Homebrew linkage and Deft payload deposit require occasional operator maintenance.",
+      "Configuration": "pnpm + turbo. Experimental durability via experimental.durability.backend in agent.ts. Branch protection ON (allowDirectCommitsToMaster false). Deft pin in .deft-version; framework payload vendored under .deft/core (gitignored)."
+    },
+    "items": [
+      {
+        "id": "2026-07-07-durability-backend-research",
+        "title": "DurabilityBackend — research",
+        "status": "proposed",
+        "metadata": {
+          "source_path": "proposed/2026-07-07-durability-backend-research.xbrief.json",
+          "lifecycle_folder": "proposed"
+        }
+      },
+      {
+        "id": "2026-07-07-durability-backend",
+        "title": "DurabilityBackend v1",
+        "status": "completed",
+        "metadata": {
+          "source_path": "completed/2026-07-07-durability-backend.xbrief.json",
+          "lifecycle_folder": "completed"
+        }
+      }
+    ],
+    "metadata": {
+      "staleness_flags": []
+    },
+    "x-directive/policy": {
+      "allowDirectCommitsToMaster": false,
+      "triageScope": [
+        {
+          "rule": "labels",
+          "any-of": ["urgent", "breaking", "security", "p0", "p1"]
+        },
+        {
+          "rule": "opened-since",
+          "duration": "60d"
+        }
+      ],
+      "wipCap": 20
+    }
+  }
+}

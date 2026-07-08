@@ -19,7 +19,32 @@ The Workflow SDK is not inherently tied to Vercel. In local development and in a
 
 When a Vercel production deployment changes, the next model turn in an existing session uses that deployment's current instructions, model, and tools. The durable session keeps its conversation history and authored state, so identity-based channels such as Telegram private chats and Twilio phone-number conversations adopt agent updates without requiring a new session.
 
-Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the workflow state store or the sandbox runtime. Those are separate adapters: Workflow uses the active world implementation, and Sandbox uses the backend from `agent/sandbox` or `defaultBackend()`.
+Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the workflow state store, the durability engine, or the sandbox runtime. Those are separate adapters: durability uses the backend from `experimental.durability.backend` (default `vercelWorkflow()`), Workflow storage uses the active world implementation, and Sandbox uses the backend from `agent/sandbox` or `defaultBackend()`.
+
+## Durability backend
+
+**DurabilityBackend** is eve's pluggable execution engine for durable sessions — parallel to **SandboxBackend** for isolated bash. It owns how sessions start, checkpoint at steps, park on hooks, stream events, and dispatch child turns. Authors opt in from the root `agent.ts` only; subagents inherit the parent's engine.
+
+| Axis             | Config                            | What it swaps                                                                      |
+| ---------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
+| Execution engine | `experimental.durability.backend` | Which adapter runs session/turn orchestration (`vercelWorkflow()` or `inMemory()`) |
+| Workflow storage | `experimental.workflow.world`     | Where the Workflow SDK persists runs, hooks, and streams                           |
+
+Both axes are independent. `vercelWorkflow()` (the default when `durability.backend` is omitted) delegates to `@workflow/core` and the bundled workflow entrypoints. `experimental.workflow.world` still selects the world package on that path.
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "eve";
+import { vercelWorkflow } from "eve/durability";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-4.8",
+  experimental: {
+    durability: { backend: vercelWorkflow() }, // optional; this is the default
+  },
+});
+```
+
+`inMemory()` from `eve/durability` is an experimental process-local adapter for framework tests and future local-dev workflows. It compiles into the agent manifest, but **v1 does not wire it to the channel `Runtime`** (`run`, `deliver`, `getEventStream`). Selecting `inMemory()` for serving traffic fails at boot with an actionable error — use `vercelWorkflow()` (or omit `durability.backend`) for channels, schedules, and HTTP. In production or on Vercel, eve logs a one-time warning if `inMemory()` is compiled in; set `EVE_ALLOW_INMEMORY_DURABILITY=1` to suppress it.
 
 For advanced self-hosted deployments, the root `agent.ts` can select the installed Workflow world package to use with `experimental.workflow.world`:
 
@@ -70,6 +95,7 @@ Conversation history within a session is append-only. Turns land in order, and t
 
 ## What to read next
 
+- [agent.ts](../agent-config#durability-backend): `experimental.durability.backend` and `experimental.workflow.world`
 - [Sessions and streaming](./sessions-runs-and-streaming): the handles you hold and the event stream you watch.
 - [Security model](./security-model): the trust boundaries the runtime enforces.
 - [State](../guides/state): durable per-session memory that persists across step boundaries.

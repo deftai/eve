@@ -12,10 +12,12 @@ import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import {
   isDynamicModelDefinition,
+  type AgentExperimentalDefinition,
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
 import type { DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
 import type { CompiledAgentDefinition, CompiledRuntimeModelReference } from "#compiler/manifest.js";
+import { KNOWN_DURABILITY_BACKEND_NAMES } from "#execution/durability/known-backends.js";
 import type { CompiledRuntimeModelLimits } from "#compiler/model-catalog.js";
 import {
   loadModuleBackedDefinition,
@@ -163,7 +165,7 @@ export async function compileAgentConfig(
 }
 
 function normalizeExperimentalDefinition(
-  experimental: CompiledAgentDefinition["experimental"] | undefined,
+  experimental: AgentExperimentalDefinition | undefined,
 ): CompiledAgentDefinition["experimental"] | undefined {
   if (experimental === undefined) {
     return undefined;
@@ -171,13 +173,37 @@ function normalizeExperimentalDefinition(
 
   const compiledExperimental: Mutable<NonNullable<CompiledAgentDefinition["experimental"]>> = {};
 
+  if (experimental.durability !== undefined) {
+    const backendName = resolveCompiledDurabilityBackendName(experimental.durability.backend);
+    compiledExperimental.durability = { backendName };
+  }
+
   if (experimental.workflow !== undefined) {
     compiledExperimental.workflow = {
       world: experimental.workflow.world,
     };
   }
 
-  return compiledExperimental;
+  return Object.keys(compiledExperimental).length === 0 ? undefined : compiledExperimental;
+}
+
+function resolveCompiledDurabilityBackendName(backend: { readonly name: string }): string {
+  let backendName: string;
+  try {
+    backendName = backend.name;
+  } catch {
+    throw new Error(
+      "Failed to read experimental.durability.backend.name. Ensure the backend factory is callable at compile time.",
+    );
+  }
+
+  if (!KNOWN_DURABILITY_BACKEND_NAMES.has(backendName)) {
+    throw new Error(
+      `Unknown durability backend "${backendName}". Supported backends: ${[...KNOWN_DURABILITY_BACKEND_NAMES].join(", ")}.`,
+    );
+  }
+
+  return backendName;
 }
 
 async function normalizeAuthoredModelReference(input: {

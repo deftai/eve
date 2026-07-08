@@ -223,6 +223,10 @@ function createResolvedAgentConfig(manifest: CompiledAgentNodeManifest): Resolve
 
   if (manifest.config.experimental !== undefined) {
     config.experimental = {
+      durability:
+        manifest.config.experimental.durability === undefined
+          ? undefined
+          : { backendName: manifest.config.experimental.durability.backendName },
       workflow:
         manifest.config.experimental.workflow === undefined
           ? undefined

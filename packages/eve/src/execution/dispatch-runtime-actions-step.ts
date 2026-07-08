@@ -41,7 +41,7 @@ import {
 } from "#execution/remote-agent-dispatch.js";
 import { hydrateDurableSession } from "#execution/session.js";
 import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
-import { createWorkflowRuntime, workflowEntryReference } from "#execution/workflow-runtime.js";
+import { workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
 import {
@@ -127,6 +127,7 @@ export async function dispatchRuntimeActionsStep(input: {
             registered?.definition.kind === "subagent"
               ? { description: registered.definition.description, type: "local" }
               : { type: "runtime" };
+          const { createWorkflowRuntime } = await import("#execution/workflow-runtime.js");
           const childRuntime = createWorkflowRuntime({
             compiledArtifactsSource: bundle.compiledArtifactsSource,
             nodeId: action.nodeId,

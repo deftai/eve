@@ -238,6 +238,24 @@ export function createEvePackageImportsPlugin(
           ]);
         }
 
+        if (
+          options.workflowCondition === true &&
+          (compiledSubpath === "@workflow/core/runtime.js" ||
+            compiledSubpath.startsWith("@workflow/core/runtime/"))
+        ) {
+          return resolveFirstExistingPath([
+            join(workingDir, "src", "internal", "workflow-bundle", "workflow-runtime-shim.ts"),
+            join(
+              workingDir,
+              "dist",
+              "src",
+              "internal",
+              "workflow-bundle",
+              "workflow-runtime-shim.js",
+            ),
+          ]);
+        }
+
         return resolveFirstExistingPath([
           join(workingDir, ".generated", "compiled", compiledSubpath),
           join(workingDir, "dist", "src", "compiled", compiledSubpath),
@@ -248,6 +266,20 @@ export function createEvePackageImportsPlugin(
 
       if (sourceSubpath === undefined) {
         return undefined;
+      }
+
+      if (options.workflowCondition === true && sourceSubpath === "internal/workflow/runtime") {
+        return resolveFirstExistingPath([
+          join(workingDir, "src", "internal", "workflow-bundle", "workflow-runtime-shim.ts"),
+          join(
+            workingDir,
+            "dist",
+            "src",
+            "internal",
+            "workflow-bundle",
+            "workflow-runtime-shim.js",
+          ),
+        ]);
       }
 
       return resolveFirstExistingPath(

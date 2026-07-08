@@ -1,5 +1,5 @@
 import type { Runtime } from "#channel/types.js";
-import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
+import { createAgentRuntime } from "#execution/durability/runtime-factory.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
 import {
@@ -37,7 +37,10 @@ export async function resolveNitroChannelRuntimeBundle(
   const bundle = await getCompiledRuntimeAgentBundle({
     compiledArtifactsSource,
   });
-  const runtime = createWorkflowRuntime({ compiledArtifactsSource });
+  const runtime = createAgentRuntime({
+    compiledArtifactsSource,
+    durabilityBackendName: bundle.resolvedAgent.config.experimental?.durability?.backendName,
+  });
   return {
     channels: bundle.graph.root.channels,
     runtime,

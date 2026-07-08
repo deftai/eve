@@ -15,6 +15,7 @@ import {
   getOptionalStringRecordProperty,
 } from "#internal/authored-module.js";
 import type { PublicAgentStaticModelDefinition } from "#shared/agent-definition.js";
+import type { DurabilityBackend } from "#shared/durability-backend.js";
 import {
   isDynamicSentinel,
   type DynamicEvents,
@@ -260,13 +261,59 @@ function normalizeAgentWorkflowWorldDefinition(
   return packageName;
 }
 
+function normalizeAgentDurabilityDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NonNullable<NormalizedAgentDefinition["experimental"]>["durability"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["backend"], message);
+
+  if (record.backend === undefined) {
+    throw new Error(`${message} experimental.durability.backend is required.`);
+  }
+
+  return {
+    backend: normalizeDurabilityBackend(record.backend, message),
+  };
+}
+
+function normalizeDurabilityBackend(value: unknown, message: string): DurabilityBackend {
+  if (typeof value !== "object" || value === null) {
+    throw new Error(
+      `${message} experimental.durability.backend must be a DurabilityBackend value.`,
+    );
+  }
+
+  const record = value as Record<string, unknown>;
+  const name = record.name;
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error(
+      `${message} experimental.durability.backend must expose a non-empty string "name".`,
+    );
+  }
+  if (typeof record.createBinding !== "function") {
+    throw new Error(
+      `${message} experimental.durability.backend must expose a "createBinding()" function.`,
+    );
+  }
+
+  return value as DurabilityBackend;
+}
+
 function normalizeAgentExperimentalDefinition(
   value: unknown,
   message: string,
 ): NonNullable<NormalizedAgentDefinition["experimental"]> {
   const record = expectObjectRecord(value, message);
-  expectOnlyKnownKeys(record, ["workflow"], message);
+  expectOnlyKnownKeys(record, ["durability", "workflow"], message);
   const normalizedDefinition: Mutable<NonNullable<NormalizedAgentDefinition["experimental"]>> = {};
+
+  if (record.durability !== undefined) {
+    normalizedDefinition.durability = normalizeAgentDurabilityDefinition(
+      record.durability,
+      message,
+    );
+  }
 
   if (record.workflow !== undefined) {
     normalizedDefinition.workflow = normalizeAgentWorkflowDefinition(record.workflow, message);
