@@ -20,10 +20,7 @@ function buildSerializedContext(input: {
   };
 }
 
-// Workflow vitest global setup currently fails to build driver bundles in this
-// workspace (`node:path` via `@workflow/core/runtime`). Keep this test for CI
-// once the bundle graph is green; unit coverage lives in workflow-runtime.test.ts.
-describe.skip("createAgentRuntime integration", () => {
+describe("createAgentRuntime integration", () => {
   it("delivers follow-ups on the vercel-workflow backend", async () => {
     const runtime = createTestRuntime({ agent: { name: "durability-runtime-factory" } });
     const continuationToken = "http:durability-runtime-factory";
