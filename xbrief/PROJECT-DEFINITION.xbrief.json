@@ -4,7 +4,7 @@
     "author": "Viz",
     "description": "Project definition — eve monorepo identity and scope registry",
     "created": "2026-07-08T00:00:00Z",
-    "updated": "2026-07-08T18:57:51Z"
+    "updated": "2026-07-08T19:19:53Z"
   },
   "plan": {
     "title": "PROJECT-DEFINITION",
@@ -24,6 +24,42 @@
         "metadata": {
           "source_path": "proposed/2026-07-07-durability-backend-research.xbrief.json",
           "lifecycle_folder": "proposed"
+        }
+      },
+      {
+        "id": "2026-07-08-1-hardening-workflow-driver-bundle-import-graph-post-runtime-s",
+        "title": "Hardening: workflow driver bundle import graph (post runtime-shim)",
+        "status": "proposed",
+        "metadata": {
+          "source_path": "proposed/2026-07-08-1-hardening-workflow-driver-bundle-import-graph-post-runtime-s.xbrief.json",
+          "lifecycle_folder": "proposed",
+          "references": [
+            {
+              "uri": "https://github.com/deftai/eve/issues/1",
+              "type": "x-xbrief/github-issue",
+              "title": "Issue #1: Hardening: workflow driver bundle import graph (post runtime-shim)"
+            }
+          ]
+        }
+      },
+      {
+        "id": "2026-07-08-inmemory-channel-runtime",
+        "title": "inMemory channel Runtime",
+        "status": "proposed",
+        "metadata": {
+          "source_path": "proposed/2026-07-08-inmemory-channel-runtime.xbrief.json",
+          "lifecycle_folder": "proposed",
+          "references": [
+            {
+              "type": "x-directive/github-issue",
+              "repo": "deftai/eve",
+              "number": 1
+            },
+            {
+              "type": "x-directive/path",
+              "path": "research/durability-backend.md"
+            }
+          ]
         }
       },
       {
