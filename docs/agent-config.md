@@ -162,6 +162,36 @@ parent's quota, so a delegation tree can never outspend the budget configured
 at its root. An authored child limit applies only when it is tighter than the
 parent's grant; an uncapped parent delegates uncapped children.
 
+## Durability backend
+
+By default, eve uses `vercelWorkflow()` — the production durability engine
+wrapping `@workflow/core` and eve's bundled workflow entrypoints. Root agents
+may opt into a different engine with `experimental.durability.backend`; subagents
+cannot set their own backend.
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "eve";
+import { vercelWorkflow } from "eve/durability";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-4.8",
+  experimental: {
+    durability: { backend: vercelWorkflow() }, // optional; default when omitted
+  },
+});
+```
+
+`inMemory()` from `eve/durability` is an experimental process-local adapter.
+It is intended for framework tests and future local workflows. In v1 it does
+not implement the channel `Runtime`, so selecting it for serving HTTP traffic
+fails at boot. In production or on Vercel, eve logs a one-time warning when
+`inMemory()` is compiled in unless `EVE_ALLOW_INMEMORY_DURABILITY=1` is set.
+
+`experimental.durability.backend` selects the **execution engine**. It is
+independent of `experimental.workflow.world`, which selects **Workflow SDK
+storage** on the `vercelWorkflow()` path. See [Execution model &
+durability](./concepts/execution-model-and-durability#durability-backend).
+
 ## Workflow world
 
 By default, eve selects the Workflow SDK world for the host: Vercel Workflow on
@@ -203,14 +233,14 @@ installed package must stay external in hosted output, list it in
 
 `defineAgent` takes a few more fields, all optional. For the exported types, see the [TypeScript API](./reference/typescript-api).
 
-| Field          | Type                                    | Default          | Description                                                                                                                                                                                                                                                                                                    |
-| -------------- | --------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reasoning`    | `AgentReasoningDefinition`              | provider default | Provider-agnostic reasoning effort forwarded to the agent's turn model calls.                                                                                                                                                                                                                                  |
-| `modelOptions` | `AgentModelOptionsDefinition`           | none             | Provider option overrides forwarded to the model call.                                                                                                                                                                                                                                                         |
-| `limits`       | `AgentLimitsDefinition`                 | field-specific   | Framework-owned runtime limits. `maxSubagentDepth` defaults to `3`; `maxInputTokensPerSession` defaults to `40_000_000` for root sessions, and delegated subagent sessions inherit the parent's remaining quota; `maxOutputTokensPerSession` is unset unless configured; `false` uncaps a session token limit. |
-| `experimental` | `{ workflow?: { world?: string } }`     | unset            | Opt-in settings that can change or disappear in any release. Treat them as unstable. `workflow.world` selects the Workflow world package backing session state, queues, hooks, and streams on the root agent.                                                                                                  |
-| `outputSchema` | Standard Schema or a JSON Schema object | none             | Structured return type for task-mode runs (a subagent, schedule, or remote job). Interactive conversation turns ignore it unless the client supplies a per-message schema.                                                                                                                                     |
-| `build`        | `{ externalDependencies?: string[] }`   | none             | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while eve compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                                                                       |
+| Field          | Type                                                          | Default          | Description                                                                                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reasoning`    | `AgentReasoningDefinition`                                    | provider default | Provider-agnostic reasoning effort forwarded to the agent's turn model calls.                                                                                                                                                                                                                                                 |
+| `modelOptions` | `AgentModelOptionsDefinition`                                 | none             | Provider option overrides forwarded to the model call.                                                                                                                                                                                                                                                                        |
+| `limits`       | `AgentLimitsDefinition`                                       | field-specific   | Framework-owned runtime limits. `maxSubagentDepth` defaults to `3`; `maxInputTokensPerSession` defaults to `40_000_000` for root sessions, and delegated subagent sessions inherit the parent's remaining quota; `maxOutputTokensPerSession` is unset unless configured; `false` uncaps a session token limit.                |
+| `experimental` | `{ durability?: { backend }, workflow?: { world?: string } }` | unset            | Opt-in settings that can change or disappear in any release. Treat them as unstable. `durability.backend` selects the durability engine on the root agent (`vercelWorkflow()` default). `workflow.world` selects the Workflow world package backing session state, queues, hooks, and streams on the `vercelWorkflow()` path. |
+| `outputSchema` | Standard Schema or a JSON Schema object                       | none             | Structured return type for task-mode runs (a subagent, schedule, or remote job). Interactive conversation turns ignore it unless the client supplies a per-message schema.                                                                                                                                                    |
+| `build`        | `{ externalDependencies?: string[] }`                         | none             | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while eve compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                                                                                      |
 
 `externalDependencies` is a packaging control only. It keeps selected packages as runtime dependencies in the hosted output; it does not authorize, configure, or review any third-party service those packages may call.
 
