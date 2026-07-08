@@ -1,0 +1,32 @@
+{
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz",
+    "description": "Wire inMemory() DurabilityBackend to channel Runtime for local/dev HTTP sessions",
+    "created": "2026-07-08T00:00:00Z",
+    "updated": "2026-07-08T00:00:00Z"
+  },
+  "plan": {
+    "title": "inMemory channel Runtime",
+    "status": "proposed",
+    "narratives": {
+      "ProblemStatement": "DurabilityBackend v1 ships inMemory() for port-level tests, but createAgentRuntime / channel Runtime still throws at boot when experimental.durability.backend is inMemory(). Authors cannot run HTTP-serving agents without @workflow/core.",
+      "Goals": "G1: Implement createInMemoryRuntime() implementing run/deliver/getEventStream against DurabilityPort + SessionDriver/TurnDriver. G2: Flip runtime-factory branch for backend name inmemory. G3: Scenario test boots agent with inMemory() and exercises public session API without Workflow bundler. G4: Keep vercelWorkflow path unchanged.",
+      "NonGoals": "NG1: Production durability guarantees for inMemory. NG2: Cross-replica or durable disk for inMemory. NG3: rivet/temporal adapters.",
+      "LockedDecisions": "Deferred from research/durability-backend.md and deftai/eve#1 item 5. Production continues to warn unless EVE_ALLOW_INMEMORY_DURABILITY=1.",
+      "FunctionalRequirements": "FR-1: createInMemoryRuntime must satisfy Runtime surface used by HTTP channel host. FR-2: Session park/resume via in-process inboxes. FR-3: Event stream readable via getEventStream. FR-4: Subagent child turns via startChildTurn on the in-memory port.",
+      "SuccessMetrics": "SM-1: Unit/integration green. SM-2: New scenario boots with inMemory() backend. SM-3: Docs note that inMemory channel Runtime is supported for local/dev."
+    },
+    "references": [
+      {
+        "type": "x-directive/github-issue",
+        "repo": "deftai/eve",
+        "number": 1
+      },
+      {
+        "type": "x-directive/path",
+        "path": "research/durability-backend.md"
+      }
+    ]
+  }
+}

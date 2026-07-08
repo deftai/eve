@@ -107,6 +107,21 @@ interface WorkflowRolldownPlugin {
   readonly transform?: (code: string, id: string) => unknown;
 }
 
+/**
+ * Returns whether `fileName` (basename) is eligible as a workflow input entry.
+ *
+ * Test and scenario files must not become workflow driver entrypoints — they
+ * often import Node-only helpers and pull `node:*` into the neutral VM graph.
+ */
+export function isWorkflowInputSourceFile(fileName: string): boolean {
+  const extension = fileName.match(/\.[^.]+$/)?.[0];
+  if (extension === undefined || !WORKFLOW_INPUT_EXTENSIONS.has(extension)) {
+    return false;
+  }
+  // Matches `*.test.ts`, `*.integration.test.ts`, `*.scenario.test.ts`, etc.
+  return !/\.test\.[cm]?[jt]sx?$/.test(fileName);
+}
+
 export async function collectWorkflowInputFiles(root: string): Promise<string[]> {
   const files: string[] = [];
 
@@ -139,9 +154,7 @@ export async function collectWorkflowInputFiles(root: string): Promise<string[]>
         continue;
       }
 
-      const extension = entry.name.match(/\.[^.]+$/)?.[0];
-
-      if (extension !== undefined && WORKFLOW_INPUT_EXTENSIONS.has(extension)) {
+      if (isWorkflowInputSourceFile(entry.name)) {
         files.push(join(directory, entry.name));
       }
     }
