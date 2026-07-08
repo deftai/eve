@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { createHook } from "#compiled/@workflow/core/index.js";
 
 import { VercelDurabilityInbox } from "#execution/durability/vercel-inbox.js";
@@ -93,7 +91,9 @@ export function createVercelDurabilityPort(context: VercelDurabilityPortContext)
       readonly parentSessionId: string;
       readonly run: () => Promise<unknown>;
     }) {
-      const id = `${input.parentSessionId}:child:${randomUUID()}`;
+      // Web Crypto only — this module is reachable from the workflow driver
+      // bundle, which forbids Node builtins such as node:crypto.
+      const id = `${input.parentSessionId}:child:${globalThis.crypto.randomUUID()}`;
       const promise = input.run();
       return {
         id,
