@@ -1,0 +1,38 @@
+{
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "description": "Scope xBRIEF ingested from GitHub issue #1"
+  },
+  "plan": {
+    "title": "Hardening: workflow driver bundle import graph (post runtime-shim)",
+    "status": "proposed",
+    "narratives": {
+      "Description": "Hardening: workflow driver bundle import graph (post runtime-shim)",
+      "Origin": "Ingested from https://github.com/deftai/eve/issues/1",
+      "Overview": "## Context\n\nDurability backend Phases 0–3 landed on branch `deft/durability-backend` (tip: `1ee8c77`). Integration tests were failing during workflow global setup because the driver bundle graph statically imported `#internal/workflow/runtime.js` → `@workflow/core/runtime`, which pulls Node.js builtins into the neutral VM graph.\n\n**Fix shipped:** `workflow-runtime-shim.ts` + `createEvePackageImportsPlugin` aliases `#compiled/@workflow/core/runtime.js` and `#internal/workflow/runtime.js` to the shim when `workflowCondition: true`.\n\nThis issue tracks **optional hardening** to reduce reliance on the shim and prevent regressions.\n\n## Hardening items\n\n### 1. Import hygiene in workflow body graph\n\nAvoid static `#internal/workflow/runtime` imports in modules that end up in the workflow **driver** bundle. Prefer dynamic import inside `\"use step\"` handlers (pattern already used in `vercel-inbox.ts`, `dispatch-runtime-actions-step.ts`).\n\n**Goal:** shrink the static import graph so driver bundles never reach `@workflow/core/runtime` without an explicit shim.\n\n### 2. Exclude test files from workflow input collection\n\n`collectWorkflowInputFiles` should skip `*.test.ts` under `src/execution/` (and similar) so unit tests never become workflow bundle entrypoints.\n\n### 3. Keep integration tests under `test/`\n\nMaintain `*.integration.test.ts` under `packages/eve/test/`, not `src/execution/`, to avoid accidental inclusion in workflow bundling scans.\n\n### 4. Unit test for shim aliasing\n\nAdd a unit test asserting `createEvePackageImportsPlugin` aliases `#internal/workflow/runtime.js` (and `#compiled/@workflow/core/runtime.js`) to `workflow-runtime-shim.ts` when `workflowCondition: true`.\n\n### 5. Deferred: in-memory channel `Runtime`\n\nv1 compiles `experimental.durability.backend: inMemory()` but throws at runtime (`createInMemoryRuntime()` not implemented). Track as a separate story when we want local/dev channel execution without Vercel Workflow.\n\n### 6. Session driver integration coverage\n\n`session-driver.ts` is covered by unit tests with mocks; no integration test exercises the full driver path through workflow global setup. Consider a narrow integration test once import graph is stable.\n\n## Acceptance signals\n\n- [ ] Driver bundle build succeeds without shim **or** shim remains with documented invariant + regression test (item 4)\n- [ ] `pnpm test:integration` passes in CI without new Node builtin leaks\n- [ ] No `*.test.ts` files in `collectWorkflowInputFiles` output for execution modules\n\n## References\n\n- Branch: `deft/durability-backend`\n- Shim: `packages/eve/src/internal/workflow-bundle/workflow-runtime-shim.ts`\n- Plugin: `packages/eve/src/internal/workflow-bundle/builder-support.ts` (`createEvePackageImportsPlugin`)\n- Research: `research/durability-backend.md`",
+      "Labels": "enhancement"
+    },
+    "items": [
+      {
+        "title": "Driver bundle build succeeds without shim **or** shim remains with documented invariant + regression test (item 4)",
+        "status": "proposed"
+      },
+      {
+        "title": "`pnpm test:integration` passes in CI without new Node builtin leaks",
+        "status": "proposed"
+      },
+      {
+        "title": "No `*.test.ts` files in `collectWorkflowInputFiles` output for execution modules",
+        "status": "proposed"
+      }
+    ],
+    "tags": ["enhancement"],
+    "references": [
+      {
+        "uri": "https://github.com/deftai/eve/issues/1",
+        "type": "x-xbrief/github-issue",
+        "title": "Issue #1: Hardening: workflow driver bundle import graph (post runtime-shim)"
+      }
+    ]
+  }
+}
