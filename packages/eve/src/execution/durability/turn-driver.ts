@@ -14,7 +14,8 @@ import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { TurnExecutionCursor } from "#execution/turn-execution-cursor.js";
 import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
-import { runProxyInputRequestStep, turnStep } from "#execution/workflow-steps.js";
+import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
+import { turnStep } from "#execution/workflow-steps.js";
 import { resolveRuntimeActionResultsForKeys } from "#harness/runtime-actions.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import type { DurabilityPort } from "#shared/durability-port.js";
@@ -203,8 +204,8 @@ async function waitForRuntimeActionResults(input: {
       continue;
     }
 
-    if (value.kind === "subagent-input-request") {
-      const proxyResult = await runProxyInputRequestStep({
+    if (value.kind === "subagent-input-request" || value.kind === "subagent-authorization-event") {
+      const proxyResult = await runProxySubagentEventStep({
         hookPayload: value,
         parentWritable: input.cursor.parentWritable,
         serializedContext: input.cursor.serializedContext,
@@ -214,6 +215,10 @@ async function waitForRuntimeActionResults(input: {
       continue;
     }
 
+    // Only `driver-delivery` reaches the inbox for public input: children
+    // resume it with results/HITL, and the driver relays public deliveries
+    // through the request handshake. A stale, non-matching request id means
+    // the turn already resolved and the driver re-buffered the delivery.
     if (value.kind === "driver-delivery" && value.requestId === pendingDeliveryRequest) {
       await input.cursor.send({ kind: "turn-delivery-accepted", requestId: value.requestId });
       pendingDeliveryRequest = undefined;
