@@ -48,7 +48,7 @@ describe("createRuntimeFromDurabilityBackend", () => {
     ).toThrow(/inMemory\(\)/);
   });
 
-  it("warns in production when creating runtime with inmemory manifest backend", () => {
+  it("warns and throws in production when creating runtime with inmemory manifest backend", () => {
     vi.stubEnv("NODE_ENV", "production");
     expect(() =>
       createAgentRuntime({

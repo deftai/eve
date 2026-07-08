@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { createHook } from "#compiled/@workflow/core/index.js";
 
 import { VercelDurabilityInbox } from "#execution/durability/vercel-inbox.js";
@@ -91,8 +93,7 @@ export function createVercelDurabilityPort(context: VercelDurabilityPortContext)
       readonly parentSessionId: string;
       readonly run: () => Promise<unknown>;
     }) {
-      void input.parentSessionId;
-      const id = input.parentSessionId;
+      const id = `${input.parentSessionId}:child:${randomUUID()}`;
       const promise = input.run();
       return {
         id,

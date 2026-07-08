@@ -43,7 +43,14 @@ export interface SessionDriverInput {
   readonly sessionState: DurableSessionState;
 }
 
-/** Long-lived session orchestration loop backed by {@link DurabilityPort}. */
+/**
+ * Long-lived session orchestration loop.
+ *
+ * v1 still creates session-level hooks (`auth`, delivery) via `@workflow/core`
+ * directly. `input.port` is reserved for the turn layer and a follow-up that
+ * routes inbox creation through {@link DurabilityPort} — full inMemory session
+ * extraction is deferred with the channel Runtime story.
+ */
 export async function runSessionDriver(input: SessionDriverInput): Promise<WorkflowEntryResult> {
   void input.port;
   const authHook = createHook<HookPayload>({
@@ -76,10 +83,7 @@ export async function runSessionDriver(input: SessionDriverInput): Promise<Workf
 
     while (true) {
       if (action.kind === "done") {
-        return await finalizeDone({
-          action,
-          driverWritable: input.driverWritable,
-        });
+        return await finalizeDone({ action });
       }
 
       if (action.kind !== "park") {
@@ -172,9 +176,7 @@ export async function runSessionDriver(input: SessionDriverInput): Promise<Workf
 
 async function finalizeDone(input: {
   readonly action: NextDriverAction & { readonly kind: "done" };
-  readonly driverWritable: WritableStream<Uint8Array>;
 }): Promise<WorkflowEntryResult> {
-  void input.driverWritable;
   const { output, serializedContext } = input.action;
   const failed = input.action.isError === true;
 
