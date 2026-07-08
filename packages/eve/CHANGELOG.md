@@ -1,5 +1,20 @@
 # eve
 
+## 0.22.2
+
+### Patch Changes
+
+- 4446f96: Update the vendored Workflow SDK packages to the latest 5.0 beta releases. eve now delegates world target selection and construction to the upstream SDK instead of maintaining parallel factory and compatibility logic, and no longer disables stable Workflow Turbo mode.
+- 8a7598e: Add the DurabilityBackend seam (types, DurabilityPort, and in-memory adapter) as Phase 0 of execution portability. Exports `inMemory()` from `eve/durability` for dev and tests; no runtime wiring yet — the Vercel workflow path is unchanged.
+- 0a9beb9: Extract SessionDriver and TurnDriver as plain orchestration modules backed by DurabilityPort, with a Vercel Workflow adapter and thin `workflowEntry` / `turnWorkflow` entrypoints. No runtime factory wiring yet — Vercel path behavior is unchanged.
+- 3114adf: Wire `createWorkflowRuntime` through `createRuntimeFromDurabilityBackend` with `vercelWorkflow()` as the default backend. Export `vercelWorkflow()` from `eve/durability`; in-memory runtime wiring remains Phase 3.
+- a2685d7: Compile `experimental.durability.backend` into the agent manifest as `backendName`, resolve it at runtime via `createAgentRuntime()`, and emit a one-time production warning when `inMemory()` is selected unless `EVE_ALLOW_INMEMORY_DURABILITY=1` is set. Subagents cannot configure durability backends.
+- 2f26277: Document `experimental.durability.backend`, `eve/durability` exports, and the relationship between durability backends and `experimental.workflow.world`. Clarify that `inMemory()` compiles but does not serve HTTP traffic in v1.
+- 988c3e5: Add unit tests for durability compile wiring, session driver orchestration, and manifest-driven `createAgentRuntime()`. Split workflow-step runtime creation from HTTP boot so Nitro honors `experimental.durability.backend`.
+- 2afed3b: Update `withEve()` to generate Vercel Build Output service routes for eve instead of the legacy Next.js rewrite setup. The generated output now uses the stable `services` field and service routes, including in hosted Vercel builds where no local `.vercel/project.json` exists, so Vercel builds the eve service without Next.js rewrites.
+- 15309f3: New projects created with `eve init` now use stable TypeScript 7.0.2 instead of the release candidate.
+- 5ce7dec: Skip test files when collecting workflow bundle inputs and add regression tests for workflow-runtime shim aliasing under `workflowCondition`.
+
 ## 0.22.1
 
 ### Patch Changes
