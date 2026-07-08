@@ -11,7 +11,9 @@ import type {
 } from "#shared/durability-port.js";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
 
-export const IN_MEMORY_DURABILITY_BACKEND_NAME = "inmemory";
+import { IN_MEMORY_DURABILITY_BACKEND_NAME } from "#execution/durability/known-backends.js";
+
+export { IN_MEMORY_DURABILITY_BACKEND_NAME };
 
 const IN_MEMORY_CAPABILITIES: DurabilityBackendCapabilities = {
   checkpoints: true,

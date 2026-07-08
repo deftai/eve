@@ -5,8 +5,8 @@ import { resetDurabilityBootWarningForTests } from "#execution/durability/durabi
 import {
   createAgentRuntime,
   createRuntimeFromDurabilityBackend,
-  createWorkflowRuntime,
 } from "#execution/durability/runtime-factory.js";
+import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { vercelWorkflow } from "#public/durability/vercel-workflow.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 

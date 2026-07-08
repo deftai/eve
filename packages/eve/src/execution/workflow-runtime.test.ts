@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { ChannelRequestIdKey } from "#context/keys.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { createAgentRuntime } from "#execution/durability/runtime-factory.js";
 import {
   createWorkflowRuntime,
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
@@ -124,6 +125,30 @@ describe("createWorkflowRuntime#deliver", () => {
     ).resolves.toEqual({ sessionId: "owner-session" });
     expect(resumeHookMock).toHaveBeenCalledOnce();
     expect(resumeHookMock).toHaveBeenCalledWith("test:active-hook", {
+      auth: null,
+      kind: "deliver",
+      payloads: [{ message: "hello" }],
+    });
+  });
+});
+
+describe("createAgentRuntime#deliver", () => {
+  it("matches createWorkflowRuntime when durabilityBackendName is vercel-workflow", async () => {
+    resumeHookMock.mockResolvedValue({ runId: "manifest-runtime" });
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+
+    await expect(
+      createAgentRuntime({
+        compiledArtifactsSource,
+        durabilityBackendName: "vercel-workflow",
+      }).deliver({
+        auth: null,
+        continuationToken: "test:manifest-runtime",
+        payload: { message: "hello" },
+      }),
+    ).resolves.toEqual({ sessionId: "manifest-runtime" });
+
+    expect(resumeHookMock).toHaveBeenCalledWith("test:manifest-runtime", {
       auth: null,
       kind: "deliver",
       payloads: [{ message: "hello" }],

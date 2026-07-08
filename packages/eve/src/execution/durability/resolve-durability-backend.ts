@@ -1,9 +1,10 @@
+import { createInMemoryDurabilityBackend } from "#execution/durability/backends/in-memory.js";
 import {
-  createInMemoryDurabilityBackend,
   IN_MEMORY_DURABILITY_BACKEND_NAME,
-} from "#execution/durability/backends/in-memory.js";
+  KNOWN_DURABILITY_BACKEND_NAMES,
+} from "#execution/durability/known-backends.js";
 import { createVercelDurabilityBackend } from "#execution/durability/backends/vercel-workflow.js";
-import { KNOWN_DURABILITY_BACKEND_NAMES } from "#execution/durability/known-backends.js";
+
 import type { DurabilityBackend } from "#shared/durability-backend.js";
 
 /**

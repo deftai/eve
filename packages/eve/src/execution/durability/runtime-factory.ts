@@ -1,4 +1,4 @@
-import { IN_MEMORY_DURABILITY_BACKEND_NAME } from "#execution/durability/backends/in-memory.js";
+import { IN_MEMORY_DURABILITY_BACKEND_NAME } from "#execution/durability/known-backends.js";
 import { warnIfInMemoryDurabilityInProduction } from "#execution/durability/durability-boot-warning.js";
 import { resolveDurabilityBackendByName } from "#execution/durability/resolve-durability-backend.js";
 import { createVercelWorkflowRuntime } from "#execution/workflow-runtime.js";
@@ -57,11 +57,4 @@ export function createAgentRuntime(config: CreateAgentRuntimeConfig): Runtime {
     compiledArtifactsSource: config.compiledArtifactsSource,
     nodeId: config.nodeId,
   });
-}
-
-/**
- * Default workflow-backed runtime used by channels, schedules, and child sessions.
- */
-export function createWorkflowRuntime(config: CreateAgentRuntimeConfig): Runtime {
-  return createAgentRuntime(config);
 }

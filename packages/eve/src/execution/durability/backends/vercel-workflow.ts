@@ -13,7 +13,9 @@ import {
   type HandleMessageStreamEvent,
 } from "#protocol/message.js";
 
-export const VERCEL_DURABILITY_BACKEND_NAME = "vercel-workflow";
+import { VERCEL_DURABILITY_BACKEND_NAME } from "#execution/durability/known-backends.js";
+
+export { VERCEL_DURABILITY_BACKEND_NAME };
 
 const VERCEL_CAPABILITIES: DurabilityBackendCapabilities = {
   checkpoints: true,
