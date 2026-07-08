@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deft.dev/schemas/slices-1.0.schema.json",
   "title": "Slicing Cohort Record v1",
-  "description": "Frozen interface contract for one line in vbrief/.eval/slices.jsonl. Each line is a single JSON object recording one slicing event: an umbrella issue + the children produced from it. Slices.jsonl is APPEND-ONLY (existing lines are never edited or deleted) AND TRACKED IN GIT (sibling to the gitignored candidates.jsonl per vbrief/.eval/README.md tracking policy). Written by scripts/slice_record.py::write_slice; consumed by task triage:audit --orphans / --slice-stalled / --slice-coverage and by the D3 slice-wave-ready evaluator. Field set, types, and enums are FROZEN -- new fields may only be added in additive, optional positions in a follow-up schema version (D13 / #1132).",
+  "description": "Frozen interface contract for one line in xbrief/.eval/slices.jsonl. Each line is a single JSON object recording one slicing event: an umbrella issue + the children produced from it. Slices.jsonl is APPEND-ONLY (existing lines are never edited or deleted) AND TRACKED IN GIT (sibling to the gitignored candidates.jsonl per xbrief/.eval/README.md tracking policy). Written by scripts/slice_record.py::write_slice; consumed by task triage:audit --orphans / --slice-stalled / --slice-coverage and by the D3 slice-wave-ready evaluator. Field set, types, and enums are FROZEN -- new fields may only be added in additive, optional positions in a follow-up schema version (D13 / #1132).",
   "type": "object",
   "additionalProperties": false,
   "required": [

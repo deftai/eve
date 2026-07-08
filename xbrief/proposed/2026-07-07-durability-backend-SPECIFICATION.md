@@ -2,7 +2,7 @@
 
 **Status:** Approved (PRD approved 2026-07-07)  
 **Repo:** deftai/eve · branch `deft/durability-backend`  
-**Source vBRIEF:** `vbrief/specification.vbrief.json`
+**Source vBRIEF:** `xbrief/specification.xbrief.json`
 
 ## Overview
 

@@ -77,3 +77,19 @@ vbrief/*.lock
 .deft/*.bak-*
 *.premigrate.*
 .deft/core/
+
+# Deft framework: ignore local-only caches and scratch directories
+.deft/.cli/
+vbrief/.triage-cache/candidates.jsonl
+vbrief/.triage-cache/summary-history.jsonl
+vbrief/.triage-cache/scope-lifecycle.jsonl
+vbrief/.triage-cache/decompositions/
+vbrief/.triage-cache/doctor-state.json
+xbrief/.triage-cache/candidates.jsonl
+xbrief/.triage-cache/summary-history.jsonl
+xbrief/.triage-cache/scope-lifecycle.jsonl
+xbrief/.triage-cache/decompositions/
+xbrief/.triage-cache/doctor-state.json
+.deft/xbrief-migrate-backup-*/
+vbrief/.eval/results/
+xbrief/.eval/results/

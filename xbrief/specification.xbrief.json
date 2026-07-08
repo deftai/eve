@@ -1,11 +1,4 @@
 {
-  "vBRIEFInfo": {
-    "version": "0.6",
-    "author": "Viz",
-    "description": "DurabilityBackend v1 — how to build the execution seam",
-    "created": "2026-07-07T00:00:00Z",
-    "updated": "2026-07-07T00:00:00Z"
-  },
   "plan": {
     "title": "DurabilityBackend v1 SPECIFICATION",
     "status": "approved",
@@ -60,5 +53,12 @@
         }
       }
     ]
+  },
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz",
+    "description": "DurabilityBackend v1 — how to build the execution seam",
+    "created": "2026-07-07T00:00:00Z",
+    "updated": "2026-07-07T00:00:00Z"
   }
 }

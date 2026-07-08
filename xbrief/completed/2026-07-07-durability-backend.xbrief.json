@@ -1,14 +1,7 @@
 {
-  "vBRIEFInfo": {
-    "version": "0.6",
-    "author": "Viz",
-    "description": "DurabilityBackend v1 — runtime-agnostic execution seam (PRD scope)",
-    "created": "2026-07-07T00:00:00Z",
-    "updated": "2026-07-07T00:00:00Z"
-  },
   "plan": {
     "title": "DurabilityBackend v1",
-    "status": "proposed",
+    "status": "completed",
     "narratives": {
       "ProblemStatement": "eve's durable session/turn/HITL execution is implemented directly against @workflow/core (use workflow, use step, hooks, writables, child turnWorkflow runs, Vercel cron transport). That coupling lives in packages/eve/src/execution/ and internal/workflow-bundle/. Operators can swap Workflow World storage via experimental.workflow.world, but cannot swap the execution engine. The deftai/eve fork needs a seam—DurabilityBackend/DurabilityPort—parallel to SandboxBackend, so future adapters (Rivet, in-memory tests) can plug in without rewriting the harness, compiler, or agent/ authoring model.",
       "Goals": "G1: Introduce DurabilityPort primitives (checkpoints, inboxes, event log, child turn jobs, schedule trigger hook) behind DurabilityBackend. G2: Ship vercelWorkflow() adapter that delegates to existing @workflow/core with zero observable behavior change. G3: Ship inMemory() adapter for dev/tests behind experimental.durability.backend. G4: Extract SessionDriver/TurnDriver orchestration that calls the port, not Workflow directives directly. G5: Add unit/integration tests for port and adapters; keep all existing test tiers green.",
@@ -19,6 +12,17 @@
       "SuccessMetrics": "SM-1: pnpm test:unit and test:integration and test:scenario green on deft/durability-backend. SM-2: New inMemory adapter tests cover checkpoint replay, inbox deliver, and event stream read without @workflow/core. SM-3: vercelWorkflow adapter integration tests demonstrate identical NextDriverAction sequences vs baseline on representative session/turn fixtures. SM-4: Docs updated for experimental.durability.backend and relationship to experimental.workflow.world. SM-5: research/durability-backend.md drafted for optional future upstream PR.",
       "OpenQuestions": "OQ-1: Exact experimental.durability.backend TypeScript shape and export path (eve/agent config vs internal compile manifest). OQ-2: Env override name for production inMemory warning bypass. OQ-3: Whether schedule trigger hook is abstracted in v1 or thin-delegates to existing Nitro cron route unchanged. OQ-4: Module layout—shared/durability-backend.ts vs execution/durability/ tree.",
       "InterviewLog": "Q1 sizing: Full. Q2 v1: seam only. Q3 author: middle ground. Q4 experimental shape: agent.ts experimental.durability.backend. Q5 upstream: fork-first. Q6 port: full session driver. Q7 parity: all tiers green + new port tests. Q8 inMemory guard: warn prod. Q9 world: coexist."
+    },
+    "updated": "2026-07-08T18:57:51Z",
+    "metadata": {
+      "completedAt": "2026-07-08T18:57:51Z"
     }
+  },
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz",
+    "description": "DurabilityBackend v1 — runtime-agnostic execution seam (PRD scope)",
+    "created": "2026-07-07T00:00:00Z",
+    "updated": "2026-07-07T00:00:00Z"
   }
 }

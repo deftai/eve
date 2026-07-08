@@ -12,15 +12,15 @@ Legend (from RFC2119): !=MUST, ~=SHOULD, ≉=SHOULD NOT, ⊗=MUST NOT, ?=MAY.
 
 Key `task` commands for working with vBRIEF files:
 
-- `task spec:render` — Regenerate `SPECIFICATION.md` from `specification.vbrief.json`
-- `task roadmap:render` — Regenerate `ROADMAP.md` from `vbrief/pending/` scope vBRIEFs
-- `task project:render` — Refresh `PROJECT-DEFINITION.vbrief.json` items registry from lifecycle folders
+- `task spec:render` — Regenerate `SPECIFICATION.md` from `specification.xbrief.json`
+- `task roadmap:render` — Regenerate `ROADMAP.md` from `xbrief/pending/` scope vBRIEFs
+- `task project:render` — Refresh `PROJECT-DEFINITION.xbrief.json` items registry from lifecycle folders
 - `task migrate:vbrief` — Migrate existing project to vBRIEF lifecycle folder structure (one-time)
-- `task issue:ingest -- <N>` / `task issue:ingest -- --all [--label L] [--status S] [--dry-run]` — Ingest GitHub issues as scope vBRIEFs in `vbrief/proposed/` (deduplicates via existing references)
+- `task issue:ingest -- <N>` / `task issue:ingest -- --all [--label L] [--status S] [--dry-run]` — Ingest GitHub issues as scope vBRIEFs in `xbrief/proposed/` (deduplicates via existing references)
 - `task vbrief:validate` — Validate schema, filenames, folder/status consistency (part of `task check`)
 - `task scope:promote|activate|complete|cancel|restore|block|unblock <file>` — Lifecycle transitions
-- `task scope:decompose -- <parent.vbrief.json> --draft vbrief/.eval/decompositions/<parent-slug>.json` — Apply an approved phase/epic to story decomposition
-- `task swarm:readiness -- vbrief/active/*.vbrief.json` — Report whether candidate stories are safe for concurrent swarm allocation
+- `task scope:decompose -- <parent.xbrief.json> --draft xbrief/.eval/decompositions/<parent-slug>.json` — Apply an approved phase/epic to story decomposition
+- `task swarm:readiness -- xbrief/active/*.xbrief.json` — Report whether candidate stories are safe for concurrent swarm allocation
 
 For interactive creation workflows, use `run` commands (`.deft/core/run bootstrap`, `.deft/core/run spec`). See [commands.md](../commands.md) for the full command lifecycle.
 
@@ -28,18 +28,18 @@ For interactive creation workflows, use `run` commands (`.deft/core/run bootstra
 
 ## File Taxonomy
 
-All vBRIEF files live in `./vbrief/` within the project workspace. Files are organized into **singular operational files** at the vbrief root and **scope vBRIEFs** in lifecycle folders.
+All vBRIEF files live in `./xbrief/` within the project workspace. Files are organized into **singular operational files** at the vbrief root and **scope vBRIEFs** in lifecycle folders.
 
 ### Directory Structure
 
 ```
-vbrief/
-  PROJECT-DEFINITION.vbrief.json   <- project identity gestalt
-  specification.vbrief.json        <- project spec source of truth
-  specification-{name}.vbrief.json <- add-on specs
-  plan.vbrief.json                 <- session-level tactical plan (singular)
-  continue.vbrief.json             <- interruption checkpoint (singular, ephemeral)
-  playbook-{name}.vbrief.json      <- reusable operational patterns
+xbrief/
+  PROJECT-DEFINITION.xbrief.json   <- project identity gestalt
+  specification.xbrief.json        <- project spec source of truth
+  specification-{name}.xbrief.json <- add-on specs
+  plan.xbrief.json                 <- session-level tactical plan (singular)
+  continue.xbrief.json             <- interruption checkpoint (singular, ephemeral)
+  playbook-{name}.xbrief.json      <- reusable operational patterns
   .eval/decompositions/             <- ignored temporary decomposition proposal drafts
   proposed/                         <- ideas, not committed to (draft, proposed)
   pending/                          <- accepted backlog (approved, pending)
@@ -52,12 +52,12 @@ vbrief/
 
 | File                               | Purpose                                                                                                                                                                      | Lifecycle                       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `PROJECT-DEFINITION.vbrief.json`   | Project identity gestalt — `narratives` for identity (overview, tech stack, architecture, risks/unknowns, config), `items` as scope registry; uses the canonical v0.6 schema | Durable (regenerated on demand) |
-| `specification.vbrief.json`        | Project spec source of truth                                                                                                                                                 | Durable (never deleted)         |
-| `specification-{name}.vbrief.json` | Add-on spec with `planRef` back to main spec                                                                                                                                 | Durable                         |
-| `plan.vbrief.json`                 | Session-level tactical plan; the _how right now_; carries `planRef` to scope vBRIEFs                                                                                         | Session-durable                 |
-| `continue.vbrief.json`             | Interruption recovery checkpoint; carries `planRef` to scope vBRIEFs                                                                                                         | Ephemeral (consumed on resume)  |
-| `playbook-{name}.vbrief.json`      | Reusable operational knowledge                                                                                                                                               | Permanent                       |
+| `PROJECT-DEFINITION.xbrief.json`   | Project identity gestalt — `narratives` for identity (overview, tech stack, architecture, risks/unknowns, config), `items` as scope registry; uses the canonical v0.6 schema | Durable (regenerated on demand) |
+| `specification.xbrief.json`        | Project spec source of truth                                                                                                                                                 | Durable (never deleted)         |
+| `specification-{name}.xbrief.json` | Add-on spec with `planRef` back to main spec                                                                                                                                 | Durable                         |
+| `plan.xbrief.json`                 | Session-level tactical plan; the _how right now_; carries `planRef` to scope vBRIEFs                                                                                         | Session-durable                 |
+| `continue.xbrief.json`             | Interruption recovery checkpoint; carries `planRef` to scope vBRIEFs                                                                                                         | Ephemeral (consumed on resume)  |
+| `playbook-{name}.xbrief.json`      | Reusable operational knowledge                                                                                                                                               | Permanent                       |
 
 ### Scope vBRIEFs and Lifecycle Folders
 
@@ -76,24 +76,24 @@ Individual units of work (features, bugs, initiatives) live as scope vBRIEFs in 
 - ! `plan.status` inside each scope vBRIEF is the **source of truth** — not the folder location
 - ! Folder location is a convenience view for humans; metadata is authoritative
 - ! Agents MUST move files to the matching lifecycle folder when status changes
-- ! When moving a file, agents MUST update all `planRef` and `references[].uri` values in other scope vBRIEFs and in `PROJECT-DEFINITION.vbrief.json` that point to the moved file
+- ! When moving a file, agents MUST update all `planRef` and `references[].uri` values in other scope vBRIEFs and in `PROJECT-DEFINITION.xbrief.json` that point to the moved file
 - ~ When folder/status drift is detected, trust the status field and correct the folder
 - ⊗ Move files between folders without updating `plan.status`
 
 ### Filename Convention
 
-- ! Scope vBRIEF filenames MUST follow: `YYYY-MM-DD-descriptive-slug.vbrief.json`
+- ! Scope vBRIEF filenames MUST follow: `YYYY-MM-DD-descriptive-slug.xbrief.json`
 - ! The date MUST be the **creation date** (immutable — does not change as the scope progresses)
-- ~ Use lowercase hyphen-separated slugs (e.g. `2026-04-12-add-oauth-flow.vbrief.json`)
+- ~ Use lowercase hyphen-separated slugs (e.g. `2026-04-12-add-oauth-flow.xbrief.json`)
 
 #### speckit Phase 4 scope vBRIEFs
 
 When the [speckit strategy](../strategies/speckit.md#phase-4-tasks-scope-vbrief-emission) emits Phase 4 scope vBRIEFs:
 
-- ! Filename MUST follow `YYYY-MM-DD-ip<NNN>-<slug>.vbrief.json` where `<NNN>` is the implementation phase index zero-padded to **exactly 3 digits** (e.g. `ip001`, `ip007`, `ip042`, `ip128`).
+- ! Filename MUST follow `YYYY-MM-DD-ip<NNN>-<slug>.xbrief.json` where `<NNN>` is the implementation phase index zero-padded to **exactly 3 digits** (e.g. `ip001`, `ip007`, `ip042`, `ip128`).
 - ! The 3-digit padding ensures lexical sort order matches numeric order across the first 999 phases and keeps filename length predictable for swarm allocation.
-- ~ The `<slug>` SHOULD describe the IP, not the issue (e.g. `ip003-data-layer.vbrief.json`, not `ip003-issue-123.vbrief.json`).
-- ~ Use lowercase hyphen-separated slugs (e.g. `2026-04-12-ip003-data-layer.vbrief.json`).
+- ~ The `<slug>` SHOULD describe the IP, not the issue (e.g. `ip003-data-layer.xbrief.json`, not `ip003-issue-123.xbrief.json`).
+- ~ Use lowercase hyphen-separated slugs (e.g. `2026-04-12-ip003-data-layer.xbrief.json`).
 
 ### Origin Provenance
 
@@ -101,15 +101,15 @@ When the [speckit strategy](../strategies/speckit.md#phase-4-tasks-scope-vbrief-
 - ! Enables deduplication during ingest (diff open issues against existing vBRIEF references)
 - ~ On scope completion, update the origin (close the issue, post a comment linking to the PR)
 
-Canonical reference types (all prefixed `x-vbrief/` per the v0.6 schema): `x-vbrief/github-issue`, `x-vbrief/github-pr`, `x-vbrief/jira-ticket`, `x-vbrief/user-request`, `x-vbrief/plan`, `x-vbrief/spec-section`. See [`../conventions/references.md`](../conventions/references.md) for the full type registry.
+Canonical reference types (all prefixed `x-xbrief/` per the v0.6 schema): `x-xbrief/github-issue`, `x-xbrief/github-pr`, `x-xbrief/jira-ticket`, `x-xbrief/user-request`, `x-xbrief/plan`, `x-xbrief/spec-section`. See [`../conventions/references.md`](../conventions/references.md) for the full type registry.
 
-**Platform note:** The migration script (`task migrate:vbrief`) defaults origin provenance to `x-vbrief/github-issue` type. Non-GitHub users should manually adjust `references[].type` in generated vBRIEFs after migration. See [README.md — Platform Requirements](../../README.md#%EF%B8%8F-platform-requirements).
+**Platform note:** The migration script (`task migrate:vbrief`) defaults origin provenance to `x-xbrief/github-issue` type. Non-GitHub users should manually adjust `references[].type` in generated vBRIEFs after migration. See [README.md — Platform Requirements](../../README.md#%EF%B8%8F-platform-requirements).
 
 ```json
 "references": [
   {
     "uri": "https://github.com/deftai/directive/issues/123",
-    "type": "x-vbrief/github-issue",
+    "type": "x-xbrief/github-issue",
     "title": "Issue #123: Example title"
   }
 ]
@@ -125,7 +125,7 @@ Additive extension to the source-provenance shape, sourced from the **AI Agent T
 
 - `verified` -- confirmed by `task check` or direct agent action against the working tree (the strongest tier; e.g. a test ran green, a script wrote the file the agent observed)
 - `internal` -- originated from Directive framework content (this repo, the framework guidelines, the user-authored vBRIEFs, USER.md, PROJECT-DEFINITION narratives explicitly authored by the user) -- trusted to the same degree as the framework itself
-- `external` -- originated from outside the trust boundary: GitHub issue / PR body or comment, web page, third-party documentation, retrieved file, tool output that quoted external content, sibling-agent message quoting external content. The default for any `references[].type == "x-vbrief/github-issue"` ingest path; the default for any agent-side write that incorporates content the agent did not author
+- `external` -- originated from outside the trust boundary: GitHub issue / PR body or comment, web page, third-party documentation, retrieved file, tool output that quoted external content, sibling-agent message quoting external content. The default for any `references[].type == "x-xbrief/github-issue"` ingest path; the default for any agent-side write that incorporates content the agent did not author
 
 **Field shape** -- a sibling key on each `references[]` entry (so a single vBRIEF can carry multiple references at different trust tiers):
 
@@ -133,13 +133,13 @@ Additive extension to the source-provenance shape, sourced from the **AI Agent T
 "references": [
   {
     "uri": "https://github.com/deftai/directive/issues/480",
-    "type": "x-vbrief/github-issue",
+    "type": "x-xbrief/github-issue",
     "title": "Issue #480: feat(security): agent trap defenses",
     "TrustLevel": "external"
   },
   {
-    "uri": "completed/2026-05-12-481-patterns-directory-and-llm-app-standards.vbrief.json",
-    "type": "x-vbrief/plan",
+    "uri": "completed/2026-05-12-481-patterns-directory-and-llm-app-standards.xbrief.json",
+    "type": "x-xbrief/plan",
     "title": "Sibling plan #481",
     "TrustLevel": "internal"
   }
@@ -148,8 +148,8 @@ Additive extension to the source-provenance shape, sourced from the **AI Agent T
 
 **Rule body:**
 
-- ! Every reference produced by an external-source ingest path (e.g. `task issue:ingest`, web-research import, third-party-doc paste) MUST carry `"TrustLevel": "external"` at write time -- the default for any `x-vbrief/github-issue` or `x-vbrief/web-page` reference
-- ! References to other in-repo vBRIEFs (`x-vbrief/plan`, `x-vbrief/spec-section`) MUST carry `"TrustLevel": "internal"` -- they originated inside the trust boundary
+- ! Every reference produced by an external-source ingest path (e.g. `task issue:ingest`, web-research import, third-party-doc paste) MUST carry `"TrustLevel": "external"` at write time -- the default for any `x-xbrief/github-issue` or `x-xbrief/web-page` reference
+- ! References to other in-repo vBRIEFs (`x-xbrief/plan`, `x-xbrief/spec-section`) MUST carry `"TrustLevel": "internal"` -- they originated inside the trust boundary
 - ! References to deterministically-confirmed artifacts (a test that ran green, a script's output the agent observed in this session) MAY carry `"TrustLevel": "verified"` -- the strongest tier, asserts the content was confirmed against the working tree
 - ⊗ Promote an `external`-tagged reference (or any content sourced via an `external`-tagged reference) to `verified` without explicit revalidation in the current session -- the **Cognitive State / Latent Memory Poisoning** trap class allows a poisoned fragment to propagate forward by silently being relabelled as trusted; the promotion is a trust-boundary crossing that requires explicit human review or a deterministic re-validation step
 - ⊗ Treat a reference missing the `TrustLevel` field as implicitly `verified` -- the safe default for a missing field is `external` (agents reading an unmigrated v0.6 vBRIEF that predates this field MUST apply the `external`-default reading rule until the field is explicitly populated)
@@ -161,8 +161,8 @@ Cross-references: [`../meta/security.md`](../meta/security.md) `### 2. Cognitive
 
 Larger initiatives use **epic vBRIEFs** linking to child **story vBRIEFs**. Linking is bidirectional:
 
-- ! All `uri` and `planRef` path values in scope vBRIEF JSON are **relative to the `vbrief/` directory** — not relative to the containing file's location
-- ! Epic `references` array MUST list child story file paths (type: `x-vbrief/plan`, `TrustLevel: internal`)
+- ! All `uri` and `planRef` path values in scope vBRIEF JSON are **relative to the `xbrief/` directory** — not relative to the containing file's location
+- ! Epic `references` array MUST list child story file paths (type: `x-xbrief/plan`, `TrustLevel: internal`)
 - ! Story vBRIEFs MUST carry `planRef` back to their parent epic
 - ~ The decision to create an epic vs. a standalone story is made collaboratively between user and agent
 
@@ -223,13 +223,13 @@ For `kind = "story"` and `swarm.readiness = "ready"`:
 - ! `file_scope` MUST be non-empty
 - ! `verify_commands` MUST be non-empty
 - ! `expected_outputs` MUST describe the evidence the worker is expected to produce
-- ! traces MUST exist through item/story `Traces`, `x-vbrief/spec-section` references, or an explicit `missing_traces_justification`
+- ! traces MUST exist through item/story `Traces`, `x-xbrief/spec-section` references, or an explicit `missing_traces_justification`
 - ! `planRef` MUST point to the parent phase/epic when the story was decomposed from one
-- ! parent phase/epic `references` MUST include child story paths with `type: x-vbrief/plan` and `TrustLevel: internal`
+- ! parent phase/epic `references` MUST include child story paths with `type: x-xbrief/plan` and `TrustLevel: internal`
 - ⊗ Use `swarm.readiness = "ready"` with `parallel_safe: false`; use `readiness: "sequential"` or `readiness: "needs_refinement"` for non-concurrent work
 - ⊗ Set `parallel_safe: true` on a `size: "large"` story
 - ⊗ Use `swarm.readiness = "ready"` with `file_scope_confidence: "low"`
-- ⊗ Use placeholder acceptance such as "to refine from parent scope", criteria identical to the title/description, vague docs-only acceptance, broad file globs such as `backend/**`, `frontend/**`, `docs/**`, `vbrief/**`, or generic verification such as only `task check`.
+- ⊗ Use placeholder acceptance such as "to refine from parent scope", criteria identical to the title/description, vague docs-only acceptance, broad file globs such as `backend/**`, `frontend/**`, `docs/**`, `xbrief/**`, or generic verification such as only `task check`.
 
 Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement work MAY use `swarm.readiness = "needs_refinement"`, but `task swarm:readiness` fails non-zero for both because neither state is eligible for concurrent worker allocation.
 
@@ -243,13 +243,13 @@ Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement wor
     "status": "running",
     "references": [
       {
-        "type": "x-vbrief/plan",
-        "uri": "active/2026-04-12-oauth-flow.vbrief.json",
+        "type": "x-xbrief/plan",
+        "uri": "active/2026-04-12-oauth-flow.xbrief.json",
         "TrustLevel": "internal"
       },
       {
-        "type": "x-vbrief/plan",
-        "uri": "active/2026-04-12-session-mgmt.vbrief.json",
+        "type": "x-xbrief/plan",
+        "uri": "active/2026-04-12-session-mgmt.xbrief.json",
         "TrustLevel": "internal"
       }
     ]
@@ -265,21 +265,21 @@ Sequential-safe work MAY use `swarm.readiness = "sequential"` and refinement wor
   "plan": {
     "title": "Implement OAuth flow",
     "status": "running",
-    "planRef": "active/2026-04-10-auth-system-overhaul.vbrief.json"
+    "planRef": "active/2026-04-10-auth-system-overhaul.xbrief.json"
   }
 }
 ```
 
-### Coexistence: Scope vBRIEFs, plan.vbrief.json, and continue.vbrief.json
+### Coexistence: Scope vBRIEFs, plan.xbrief.json, and continue.xbrief.json
 
-Scope vBRIEFs are durable scope records (the _what_); `plan.vbrief.json` remains the ephemeral session-level tactical plan (the _how right now_); `continue.vbrief.json` remains the interruption checkpoint. Both gain a parent reference to scope vBRIEFs via `planRef`.
+Scope vBRIEFs are durable scope records (the _what_); `plan.xbrief.json` remains the ephemeral session-level tactical plan (the _how right now_); `continue.xbrief.json` remains the interruption checkpoint. Both gain a parent reference to scope vBRIEFs via `planRef`.
 
 - **Scope vBRIEF** — acceptance criteria, scope definition, origin provenance. Durable across sessions. Shared between agents.
-- **plan.vbrief.json** — granular implementation steps for this session. Session-durable. Agent-private.
-- **continue.vbrief.json** — interruption checkpoint. References scope vBRIEF(s) being worked on.
+- **plan.xbrief.json** — granular implementation steps for this session. Session-durable. Agent-private.
+- **continue.xbrief.json** — interruption checkpoint. References scope vBRIEF(s) being worked on.
 
-- ! When scope vBRIEFs exist, plan.vbrief.json and continue.vbrief.json MUST carry a `planRef` to the scope vBRIEF(s) they relate to
-- ⊗ Use scope vBRIEFs as session scratchpads — that is what plan.vbrief.json is for
+- ! When scope vBRIEFs exist, plan.xbrief.json and continue.xbrief.json MUST carry a `planRef` to the scope vBRIEF(s) they relate to
+- ⊗ Use scope vBRIEFs as session scratchpads — that is what plan.xbrief.json is for
 
 ### Scope Splitting
 
@@ -287,37 +287,37 @@ When a scope grows too large, the parent vBRIEF becomes an epic and children are
 
 1. Agent identifies the scope is too large (collaboratively with user)
 2. Parent vBRIEF promoted to epic
-3. Agent drafts a temporary decomposition proposal under `vbrief/.eval/decompositions/<parent-slug>.json`
+3. Agent drafts a temporary decomposition proposal under `xbrief/.eval/decompositions/<parent-slug>.json`
 4. Agent presents the draft to the user and gets explicit approval
-5. `task scope:decompose -- <parent> --draft vbrief/.eval/decompositions/<parent-slug>.json --check` validates the approved draft
-6. `task scope:decompose -- <parent> --draft vbrief/.eval/decompositions/<parent-slug>.json` creates child story vBRIEFs with `planRef` back to parent
+5. `task scope:decompose -- <parent> --draft xbrief/.eval/decompositions/<parent-slug>.json --check` validates the approved draft
+6. `task scope:decompose -- <parent> --draft xbrief/.eval/decompositions/<parent-slug>.json` creates child story vBRIEFs with `planRef` back to parent
 7. Parent epic's `references` updated to list all child paths
-8. Update `plan.vbrief.json` (and `continue.vbrief.json` if present) `planRef` to reference child scope vBRIEFs
+8. Update `plan.xbrief.json` (and `continue.xbrief.json` if present) `planRef` to reference child scope vBRIEFs
 9. Acceptance criteria redistributed by agent with user approval
 10. Origin provenance stays on the parent epic; children inherit via epic relationship
 
 - ! Scope splitting MUST use an approved draft and `task scope:decompose` for child writes
 - ! Decomposition draft JSON is a temporary proposal artifact, not a vBRIEF
-- ! Agents SHOULD write decomposition draft proposals under `vbrief/.eval/decompositions/`
-- ! Derive `<parent-slug>` from the parent vBRIEF filename by removing `.vbrief.json` and any leading `YYYY-MM-DD-` date prefix; for example, `2026-05-12-ip001-auth.vbrief.json` becomes `ip001-auth`
+- ! Agents SHOULD write decomposition draft proposals under `xbrief/.eval/decompositions/`
+- ! Derive `<parent-slug>` from the parent vBRIEF filename by removing `.xbrief.json` and any leading `YYYY-MM-DD-` date prefix; for example, `2026-05-12-ip001-auth.xbrief.json` becomes `ip001-auth`
 - ⊗ Agents MUST NOT leave decomposition draft JSON files at the workspace root
-- ! Generated child story vBRIEFs remain lifecycle artifacts and default to `vbrief/pending/`
+- ! Generated child story vBRIEFs remain lifecycle artifacts and default to `xbrief/pending/`
 - ! Run `task swarm:readiness` after decomposition before concurrent worker allocation
 - ~ Uses existing `scope:*` commands for lifecycle transitions after splitting
 
 ### General Rules
 
-- ! All vBRIEF files MUST live in `./vbrief/` or its lifecycle subfolders — never in workspace root
-- ! File names MUST use the `.vbrief.json` extension
+- ! All vBRIEF files MUST live in `./xbrief/` or its lifecycle subfolders — never in workspace root
+- ! File names MUST use the `.xbrief.json` extension
 - ⊗ Use ULID or timestamp suffixes on `continue` or `plan` — they are singular by design
-- ⊗ Create multiple `plan.vbrief.json` files — there is exactly one active plan
-- ⊗ Create a separate `todo-*.json` — todos live in `plan.vbrief.json`
+- ⊗ Create multiple `plan.xbrief.json` files — there is exactly one active plan
+- ⊗ Create a separate `todo-*.json` — todos live in `plan.xbrief.json`
 
 ---
 
 ## File Format
 
-All `.vbrief.json` files conform to the **vBRIEF v0.6** specification.
+All `.xbrief.json` files conform to the **vBRIEF v0.6** specification.
 Canonical reference: [https://vbrief.org](https://vbrief.org)
 
 ### Required Top-Level Structure
@@ -482,7 +482,7 @@ for local validation. Source: [github.com/deftai/vBRIEF](https://github.com/deft
 
 ---
 
-## specification.vbrief.json
+## specification.xbrief.json
 
 The source-of-truth for project intent. Created via the interview process in
 [strategies/interview.md](../strategies/interview.md) (canonical) or
@@ -493,13 +493,13 @@ The source-of-truth for project intent. Created via the interview process in
 - ! The spec MUST be approved by the user before implementation begins
 - ! `SPECIFICATION.md` is generated FROM the vbrief spec — never written directly
 - ~ Use `task spec:render` to regenerate `SPECIFICATION.md` after spec edits
-- ⊗ Edit `SPECIFICATION.md` directly — edit the source `specification.vbrief.json` instead
-- ? Create `specification-{name}.vbrief.json` for add-on specs (e.g. security, deployment)
+- ⊗ Edit `SPECIFICATION.md` directly — edit the source `specification.xbrief.json` instead
+- ? Create `specification-{name}.xbrief.json` for add-on specs (e.g. security, deployment)
   — each MUST include a `planRef` pointing back to the main specification
 
 ---
 
-## PROJECT-DEFINITION.vbrief.json
+## PROJECT-DEFINITION.xbrief.json
 
 The synthesized project identity — what this project IS right now. Uses the canonical vBRIEF v0.6 schema:
 
@@ -523,7 +523,7 @@ The synthesized project identity — what this project IS right now. Uses the ca
         "title": "Add OAuth flow",
         "status": "running",
         "references": [
-          { "type": "x-vbrief/plan", "uri": "active/2026-04-12-add-oauth-flow.vbrief.json" }
+          { "type": "x-xbrief/plan", "uri": "active/2026-04-12-add-oauth-flow.xbrief.json" }
         ]
       }
     ]
@@ -533,18 +533,18 @@ The synthesized project identity — what this project IS right now. Uses the ca
 
 **Regeneration**: Deterministic tooling updates the items registry from folder contents; agent-assisted layer reviews and proposes narrative updates with user approval.
 
-- ! Singular — exactly one per project at `./vbrief/` root
+- ! Singular — exactly one per project at `./xbrief/` root
 - ~ Regenerated on scope completion and callable on demand
 
 ---
 
-## plan.vbrief.json
+## plan.xbrief.json
 
-The single active work plan. Unifies what were previously separate todo, plan, and progress files. When scope vBRIEFs are in use, plan.vbrief.json is the session-level tactical plan (the _how right now_) and carries a `planRef` to the scope vBRIEF(s) being implemented.
+The single active work plan. Unifies what were previously separate todo, plan, and progress files. When scope vBRIEFs are in use, plan.xbrief.json is the session-level tactical plan (the _how right now_) and carries a `planRef` to the scope vBRIEF(s) being implemented.
 
 **Status lifecycle per task:** `pending` → `running` → `completed` / `blocked` / `failed` / `cancelled`
 
-- ! There is exactly ONE `plan.vbrief.json` at a time per project
+- ! There is exactly ONE `plan.xbrief.json` at a time per project
 - ! Use this wherever you would use a Warp `create_todo_list` — externalise to this file instead
 - ! When scope vBRIEFs exist, MUST include `planRef` to the scope vBRIEF(s) being implemented
 - ~ Update task statuses as work progresses
@@ -595,21 +595,21 @@ tracks which strategies have been run and what artifacts they produced.
 
 ---
 
-## continue.vbrief.json
+## continue.xbrief.json
 
 A single interruption-recovery checkpoint. See [resilience/continue-here.md](../resilience/continue-here.md)
-for full protocol. When scope vBRIEFs are in use, continue.vbrief.json carries a `planRef` to the scope vBRIEF(s) the agent was working on.
+for full protocol. When scope vBRIEFs are in use, continue.xbrief.json carries a `planRef` to the scope vBRIEF(s) the agent was working on.
 
-- ! Singular — `continue.vbrief.json`, not `continue-{ULID}.json`
+- ! Singular — `continue.xbrief.json`, not `continue-{ULID}.json`
 - ! Ephemeral — consumed on resume; must be deleted (or marked `completed`) afterwards
 - ! When scope vBRIEFs exist, MUST include `planRef` to the scope vBRIEF(s) being worked on
 - ⊗ Accumulate stale continue files
 
 ---
 
-## playbook-{name}.vbrief.json
+## playbook-{name}.xbrief.json
 
-Reusable operational patterns. Examples: `playbook-deploy.vbrief.json`, `playbook-release.vbrief.json`.
+Reusable operational patterns. Examples: `playbook-deploy.xbrief.json`, `playbook-release.xbrief.json`.
 
 - ~ Include a `narrative` on each step explaining intent, not just action
 - ~ Reference playbooks from plan tasks via `playbookRef` field
@@ -624,12 +624,12 @@ Reusable operational patterns. Examples: `playbook-deploy.vbrief.json`, `playboo
 Interview (strategies/interview.md, Light path)
         │
         ▼
-./vbrief/specification.vbrief.json   ← status: draft
+./xbrief/specification.xbrief.json   ← status: draft
         │
    user reviews
         │
         ▼
-./vbrief/specification.vbrief.json   ← status: approved
+./xbrief/specification.xbrief.json   ← status: approved
         │
    task spec:render
         │
@@ -646,12 +646,12 @@ Interview (strategies/interview.md, Full path)
 PRD.md                               ← user approval gate
         │
         ▼
-./vbrief/specification.vbrief.json   ← status: draft
+./xbrief/specification.xbrief.json   ← status: draft
         │
    user reviews
         │
         ▼
-./vbrief/specification.vbrief.json   ← status: approved
+./xbrief/specification.xbrief.json   ← status: approved
         │
    task spec:render
         │
@@ -662,7 +662,7 @@ SPECIFICATION.md                     ← generated, traces to PRD requirement ID
 Add-on specs follow the same flow:
 
 ```
-./vbrief/specification-{name}.vbrief.json  →  SPECIFICATION-{name}.md
+./xbrief/specification-{name}.xbrief.json  →  SPECIFICATION-{name}.md
 ```
 
 ---
@@ -671,24 +671,24 @@ Add-on specs follow the same flow:
 
 | Warp / agent tool       | vBRIEF equivalent                              |
 | ----------------------- | ---------------------------------------------- |
-| `create_todo_list`      | write `./vbrief/plan.vbrief.json`              |
+| `create_todo_list`      | write `./xbrief/plan.xbrief.json`              |
 | `mark_todo_as_done`     | update task `status` → `completed`             |
-| `add_todos`             | append task to `./vbrief/plan.vbrief.json`     |
+| `add_todos`             | append task to `./xbrief/plan.xbrief.json`     |
 | `remove_todos`          | set task `status` → `cancelled` (never delete) |
-| session end / interrupt | write `./vbrief/continue.vbrief.json`          |
-| spec interview output   | write `./vbrief/specification.vbrief.json`     |
+| session end / interrupt | write `./xbrief/continue.xbrief.json`          |
+| spec interview output   | write `./xbrief/specification.xbrief.json`     |
 
 ---
 
 ## Anti-Patterns
 
-- ⊗ Placing vBRIEF files in workspace root (`./plan.vbrief.json`, `./progress.vbrief.json`)
+- ⊗ Placing vBRIEF files in workspace root (`./plan.xbrief.json`, `./progress.xbrief.json`)
 - ⊗ Using ULID suffixes on `plan`, `continue`, or `todo` files — they are singular
-- ⊗ Creating `todo-{ULID}.json` — todos live in `plan.vbrief.json`
+- ⊗ Creating `todo-{ULID}.json` — todos live in `plan.xbrief.json`
 - ⊗ Editing `SPECIFICATION.md` directly — it is a generated artifact
-- ⊗ Treating `plan.vbrief.json` as a scratch file and deleting it mid-task
-- ⊗ Creating both a `plan.vbrief.json` and a separate `progress.vbrief.json` — they are the same file
+- ⊗ Treating `plan.xbrief.json` as a scratch file and deleting it mid-task
+- ⊗ Creating both a `plan.xbrief.json` and a separate `progress.xbrief.json` — they are the same file
 - ⊗ Moving scope vBRIEFs between lifecycle folders without updating `plan.status`
-- ⊗ Using scope vBRIEFs as session scratchpads — use plan.vbrief.json for tactical session work
+- ⊗ Using scope vBRIEFs as session scratchpads — use plan.xbrief.json for tactical session work
 - ⊗ Creating scope vBRIEFs without origin provenance (`references` linking to the origin)
-- ⊗ Omitting `planRef` from plan.vbrief.json or continue.vbrief.json when scope vBRIEFs exist
+- ⊗ Omitting `planRef` from plan.xbrief.json or continue.xbrief.json when scope vBRIEFs exist

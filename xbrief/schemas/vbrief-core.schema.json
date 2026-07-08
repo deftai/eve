@@ -678,8 +678,8 @@
           "properties": {
             "type": {
               "type": "string",
-              "pattern": "^x-vbrief/",
-              "description": "A vBRIEF reference type. Known types: x-vbrief/plan, x-vbrief/context, x-vbrief/research. Any x-vbrief/* value is valid."
+              "pattern": "^x-xbrief/",
+              "description": "A vBRIEF reference type. Known types: x-xbrief/plan, x-xbrief/context, x-xbrief/research. Any x-xbrief/* value is valid."
             }
           }
         }

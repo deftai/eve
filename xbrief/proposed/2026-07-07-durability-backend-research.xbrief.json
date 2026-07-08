@@ -1,11 +1,4 @@
 {
-  "vBRIEFInfo": {
-    "version": "0.6",
-    "author": "Viz + Deft interview",
-    "description": "Research for runtime-agnostic eve execution via DurabilityBackend",
-    "created": "2026-07-07T00:00:00Z",
-    "updated": "2026-07-07T00:00:00Z"
-  },
   "plan": {
     "title": "DurabilityBackend — research",
     "status": "proposed",
@@ -17,5 +10,12 @@
       "IPRisk": "No third-party fictional IP, game, or branded-universe terms detected in scope. Rivet agentOS and Vercel Workflow are software products — use trademarked names only as technical references, not as shipped user-facing branding. Commercial deployment of Rivet/Vercel stacks may require separate vendor agreements; that is an ops/licensing concern, not a content IP issue. No lawyer consultation triggered by heuristic.",
       "Recommendations": "1) Short term: document DurabilityBackend in research/ for upstream eve (issue-backed) while proving port with inMemory() + vercelWorkflow() wrapper. 2) Medium: self-hosted operators use experimental.workflow.world before rivet() adapter. 3) Long: rivet() adapter only after SessionDriver/TurnDriver extract and hook/inbox port is stable. 4) Parallel: agentOS SandboxBackend stays independent (evekit doc already drafted). 5) Sizing for interview: likely Full path — multi-phase, touches execution/ + workflow-bundle + tests + docs + optional research/ PR."
     }
+  },
+  "xBRIEFInfo": {
+    "version": "0.8",
+    "author": "Viz + Deft interview",
+    "description": "Research for runtime-agnostic eve execution via DurabilityBackend",
+    "created": "2026-07-07T00:00:00Z",
+    "updated": "2026-07-07T00:00:00Z"
   }
 }

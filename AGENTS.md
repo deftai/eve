@@ -182,7 +182,7 @@ changed and what they'll see differently, in 1–2 sentences.
 Docs-only, internal-tooling, and fixture changes do not need a changeset. When
 in doubt, add one.
 
-<!-- deft:managed-section v3 sha=1ee8c77b0bc3 refreshed=2026-07-08T18:56:37Z session=5c7e4d295b3c -->
+<!-- deft:managed-section v3 sha=18185ee497fe refreshed=2026-07-08T18:57:39Z session=009e3dc46e7b -->
 
 # Deft — AI Development Framework
 
@@ -204,7 +204,7 @@ Deft is installed in .deft/core/. Full guidelines: .deft/core/main.md
 
 **Pre-cutover detected** if ANY of the following are true:
 
-- ./SPECIFICATION.md exists and is neither a deprecation redirect nor a current generated spec export. A current generated spec export contains `<!-- Purpose: rendered specification -->` and `<!-- Source of truth: xbrief/specification.xbrief.json -->`, and `./xbrief/specification.xbrief.json` plus all five lifecycle folders exist. This mirrors `.deft/core/scripts/_precutover.py`.
+- ./SPECIFICATION.md exists and is neither a deprecation redirect nor a current generated spec export. A current generated spec export contains `<!-- Purpose: rendered specification -->` and `<!-- Source of truth: xbrief/specification.xbrief.json -->`, and `./xbrief/specification.xbrief.json` plus all five lifecycle folders exist.
 - ./PROJECT.md exists and is not a deprecation redirect (`<!-- deft:deprecated-redirect -->` or `<!-- Purpose: deprecation redirect -->`).
 - ./xbrief/ exists but any of the five lifecycle subfolders (proposed/, pending/, active/, completed/, cancelled/) is missing
 
@@ -214,13 +214,15 @@ Deft is installed in .deft/core/. Full guidelines: .deft/core/main.md
 
 ## First Session
 
-Check what exists before doing anything else:
+! Check what exists before doing anything else -- do NOT respond to any user request until the correct phase fires:
 
 **USER.md missing** (~/.config/deft/USER.md or %APPDATA%\deft\USER.md):
-→ Read .deft/core/.agents/skills/deft-directive-setup/SKILL.md and start Phase 1 (user preferences)
+! Read .deft/core/.agents/skills/deft-directive-setup/SKILL.md and immediately start Phase 1 (user preferences). Do not wait for a user prompt.
 
-**USER.md exists, PROJECT-DEFINITION.xbrief.json missing** (./xbrief/):
-→ Read .deft/core/.agents/skills/deft-directive-setup/SKILL.md and start Phase 2 (project definition)
+**USER.md exists, `xbrief/PROJECT-DEFINITION.xbrief.json` missing**:
+! Read .deft/core/.agents/skills/deft-directive-setup/SKILL.md and immediately start Phase 2 (project definition). This branch MUST fire even when USER.md already exists from a prior install or another project -- a pre-existing USER.md is not a reason to skip Phase 2 on a greenfield project.
+
+⊗ Respond to any user query (greet, answer questions, take requests) before the correct phase has completed -- first-session phase routing is mandatory, not advisory.
 
 ## Returning Sessions
 
@@ -285,6 +287,15 @@ Rationale + cross-references: `.deft/core/docs/analysis/2026-07-02-agents-md-inc
 - ! Fetch issue comments via REST (`gh api repos/<owner>/<repo>/issues/<N>/comments`), read the `## Current shape (as of pass-N)` comment, and any linked context or `LockedDecisions` xBRIEF referenced there — following the reading order body -> current-shape comment -> amendment comments (claim-cites-state-surface, #2066). Prefer the deterministic read path: `deft umbrella:current-shape <N>` (or `task umbrella:current-shape <N>`) — it locates the canonical comment, validates #1152 sections, and never falls back to the issue body.
 - ⊗ Conclude umbrella or epic status from the issue body alone. Any "X is done" / "X is the blocker" assertion about an umbrella MUST cite the current-shape comment or another state artifact, not the body.
 
+## Deterministic questions runtime obligation (#1470)
+
+Rationale + cross-references: `.deft/core/content/contracts/deterministic-questions.md` (#767); closes the agent-runtime enforcement gap on issue #1470.
+
+- ! ANY agent-initiated structured question — whether via host `ask_user_question` / `AskQuestion` tooling or a numbered menu rendered in chat — inside OR outside any skill flow MUST include `Discuss` and `Back` as the final two options, in that order, and MUST obey the Discuss-pause semantic documented verbatim in `.deft/core/content/contracts/deterministic-questions.md`.
+- ! Before emitting any structured or numbered question, self-check: confirm `Discuss` and `Back` are present as the final two options; if not, add them before calling the tool or rendering the menu. Host-native `Other` / free-text affordances are NOT substitutes for `Discuss` (#767 / #431).
+- ⊗ Emit a structured or numbered question without `Discuss` and `Back` as the final two options — including ad-hoc orchestration approvals, dispatch confirmations, and decision walkthroughs outside interview/setup/refinement skills.
+- ⊗ Treat the host UI's automatic `Other` option as the stop-and-discuss escape hatch — `Other` widens the answer space; `Discuss` exits the deterministic flow entirely (see contract).
+
 ## Issue body→comments reading (#2143)
 
 Rationale + cross-references: `.deft/core/docs/analysis/2026-07-02-agents-md-incident-rule-rationale.md` § Issue body→comments reading (#2143); preamble § 5.6 in `.deft/core/content/templates/agent-prompt-preamble.md`.
@@ -326,12 +337,14 @@ Skill routing (which skill answers which trigger) is not a table in this policy 
 
 ## Value feedback and attribution (#1709)
 
-- ! `plan.policy.valueFeedback.enabled` defaults OFF -- while false, every downstream path (emit-only ledger, budgeted session readback, upstream gap escalation) short-circuits with zero token spend. Opt-in ONLY via `deft policy:enable-value-feedback -- --confirm` after the capability-cost disclosure prints. Inspect with `deft policy:show --field=valueFeedback`.
+- ! `plan.policy.valueFeedback.enabled` defaults OFF for non-org repos -- while off, every downstream path (emit-only ledger, budgeted session readback, upstream gap escalation) short-circuits with zero token spend. Opt-in for any repo via `deft policy:enable-value-feedback -- --confirm` after the capability-cost disclosure prints. Inspect with `deft policy:show --field=valueFeedback`.
+- ! Trusted-org local auto-enable (#2376) -- for a repo whose GitHub origin belongs to a company-owned org (built-in default `deftai`; extend via the `DEFT_VALUE_AUTOENABLE_ORGS` env override), LOCAL emit + session readback resolve ON with `source=org-auto` and network/upstream OFF, with NO per-repo or per-machine confirmation: org membership IS the consent for local, no-egress collection on company-owned resources. An explicit typed `valueFeedback` block always wins (including `enabled: false`); a non-matching org or no origin remote stays OFF (fail-safe).
+- ! Attribution records are enriched at emit time (#2376) with `repo`, `directive_version`, `install_id` (a stable per-checkout uuid under gitignored `.deft-cache/`), and `schema_version`, so a later collector can aggregate cross-repo without re-deriving provenance.
 - ! Value claims MUST be attributed-only -- point to concrete logged events ("encoding gate caught 2 corruptions"), never vague quality claims. Silence when the ledger has nothing attributable for the session slot.
 - ! Budgeted awareness -- at most one session readback line when `sessionLine` is allowed; repeat suppression uses a 4-hour window per attribution event id (parity with #1279 triage welcome debounce). Pull-based detail is `deft value:show`, not pushed.
 - ! Gap escalation to `deftai/directive` is confirmation-gated -- route conversational filing through `deft-directive-feedback`; the agent drafts + dedups; the operator approves before `deft feedback:file -- --confirm`. Use `Refs #1709` in upstream bodies, not `Closes`.
-- ! Gap escalation is consumer-only -- no-op inside the directive maintainer repo unless `DEFT_VALUE_SELF_DOGFOOD=1`.
-- ⊗ Enable value-feedback surfaces without explicit operator confirmation on the typed policy flag.
+- ! Gap escalation is consumer-only -- no-op inside the directive maintainer repo unless `DEFT_VALUE_SELF_DOGFOOD=1`. Trusted-org auto-enable still turns LOCAL emit ON inside the maintainer repo, but session readback stays gated behind `DEFT_VALUE_SELF_DOGFOOD=1`.
+- ⊗ Enable any NETWORK or upstream value-feedback surface (upstream gap escalation / `deft feedback:file`) without operator confirmation -- trusted-org auto-enable authorizes LOCAL, no-egress collection ONLY.
 - ⊗ File upstream framework-gap issues without operator confirmation or past duplicate detection.
 - ⊗ Treat unattributed self-promotion as value feedback -- if there is no ledger event, emit nothing.
 
@@ -357,7 +370,7 @@ When the active project's `xbrief/PROJECT-DEFINITION.xbrief.json` has `plan.poli
 
 > "[deft policy] Direct commits to the default branch are ENABLED (source: typed). Branch-protection policy is OFF."
 
-This phrasing comes from `.deft/core/scripts/policy.py::disclosure_line` and stays in lockstep with the typed surface (#746). When the policy is OFF (default; `allowDirectCommitsToMaster=false`), no session-start disclosure is required -- the absence of the disclosure line itself signals the default-enforcing state.
+This phrasing is produced by `deft policy:show --field=allowDirectCommitsToMaster` and stays in lockstep with the typed surface (#746). When the policy is OFF (default; `allowDirectCommitsToMaster=false`), no session-start disclosure is required -- the absence of the disclosure line itself signals the default-enforcing state.
 
 Override paths (`deft policy:show` / `deft policy:enforce-branches` / `deft policy:allow-direct-commits -- --confirm` / `DEFT_ALLOW_DEFAULT_BRANCH_COMMIT=1`) are detailed in the Branch policy & branch verification section above.
 

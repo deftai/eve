@@ -72,4 +72,4 @@ eve's durable execution (sessions, turns, HITL, subagent child runs, schedules) 
 
 ## Approval
 
-Reply **approved** (or list revisions) to proceed to **SPECIFICATION** (`vbrief/specification.vbrief.json` + implementation stories).
+Reply **approved** (or list revisions) to proceed to **SPECIFICATION** (`xbrief/specification.xbrief.json` + implementation stories).
